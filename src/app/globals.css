@@ -1,0 +1,153 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+  INK — BLIPS BOS design system tokens.
+  Permanent dark theme. Core chrome palette = black + off-white only.
+  Seasonal palettes (S01/S02/S03) appear INSIDE content only — never on chrome.
+*/
+
+@theme inline {
+  /* Core chrome palette — 5 tokens, forever */
+  --color-ink: #0c0c0c;
+  --color-off-white: #f2efe9;
+  --color-warm-bright: #b8b5af;
+  --color-warm-muted: #7a766f;
+  --color-deep-divider: #2a2622;
+
+  /* Typography families */
+  --font-display: var(--font-syne);
+  --font-sans: var(--font-syne);
+  --font-heading: var(--font-syne);
+  --font-mono: var(--font-dm-mono);
+  --font-editorial: var(--font-cormorant);
+
+  /* Seasonal content palettes — used inside rendered outputs only */
+  /* S01 Raw Industrial (Launch) */
+  --color-s01-char: #2a0f0f;
+  --color-s01-signal: #a04040;
+  --color-s01-forge: #5a2020;
+  --color-s01-rust-haze: #9e5050;
+  --color-s01-faded: #c4908a;
+  --color-s01-ash-blush: #e8d5d2;
+  /* S02 Cold Cosmic */
+  --color-s02-deep-navy: #0c1219;
+  --color-s02-slate: #1e2d42;
+  --color-s02-dusk: #3d3550;
+  --color-s02-storm: #5e6e82;
+  --color-s02-frost: #c2cad6;
+  --color-s02-haze: #8891a0;
+  /* S03 Warm Reckoning */
+  --color-s03-tobacco: #1a1208;
+  --color-s03-aged-paper: #e5cfa8;
+  --color-s03-rust: #8c4a28;
+  --color-s03-sand: #9a7248;
+  --color-s03-dune: #d4b896;
+  --color-s03-bark: #4a2e18;
+
+  /* shadcn semantic tokens — mapped to Ink core */
+  --color-background: var(--color-ink);
+  --color-foreground: var(--color-off-white);
+  --color-card: var(--color-ink);
+  --color-card-foreground: var(--color-off-white);
+  --color-popover: #141211;
+  --color-popover-foreground: var(--color-off-white);
+  --color-primary: var(--color-off-white);
+  --color-primary-foreground: var(--color-ink);
+  --color-secondary: var(--color-deep-divider);
+  --color-secondary-foreground: var(--color-off-white);
+  --color-muted: var(--color-deep-divider);
+  --color-muted-foreground: var(--color-warm-bright);
+  --color-accent: var(--color-deep-divider);
+  --color-accent-foreground: var(--color-off-white);
+  --color-destructive: #7a3030;
+  --color-border: var(--color-deep-divider);
+  --color-input: var(--color-deep-divider);
+  --color-ring: var(--color-warm-muted);
+
+  /* Radii — subtle, industrial, never pill */
+  --radius-sm: 2px;
+  --radius-md: 4px;
+  --radius-lg: 6px;
+  --radius-xl: 10px;
+}
+
+/*
+  Breathing animation — soft pulse at 2.8s.
+  Inspired by the BLIPS pulsing dot. Used on active/interactive elements.
+*/
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 0.72;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes breathe-ring {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(242, 239, 233, 0.1);
+  }
+  50% {
+    box-shadow: 0 0 0 2px rgba(242, 239, 233, 0.18);
+  }
+}
+
+@layer utilities {
+  .breathe {
+    animation: breathe 2.8s ease-in-out infinite;
+  }
+  .breathe-ring {
+    animation: breathe-ring 2.8s ease-in-out infinite;
+  }
+  .chrome-brightness {
+    opacity: var(--legibility, 1);
+    transition: opacity 180ms ease-out;
+  }
+}
+
+/* Legibility default — overridden at runtime by BrightnessSlider */
+:root {
+  --legibility: 1;
+}
+
+/* Brightness slider thumb */
+.brightness-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--color-off-white);
+  cursor: grab;
+  border: none;
+}
+.brightness-slider::-moz-range-thumb {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--color-off-white);
+  cursor: grab;
+  border: none;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    background: var(--color-ink);
+    color-scheme: dark;
+  }
+  body {
+    @apply bg-ink text-off-white font-mono;
+    font-weight: 400;
+    letter-spacing: 0.01em;
+  }
+}
