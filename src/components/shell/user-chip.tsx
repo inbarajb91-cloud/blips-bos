@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState, useRef, useEffect } from "react";
 import { signOut } from "@/app/login/actions";
+import { LogoutButton } from "./logout-button";
 
 export function UserChip({ email }: { email: string }) {
   const [open, setOpen] = useState(false);
@@ -76,12 +77,7 @@ export function UserChip({ email }: { email: string }) {
           </Link>
           <div className="h-px bg-white/[0.06] my-0.5" />
           <form action={signOut}>
-            <button
-              type="submit"
-              className="w-full px-3 py-2.5 rounded-sm font-mono text-[9px] tracking-[0.2em] uppercase text-warm-bright hover:bg-white/[0.03] hover:text-off-white transition-colors text-left cursor-pointer"
-            >
-              Log out
-            </button>
+            <LogoutButton />
           </form>
         </div>
       )}

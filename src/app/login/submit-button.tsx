@@ -14,7 +14,7 @@ export function SubmitButton() {
     >
       {pending ? (
         <>
-          <span>Entering</span>
+          <span>Entering BOS</span>
           <span className="inline-flex gap-[3px]">
             <span className="w-1 h-1 rounded-full bg-ink/60 animate-[pulse_1.4s_ease-in-out_infinite]" />
             <span

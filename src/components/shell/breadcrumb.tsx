@@ -1,58 +1,70 @@
 "use client";
 
+import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-/**
- * Smart breadcrumb.
- * Engine Room routes live under /, so `/` shows "BOS / Engine Room".
- * BOS-level routes (settings, profile) show "BOS / <Section>".
- * Engine Room sub-routes (future: /bridge, /signals, etc.) show "BOS / Engine Room / <Section>".
- */
-const ENGINE_ROOM_ROUTES: Record<string, string> = {
-  "/": "Engine Room",
-  // Future Engine Room sections:
-  // "/bridge": "Bridge",
-  // "/signals": "Signal Workspace",
-  // "/agents": "Agents",
-};
+type Segment = { label: string; href?: string };
 
-const BOS_LEVEL_ROUTES: Record<string, string> = {
-  "/settings": "Settings",
-  "/profile": "Profile",
-};
+/**
+ * Smart breadcrumb derived from pathname.
+ * Non-leaf segments are real <Link>s (navigable). Leaf segment is a plain span (current location).
+ * Never show hover/cursor affordances on elements that aren't actually clickable.
+ */
+function segmentsFor(pathname: string): Segment[] {
+  // Engine Room routes (including root)
+  if (pathname === "/") {
+    return [{ label: "BOS", href: "/" }, { label: "Engine Room" }];
+  }
+
+  // BOS-level routes
+  if (pathname === "/settings") {
+    return [{ label: "BOS", href: "/" }, { label: "Settings" }];
+  }
+  if (pathname === "/profile") {
+    return [{ label: "BOS", href: "/" }, { label: "Profile" }];
+  }
+
+  // Fallback — derive from last segment
+  const leaf = pathname.split("/").filter(Boolean).slice(-1)[0] ?? "Home";
+  return [
+    { label: "BOS", href: "/" },
+    { label: leaf.charAt(0).toUpperCase() + leaf.slice(1) },
+  ];
+}
 
 export function Breadcrumb() {
   const pathname = usePathname();
-
-  let path: string[];
-  if (pathname in ENGINE_ROOM_ROUTES) {
-    path = ["BOS", ENGINE_ROOM_ROUTES[pathname]];
-  } else if (pathname in BOS_LEVEL_ROUTES) {
-    path = ["BOS", BOS_LEVEL_ROUTES[pathname]];
-  } else {
-    // Fallback: use the last path segment, title-cased
-    const leaf = pathname.split("/").filter(Boolean).slice(-1)[0] ?? "Engine Room";
-    path = ["BOS", leaf.charAt(0).toUpperCase() + leaf.slice(1)];
-  }
+  const segments = segmentsFor(pathname);
 
   return (
-    <div className="flex items-center font-mono font-light text-[10px] uppercase tracking-[0.16em] text-warm-bright leading-none">
-      {path.map((seg, i) => (
-        <span key={`${seg}-${i}`} className="inline-flex items-center">
+    <nav
+      aria-label="Breadcrumb"
+      className="flex items-center font-mono font-light text-[10px] uppercase tracking-[0.16em] leading-none"
+    >
+      {segments.map((seg, i) => (
+        <span key={`${seg.label}-${i}`} className="inline-flex items-center">
           {i > 0 && (
-            <span className="text-warm-muted mx-[9px] font-light">/</span>
+            <span aria-hidden className="text-warm-muted mx-[9px] font-light">
+              /
+            </span>
           )}
-          <span
-            className={
-              i === path.length - 1
-                ? "text-off-white font-normal"
-                : "text-warm-bright hover:text-off-white transition-colors cursor-pointer"
-            }
-          >
-            {seg}
-          </span>
+          {seg.href ? (
+            <Link
+              href={seg.href}
+              className="text-warm-bright hover:text-off-white transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-off-white focus-visible:ring-offset-2 focus-visible:ring-offset-ink rounded-[2px]"
+            >
+              {seg.label}
+            </Link>
+          ) : (
+            <span
+              aria-current="page"
+              className="text-off-white font-normal"
+            >
+              {seg.label}
+            </span>
+          )}
         </span>
       ))}
-    </div>
+    </nav>
   );
 }
