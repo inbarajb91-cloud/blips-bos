@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useRef, useEffect } from "react";
 import { signOut } from "@/app/login/actions";
 
@@ -14,8 +15,15 @@ export function UserChip({ email }: { email: string }) {
         setOpen(false);
       }
     };
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
     document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("mousedown", handleClick);
+      document.removeEventListener("keydown", handleEscape);
+    };
   }, [open]);
 
   const initials = email.slice(0, 2).toUpperCase();
@@ -52,28 +60,27 @@ export function UserChip({ email }: { email: string }) {
               Founder · HELM
             </span>
           </div>
-          <div className="px-3 py-2.5 rounded-sm font-mono text-[9px] tracking-[0.2em] uppercase text-warm-bright hover:bg-white/[0.03] hover:text-off-white transition-colors flex items-center justify-between cursor-pointer">
-            <span>Profile</span>
-            <span className="font-mono text-[8px] tracking-[0.18em] text-warm-muted">
-              ⌘P
-            </span>
-          </div>
-          <div className="px-3 py-2.5 rounded-sm font-mono text-[9px] tracking-[0.2em] uppercase text-warm-bright hover:bg-white/[0.03] hover:text-off-white transition-colors flex items-center justify-between cursor-pointer">
-            <span>BOS Settings</span>
-            <span className="font-mono text-[8px] tracking-[0.18em] text-warm-muted">
-              ⌘,
-            </span>
-          </div>
+          <Link
+            href="/profile"
+            onClick={() => setOpen(false)}
+            className="px-3 py-2.5 rounded-sm font-mono text-[9px] tracking-[0.2em] uppercase text-warm-bright hover:bg-white/[0.03] hover:text-off-white transition-colors block"
+          >
+            Profile
+          </Link>
+          <Link
+            href="/settings"
+            onClick={() => setOpen(false)}
+            className="px-3 py-2.5 rounded-sm font-mono text-[9px] tracking-[0.2em] uppercase text-warm-bright hover:bg-white/[0.03] hover:text-off-white transition-colors block"
+          >
+            BOS Settings
+          </Link>
           <div className="h-px bg-white/[0.06] my-0.5" />
           <form action={signOut}>
             <button
               type="submit"
-              className="w-full px-3 py-2.5 rounded-sm font-mono text-[9px] tracking-[0.2em] uppercase text-warm-bright hover:bg-white/[0.03] hover:text-off-white transition-colors flex items-center justify-between cursor-pointer"
+              className="w-full px-3 py-2.5 rounded-sm font-mono text-[9px] tracking-[0.2em] uppercase text-warm-bright hover:bg-white/[0.03] hover:text-off-white transition-colors text-left cursor-pointer"
             >
-              <span>Log out</span>
-              <span className="font-mono text-[8px] tracking-[0.18em] text-warm-muted">
-                ⇧⌘Q
-              </span>
+              Log out
             </button>
           </form>
         </div>

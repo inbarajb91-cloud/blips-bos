@@ -1,4 +1,5 @@
 import { signIn } from "./actions";
+import { SubmitButton } from "./submit-button";
 
 export const metadata = { title: "Sign in · BLIPS BOS" };
 
@@ -63,12 +64,7 @@ export default async function LoginPage({
             </p>
           )}
 
-          <button
-            type="submit"
-            className="mt-2 bg-off-white text-ink font-mono text-sm uppercase tracking-[0.15em] py-2.5 rounded-md hover:bg-warm-bright transition-colors"
-          >
-            Enter
-          </button>
+          <SubmitButton />
         </form>
 
         <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-warm-muted mt-10 text-center">

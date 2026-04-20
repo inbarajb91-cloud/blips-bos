@@ -6,7 +6,7 @@ export function StatusBar({
   orcStatus?: string;
 }) {
   return (
-    <div className="chrome-brightness h-8 bg-ink/95 backdrop-blur-md border-t border-deep-divider flex items-center justify-between px-5 font-mono font-light text-[9px] uppercase tracking-[0.16em] text-warm-muted relative z-[5]">
+    <div className="chrome-brightness h-8 bg-ink/95 backdrop-blur-md border-t border-deep-divider flex items-center justify-between px-5 font-mono font-light text-[10px] uppercase tracking-[0.14em] text-warm-muted relative z-[5]">
       <div className="flex items-center gap-3.5">
         <span className="text-warm-bright">{orcStatus}</span>
       </div>

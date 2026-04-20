@@ -20,10 +20,7 @@ export default async function AppLayout({
 
   return (
     <div className="grid grid-rows-[48px_1fr_32px] h-dvh bg-ink">
-      <Nav
-        email={user.email ?? "founder@blipsstore.com"}
-        breadcrumb={["BOS", "Engine Room"]}
-      />
+      <Nav email={user.email ?? "founder@blipsstore.com"} />
       <ContentFrame>{children}</ContentFrame>
       <StatusBar />
     </div>
