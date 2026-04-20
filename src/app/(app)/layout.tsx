@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { QueryProvider } from "@/lib/query-client";
 import { Nav } from "@/components/shell/nav";
 import { ContentFrame } from "@/components/shell/content-frame";
 import { StatusBar } from "@/components/shell/status-bar";
@@ -19,10 +20,12 @@ export default async function AppLayout({
   }
 
   return (
-    <div className="grid grid-rows-[48px_1fr_32px] h-dvh bg-ink">
-      <Nav email={user.email ?? "founder@blipsstore.com"} />
-      <ContentFrame>{children}</ContentFrame>
-      <StatusBar />
-    </div>
+    <QueryProvider>
+      <div className="grid grid-rows-[48px_1fr_32px] h-dvh bg-ink">
+        <Nav email={user.email ?? "founder@blipsstore.com"} />
+        <ContentFrame>{children}</ContentFrame>
+        <StatusBar />
+      </div>
+    </QueryProvider>
   );
 }
