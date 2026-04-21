@@ -11,7 +11,7 @@ export function Nav({ email }: { email: string }) {
       <div className="flex items-center gap-5 h-full">
         <Wordmark />
         <span className="w-px h-4 bg-deep-divider" />
-        <ModuleSwitcher current="Engine Room" />
+        <ModuleSwitcher />
         <Breadcrumb />
       </div>
       <div className="flex items-center gap-4 h-full">

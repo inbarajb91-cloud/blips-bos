@@ -25,7 +25,7 @@ const SECTIONS = [
 
 export default function BOSSettingsPage() {
   return (
-    <div className="max-w-2xl mx-auto pt-10">
+    <div className="max-w-2xl mx-auto px-8 pt-10 pb-16">
       <h1 className="font-display text-2xl font-semibold mb-2">BOS Settings</h1>
       <p className="font-mono text-xs text-warm-muted mb-10 leading-relaxed">
         Platform-level configuration. For per-module settings, open the module

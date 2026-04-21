@@ -1,12 +1,13 @@
-export default function Home() {
-  return (
-    <div className="flex flex-col items-center gap-6 text-center pt-24">
-      <p className="font-editorial italic text-warm-bright text-3xl">
-        The pipeline awaits.
-      </p>
-      <p className="font-mono text-[11px] uppercase tracking-[0.25em] text-warm-muted">
-        Bridge · Signal Workspace · Agents · Settings
-      </p>
-    </div>
-  );
+import { redirect } from "next/navigation";
+
+/**
+ * BOS home route.
+ *
+ * Phase 4: there's only one module (Engine Room), so `/` redirects directly
+ * into it. When Store / Vendor / Marketing land, this becomes the BOS home
+ * with a module grid + system status — but that's premature for a single
+ * active module (would be one card + three ghost cards = clutter).
+ */
+export default function BosRoot() {
+  redirect("/engine-room");
 }

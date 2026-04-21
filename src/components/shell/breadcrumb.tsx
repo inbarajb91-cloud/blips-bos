@@ -11,9 +11,30 @@ type Segment = { label: string; href?: string };
  * Never show hover/cursor affordances on elements that aren't actually clickable.
  */
 function segmentsFor(pathname: string): Segment[] {
-  // Engine Room routes (including root)
-  if (pathname === "/") {
+  // Engine Room module routes
+  if (pathname === "/engine-room") {
     return [{ label: "BOS", href: "/" }, { label: "Engine Room" }];
+  }
+  if (pathname === "/engine-room/signals" || pathname.startsWith("/engine-room/signals/")) {
+    return [
+      { label: "BOS", href: "/" },
+      { label: "Engine Room", href: "/engine-room" },
+      { label: "Signal Workspace" },
+    ];
+  }
+  if (pathname === "/engine-room/agents" || pathname.startsWith("/engine-room/agents/")) {
+    return [
+      { label: "BOS", href: "/" },
+      { label: "Engine Room", href: "/engine-room" },
+      { label: "Agents" },
+    ];
+  }
+  if (pathname === "/engine-room/settings") {
+    return [
+      { label: "BOS", href: "/" },
+      { label: "Engine Room", href: "/engine-room" },
+      { label: "Settings" },
+    ];
   }
 
   // BOS-level routes
@@ -22,6 +43,11 @@ function segmentsFor(pathname: string): Segment[] {
   }
   if (pathname === "/profile") {
     return [{ label: "BOS", href: "/" }, { label: "Profile" }];
+  }
+
+  // BOS root (rarely rendered — it redirects to /engine-room)
+  if (pathname === "/") {
+    return [{ label: "BOS" }];
   }
 
   // Fallback — derive from last segment
