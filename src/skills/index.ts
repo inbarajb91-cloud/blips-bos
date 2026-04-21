@@ -1,43 +1,26 @@
-import type { AgentKey } from "@/lib/ai/types";
-import type { Skill } from "./types";
-
 /**
- * Skill registry.
+ * Skill registry — public entry point.
  *
- * Each phase adds its skill here:
- *   Phase 6:  BUNKER
- *   Phase 9:  STOKER
- *   Phase 10: FURNACE
- *   Phase 11: BOILER
- *   Phase 12: ENGINE
- *   post-launch: PROPELLER
- *   ORC (orchestrator) is written inline per-signal, not as a static skill.
+ * Re-exports the low-level registry functions from `./registry` (which lives
+ * in its own file to avoid circular imports — skill modules import from
+ * `./registry` directly, callers import from here).
  *
- * Empty for Phase 3 — the infrastructure (generateStructured, logger, router)
- * is validated via `scripts/test-llm.ts` with a throwaway Zod schema.
+ * Side-effect imports at the bottom ensure every implemented skill is
+ * registered when this module loads. Adding a new phase's skill = append
+ * one line here.
  */
-const registry = new Map<AgentKey, Skill<unknown, unknown>>();
 
-// Skills are registered by each phase's module import side effects.
-// Example (Phase 6):
-//   import "./bunker";  // registers BUNKER skill
+export {
+  registerSkill,
+  loadSkill,
+  listRegisteredSkills,
+} from "./registry";
 
-export function registerSkill<TIn, TOut>(skill: Skill<TIn, TOut>): void {
-  registry.set(skill.name, skill as unknown as Skill<unknown, unknown>);
-}
-
-export function loadSkill<TIn = unknown, TOut = unknown>(
-  name: AgentKey,
-): Skill<TIn, TOut> {
-  const s = registry.get(name);
-  if (!s) {
-    throw new Error(
-      `Skill '${name}' is not registered. Register it in the skill module before use.`,
-    );
-  }
-  return s as unknown as Skill<TIn, TOut>;
-}
-
-export function listRegisteredSkills(): AgentKey[] {
-  return Array.from(registry.keys());
-}
+// ─── Auto-register all implemented skills ───────────────────────
+// Each import's side effect calls registerSkill() on module evaluation.
+// Keep in phase order so the load sequence mirrors the pipeline.
+import "./bunker"; // Phase 6
+// import "./stoker";  // Phase 9
+// import "./furnace"; // Phase 10
+// import "./boiler";  // Phase 11
+// import "./engine";  // Phase 12
