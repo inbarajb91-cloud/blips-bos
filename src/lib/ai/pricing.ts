@@ -21,10 +21,16 @@ export const PRICING: Record<string, ModelPrice> = {
   "claude-opus-4.7": { input: 15.0, output: 75.0, cachedInput: 1.5 },
 
   // ─── Google Gemini ─────────────────────────────────────
+  // Pricing estimates — update as Google publishes current rates.
+  // Unknown entries = cost logs zero (pipeline still works, just no cost tracked).
   "gemini-2.5-flash": { input: 0.075, output: 0.3 },
+  "gemini-2.5-flash-lite": { input: 0.04, output: 0.15 },
   "gemini-2.5-pro": { input: 1.25, output: 5.0 },
   "gemini-2.0-flash": { input: 0.075, output: 0.3 },
+  "gemini-2.0-flash-lite": { input: 0.04, output: 0.15 },
   "gemini-2.0-flash-exp": { input: 0.0, output: 0.0 }, // experimental = free tier
+  "gemini-3-flash": { input: 0.1, output: 0.4 }, // estimate pending publication
+  "gemini-3.1-flash-lite": { input: 0.05, output: 0.2 }, // estimate pending publication
 
   // ─── Fallbacks (OpenAI, if enabled later) ──────────────
   "gpt-5": { input: 5.0, output: 15.0 },

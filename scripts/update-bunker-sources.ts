@@ -150,6 +150,61 @@ async function main() {
     await upsert("llm_synthesis_topics_per_run", LLM_SYNTHESIS_TOPICS_PER_RUN);
     await upsert("llm_synthesis_temperature", LLM_SYNTHESIS_TEMPERATURE);
 
+    // Fallback chains — Flash-tier for extraction/tagging agents,
+    // Pro-tier for judgment/creative. generateStructured walks these
+    // in order when a model hits a transient error.
+    const FLASH_TIER_CHAIN = [
+      "gemini-2.5-flash",
+      "gemini-2.0-flash",
+      "gemini-2.5-flash-lite",
+      "gemini-3-flash",
+      "gemini-2.5-pro",
+    ];
+    const PRO_TIER_CHAIN = [
+      "gemini-2.5-pro",
+      "gemini-3-flash",
+      "gemini-2.5-flash",
+      "gemini-2.0-flash",
+    ];
+
+    // Write fallback chains + primary model for every agent
+    const agents: Array<{
+      name: string;
+      primary: string;
+      chain: string[];
+    }> = [
+      // Flash tier — fast extraction, cheap
+      { name: "BUNKER", primary: "gemini-2.5-flash", chain: FLASH_TIER_CHAIN },
+      { name: "STOKER", primary: "gemini-2.5-flash", chain: FLASH_TIER_CHAIN },
+      {
+        name: "PROPELLER",
+        primary: "gemini-2.5-flash",
+        chain: FLASH_TIER_CHAIN,
+      },
+      // Pro tier — judgment, creative
+      { name: "ORC", primary: "gemini-2.5-pro", chain: PRO_TIER_CHAIN },
+      { name: "FURNACE", primary: "gemini-2.5-pro", chain: PRO_TIER_CHAIN },
+      { name: "BOILER", primary: "gemini-2.5-pro", chain: PRO_TIER_CHAIN },
+      { name: "ENGINE", primary: "gemini-2.5-pro", chain: PRO_TIER_CHAIN },
+    ];
+
+    console.log("\nUpserting model fallback chains:");
+    for (const agent of agents) {
+      await sql`
+        INSERT INTO config_agents (org_id, agent_name, key, value)
+        VALUES (${org.id}::uuid, ${agent.name}::agent_name, 'model', ${JSON.stringify(agent.primary)}::jsonb)
+        ON CONFLICT (org_id, agent_name, key) DO UPDATE
+          SET value = EXCLUDED.value, updated_at = now()
+      `;
+      await sql`
+        INSERT INTO config_agents (org_id, agent_name, key, value)
+        VALUES (${org.id}::uuid, ${agent.name}::agent_name, 'model_fallback_chain', ${JSON.stringify(agent.chain)}::jsonb)
+        ON CONFLICT (org_id, agent_name, key) DO UPDATE
+          SET value = EXCLUDED.value, updated_at = now()
+      `;
+      console.log(`  ↻ ${agent.name}: ${agent.primary} → ${agent.chain.length} in chain`);
+    }
+
     console.log(`\n✓ Updated ${9} config keys for BUNKER`);
     console.log(`  ${REDDIT_SUBREDDITS.length} subreddits`);
     console.log(`  ${RSS_FEEDS.length} RSS feeds`);
