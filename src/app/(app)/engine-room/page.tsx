@@ -4,6 +4,7 @@ import { db, bunkerCandidates } from "@/db";
 import { getCurrentUserWithOrg } from "@/lib/auth/current-user";
 import { CandidateCard } from "@/components/engine-room/candidate-card";
 import { CollectButton } from "@/components/engine-room/collect-button";
+import { SubmitSignalDialog } from "@/components/engine-room/submit-signal-dialog";
 import { BridgeRealtime } from "@/components/engine-room/bridge-realtime";
 
 export const metadata = { title: "Bridge · Engine Room · BLIPS BOS" };
@@ -58,7 +59,10 @@ export default async function BridgePage() {
             in — approve to enter the pipeline, dismiss to park.
           </p>
         </div>
-        <CollectButton />
+        <div className="flex items-center gap-3">
+          <CollectButton />
+          <SubmitSignalDialog />
+        </div>
       </header>
 
       <section>
