@@ -66,6 +66,10 @@ const REDDIT_SUBREDDITS = [
 
 const REDDIT_LIMIT_PER_SUB = 3;
 
+// Only URLs that were confirmed working in the April 21 smoke test.
+// 8 feeds dropped after 404/TLS/DNS/parse errors — add back when verified
+// live URLs found (see SOURCES.md "Future work — LLM-driven source
+// discovery" for the long-term answer to this maintenance burden).
 const RSS_FEEDS = [
   // Global cultural/intellectual
   "https://aeon.co/feed.rss",
@@ -76,23 +80,14 @@ const RSS_FEEDS = [
   "https://www.notboring.co/feed",
   "https://fs.blog/feed/",
   "https://www.lennysnewsletter.com/feed",
-  "https://every.to/feed.xml",
   "http://www.aaronsw.com/2002/feeds/pgessays.rss",
-  "https://feeds.hbr.org/harvardbusiness",
   // Indian mainstream
   "https://www.thehindu.com/feeder/default.rss",
   "https://indianexpress.com/feed/",
-  "https://feeds.feedburner.com/scroll-full",
-  "https://thewire.in/rss",
-  "https://lifestyle.livemint.com/lm-feed.rss",
   // Indian founder + intellectual
   "https://ankurwarikoo.substack.com/feed",
-  "https://seenunseen.in/episodes/feed.xml",
   // Music
-  "https://pitchfork.com/rss/reviews/albums/",
   "https://feeds.npr.org/1039/rss.xml",
-  // Sports + culture
-  "https://www.theringer.com/rss/index.xml",
   // Entertainment
   "https://www.filmcompanion.in/feed",
 ];
