@@ -182,9 +182,24 @@ export async function generateStructured<T>(
  * Permanent: the problem is with the request itself (auth, malformed input,
  * unknown model ID). No other model will fix it.
  */
+/**
+ * "Transient" here means "this specific model can't serve the request right
+ * now — try the next model in the chain." Includes:
+ *   - Capacity issues (rate limit, overload, high demand)
+ *   - Transport issues (timeout, connection reset)
+ *   - Schema mismatches (different model may handle it better)
+ *   - Model-availability issues (deprecated, not found, not available) —
+ *     these are permanent for THAT model but resolvable by another model
+ *
+ * Only NON-fallback-eligible errors are:
+ *   - Auth (bad API key — same for all models)
+ *   - Quota exhausted at org/project level (not model-specific)
+ *   - Zod validation of input (our code is wrong, not the model's)
+ */
 function isTransientError(err: Error): boolean {
   const msg = (err.message || "").toLowerCase();
   const transientSignatures = [
+    // Capacity / rate limits
     "high demand",
     "experiencing high demand",
     "rate limit",
@@ -195,18 +210,30 @@ function isTransientError(err: Error): boolean {
     "500",
     "service unavailable",
     "internal server error",
+    "overloaded",
+    "capacity",
+    "try again later",
+    "failed after",
+    // Transport
     "timeout",
     "timed out",
     "econnreset",
     "econnrefused",
     "etimedout",
+    "fetch failed",
+    // Schema / output issues
     "no object generated",
     "response did not match schema",
     "invalid response",
-    "overloaded",
-    "capacity",
-    "try again later",
-    "failed after",
+    // Model availability — permanent for this model, another may work
+    "no longer available",
+    "not available",
+    "not found",
+    "deprecated",
+    "does not exist",
+    "invalid model",
+    "unknown model",
+    "model not supported",
   ];
   return transientSignatures.some((sig) => msg.includes(sig));
 }

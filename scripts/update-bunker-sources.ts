@@ -150,21 +150,20 @@ async function main() {
     await upsert("llm_synthesis_topics_per_run", LLM_SYNTHESIS_TOPICS_PER_RUN);
     await upsert("llm_synthesis_temperature", LLM_SYNTHESIS_TEMPERATURE);
 
-    // Fallback chains — Flash-tier for extraction/tagging agents,
-    // Pro-tier for judgment/creative. generateStructured walks these
-    // in order when a model hits a transient error.
+    // Fallback chains — only known-available model IDs.
+    // Dropped: gemini-2.0-flash (deprecated for new users per Google, caught
+    // by April 21 eval run), gemini-3-flash / gemini-3.1-flash-lite (I
+    // guessed at these; they don't resolve as of April 21). Chains now hold
+    // strictly the Gemini 2.5 family, which all resolve.
     const FLASH_TIER_CHAIN = [
       "gemini-2.5-flash",
-      "gemini-2.0-flash",
       "gemini-2.5-flash-lite",
-      "gemini-3-flash",
       "gemini-2.5-pro",
     ];
     const PRO_TIER_CHAIN = [
       "gemini-2.5-pro",
-      "gemini-3-flash",
       "gemini-2.5-flash",
-      "gemini-2.0-flash",
+      "gemini-2.5-flash-lite",
     ];
 
     // Write fallback chains + primary model for every agent
