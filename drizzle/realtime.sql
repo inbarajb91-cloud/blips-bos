@@ -1,0 +1,24 @@
+-- ══════════════════════════════════════════════════════════════════
+-- BLIPS BOS — Supabase Realtime publication setup (reference)
+-- ══════════════════════════════════════════════════════════════════
+-- Tables to include in the supabase_realtime publication so that
+-- `useRealtimeChannel("<table>", ...)` fires on row changes.
+--
+-- NOTE: ALTER PUBLICATION doesn't support IF EXISTS / IF NOT EXISTS, so the
+-- apply script (scripts/apply-realtime.ts) checks pg_publication_tables and
+-- ADDs only where missing — idempotent via a per-table check in JS, not SQL.
+--
+-- This file is a REFERENCE of which tables should be in the publication.
+-- The actual work happens in the apply script.
+-- ══════════════════════════════════════════════════════════════════
+
+-- Target tables:
+--   public.signals            — pipeline signals, main live-updating surface
+--   public.bunker_candidates  — triage queue
+--   public.agent_outputs      — per-stage rendered outputs
+--   public.agent_logs         — LLM call telemetry (for live cost display)
+--   public.signal_locks       — multi-user edit coordination
+
+-- Tables intentionally NOT streaming:
+--   users, orgs, config_*, batches, signal_decades, decision_history,
+--   agent_conversations — either rarely change or don't need live push
