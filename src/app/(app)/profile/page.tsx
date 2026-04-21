@@ -24,7 +24,7 @@ export default async function ProfilePage() {
     : "—";
 
   return (
-    <div className="max-w-xl mx-auto px-8 pt-10 pb-16">
+    <div className="max-w-3xl mx-auto px-6 md:px-10 pt-10 pb-16">
       <h1 className="font-display text-2xl font-semibold mb-2">Profile</h1>
       <p className="font-mono text-xs text-warm-muted mb-10 leading-relaxed">
         Your account on BLIPS BOS.

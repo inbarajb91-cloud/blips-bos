@@ -33,8 +33,8 @@ export default async function AgentsPage() {
   }
 
   return (
-    <div className="max-w-5xl mx-auto px-8 pt-10 pb-16">
-      <header className="mb-10">
+    <div className="w-full px-6 md:px-10 lg:px-14 pt-10 pb-16 max-w-[1800px] mx-auto">
+      <header className="mb-10 max-w-4xl">
         <h1 className="font-display text-2xl font-semibold leading-tight">
           Agents
         </h1>

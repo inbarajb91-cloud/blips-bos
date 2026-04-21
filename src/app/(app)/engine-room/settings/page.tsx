@@ -32,7 +32,7 @@ const SECTIONS = [
 
 export default function EngineRoomSettingsPage() {
   return (
-    <div className="max-w-2xl mx-auto px-8 pt-10 pb-16">
+    <div className="max-w-4xl mx-auto px-6 md:px-10 pt-10 pb-16">
       <h1 className="font-display text-2xl font-semibold mb-2">
         Engine Room Settings
       </h1>

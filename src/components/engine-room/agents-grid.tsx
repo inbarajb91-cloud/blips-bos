@@ -20,7 +20,7 @@ export function AgentsGrid({ configs }: { configs: AgentConfigMap }) {
         <h2 className="font-mono text-[10px] tracking-[0.25em] uppercase text-warm-muted mb-4">
           Skills
         </h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {SKILLS.map((skill) => {
             const cfg = configs[skill.agentKey] ?? {};
             return (
