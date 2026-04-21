@@ -89,6 +89,7 @@ export const signalSource = pgEnum("signal_source", [
   "trends",
   "newsapi",
   "upload",
+  "llm_synthesis",
 ]);
 
 // ══════════════════════════════════════════════════════════════════

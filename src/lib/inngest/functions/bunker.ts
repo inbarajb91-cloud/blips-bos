@@ -5,6 +5,10 @@ import { db, bunkerCandidates, signals, type agentOutputs } from "@/db";
 import { computeContentHash } from "@/lib/sources/dedup";
 import { logAgentCall } from "@/lib/ai/logger";
 import { fetchMockCandidates } from "@/lib/sources/mock";
+import { fetchRedditCandidates } from "@/lib/sources/reddit";
+import { fetchRssCandidates } from "@/lib/sources/rss";
+import { fetchTrendsCandidates } from "@/lib/sources/trends";
+import { fetchLlmSynthesisCandidates } from "@/lib/sources/llm-synthesis";
 import type { SourceConnector, RawCandidate } from "@/lib/sources/types";
 import type { BunkerInput, BunkerOutput } from "@/skills/bunker";
 
@@ -31,17 +35,20 @@ import type { BunkerInput, BunkerOutput } from "@/skills/bunker";
 // reads from config_agents.BUNKER.sources_enabled.
 const SOURCES: Record<string, SourceConnector> = {
   mock: fetchMockCandidates,
-  // rss: fetchRssCandidates,       // Phase 6, no credential
-  // trends: fetchTrendsCandidates, // Phase 6, no credential
-  // reddit: fetchRedditCandidates, // Phase 6, needs credential
-  // newsapi: fetchNewsApiCandidates, // Phase 6, needs credential
+  reddit: fetchRedditCandidates,
+  rss: fetchRssCandidates,
+  trends: fetchTrendsCandidates,
+  llm_synthesis: fetchLlmSynthesisCandidates,
 };
 
 /**
  * Core runner. Iterates enabled sources, dedups, extracts, persists.
  * Returns per-run stats for observability.
+ *
+ * Exported so scripts/test-bunker-real.ts can exercise it directly without
+ * going through the Inngest event bus.
  */
-async function runBunkerCollection(params: {
+export async function runBunkerCollection(params: {
   orgId: string;
   sources?: string[];
   limit?: number;
