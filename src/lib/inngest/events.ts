@@ -90,10 +90,12 @@ export type BlipsEvents = {
 
   // ─── Dev / infrastructure ────────────────────────────────────
   /**
-   * Test event used by scripts/test-pipeline.ts and any future
-   * orchestrator validation. Real agent events above never share this name.
+   * Event-bus ping. Fired by `scripts/fire-test-event.ts` to validate that
+   * events travel from our code → Inngest Cloud → our Vercel function →
+   * back to Inngest with a successful return. No LLM, no DB writes, no
+   * skill dependency — pure plumbing check.
    */
   "test.run": {
-    data: { orgId: string; signalId: string; message: string };
+    data: { message: string };
   };
 };

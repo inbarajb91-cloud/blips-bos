@@ -1,12 +1,10 @@
 import { inngest } from "../client";
-import { runSkill } from "@/lib/orc/orchestrator";
 
 /**
  * Inngest functions.
  *
- * Phase 5 ships only the test function — it validates the event-bus →
- * orchestrator → DB pipeline end-to-end without committing to any specific
- * skill's shape. Real pipeline functions land phase-by-phase:
+ * Phase 5 ships only the test function — pure event-bus plumbing check.
+ * Real pipeline functions land phase-by-phase:
  *
  *   Phase 6:  bunkerCollectionScheduled (cron), bunkerCollectionOnDemand,
  *             bunkerCandidateApproved (human-gate → fires stoker.ready)
@@ -21,14 +19,14 @@ import { runSkill } from "@/lib/orc/orchestrator";
  */
 
 /**
- * Test function — validates the orchestrator end-to-end via the real Inngest
- * event bus. Used to verify event delivery, durability, retries from the
- * `test.run` event. Requires a skill registered under agentKey "BUNKER" at
- * call time (test scripts register a mock inline before firing).
+ * Event-bus ping test.
  *
- * In production once BUNKER is real (Phase 6), this function can stay as a
- * no-op smoke test OR be removed — its usefulness drops once real pipeline
- * functions exist.
+ * Validates end-to-end: event firing → Inngest Cloud → Vercel function →
+ * return value back to Inngest dashboard. No skill, no LLM, no DB — pure
+ * plumbing check. Always succeeds.
+ *
+ * Fire from `scripts/fire-test-event.ts` (local) or Inngest dashboard
+ * (Events → Send test event).
  */
 export const testRun = inngest.createFunction(
   {
@@ -36,26 +34,15 @@ export const testRun = inngest.createFunction(
     triggers: [{ event: "test.run" }],
   },
   async ({ event, step }) => {
-    const data = event.data as {
-      orgId: string;
-      signalId: string;
-      message: string;
-    };
-    const { orgId, signalId, message } = data;
+    const data = event.data as { message: string };
 
-    const result = await step.run("run-test-skill", async () => {
-      return await runSkill({
-        agentKey: "BUNKER",
-        orgId,
-        signalId,
-        input: { message },
-      });
-    });
+    const echo = await step.run("echo", async () => ({
+      received: data.message,
+      echoed_at: new Date().toISOString(),
+      env: process.env.NODE_ENV ?? "unknown",
+      node_version: process.version,
+    }));
 
-    return {
-      outputId: result.outputId,
-      model: result.model,
-      tokens: result.usage.totalTokens,
-    };
+    return echo;
   },
 );
