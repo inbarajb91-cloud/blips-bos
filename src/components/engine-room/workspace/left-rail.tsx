@@ -22,10 +22,18 @@ export function LeftRail({
   signal,
   collection,
   lockStatus,
+  onReleaseLock,
+  onAcquireLock,
 }: {
   signal: typeof signals.$inferSelect;
   collection: typeof collections.$inferSelect | null;
   lockStatus: LockStatus | null;
+  /** Release the lock voluntarily. No-op if the current user isn't the
+   *  holder. The button in the lock row calls this. */
+  onReleaseLock: () => void;
+  /** Re-acquire a previously-released lock. Only available when the
+   *  signal has no active lock (user released, or it expired). */
+  onAcquireLock: () => void;
 }) {
   return (
     <div className="p-[32px_28px] space-y-7">
@@ -97,12 +105,22 @@ export function LeftRail({
         <MetaRow k="Source" v={signal.source} />
         <MetaRow k="Created" v={formatDate(signal.createdAt)} />
         <MetaRow k="Updated" v={formatDate(signal.updatedAt)} />
-        {/* Lock row — live status from signal_locks.
-            - Still loading (lockStatus null) → small "…" placeholder
-            - Held by current user → muted timer ("you · 28m left")
-            - Held by someone else → prominent warning ("Sarah · 22m left")
-            - No lock (shouldn't happen while mounted but defensive) → em dash */}
-        <MetaRow k="Lock" v={<LockValue status={lockStatus} />} />
+        {/* Lock row — live status from signal_locks, with interactive
+            release/acquire toggle.
+            - Still loading (lockStatus null) → "…" placeholder
+            - Held by me → muted timer + [Release] button
+            - Released by me (no active lock) → "unlocked" + [Lock] button
+            - Held by someone else → warning color + holder name, no button */}
+        <MetaRow
+          k="Lock"
+          v={
+            <LockToggle
+              status={lockStatus}
+              onRelease={onReleaseLock}
+              onAcquire={onAcquireLock}
+            />
+          }
+        />
       </div>
 
       {/* Read-only banner — appears when the lock is held by someone
@@ -128,31 +146,72 @@ export function LeftRail({
 // ─── Presentational helpers ────────────────────────────────────────
 
 /**
- * Lock row value — renders differently based on who holds the lock.
- * Self-lock is quiet (your own name + timer), other-lock is louder
- * (warning color on holder's name + timer).
+ * Lock row value — renders differently based on who holds the lock,
+ * and exposes a release/acquire toggle so the user can voluntarily
+ * step out of edit mode (or step back in).
+ *
+ * Four states:
+ *   1. Loading (status === null) → small placeholder
+ *   2. I hold it → timer + [Release] button
+ *   3. No active lock (I released, or expired) → "unlocked" + [Lock] button
+ *   4. Someone else holds it → warning color + holder, no button (can't steal)
+ *
+ * Tiny visual detail: the button sits to the right of the status text
+ * and picks up a decade-tinted border on hover to signal it's actionable
+ * without shouting.
  */
-function LockValue({ status }: { status: LockStatus | null }) {
+function LockToggle({
+  status,
+  onRelease,
+  onAcquire,
+}: {
+  status: LockStatus | null;
+  onRelease: () => void;
+  onAcquire: () => void;
+}) {
   if (status === null) {
     return <span className="text-t5">…</span>;
   }
+
+  // No active lock — user released voluntarily or lock expired.
+  // Offer re-acquire button so they can step back into edit mode.
   if (!status.lockedByAuthId || !status.expiresAt) {
-    // Shouldn't happen in mounted workspace (we acquire on mount) but
-    // covers the fail-soft branch where acquire threw.
-    return <span className="text-t5">—</span>;
+    return (
+      <span className="inline-flex items-center gap-[10px]">
+        <span className="text-t5 italic font-editorial text-[12px]">unlocked</span>
+        <button
+          type="button"
+          onClick={onAcquire}
+          className="font-mono text-[9px] tracking-[0.22em] uppercase text-t3 hover:text-t1 transition-colors px-[8px] py-[3px] border border-rule-2 rounded-sm hover:border-[rgba(var(--d),0.5)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2"
+          aria-label="Acquire edit lock on this signal"
+        >
+          Lock
+        </button>
+      </span>
+    );
   }
 
   const timeLeft = formatTimeLeft(status.expiresAt);
 
   if (status.heldByMe) {
     return (
-      <span className="text-t4">
-        you · <span className="text-t2">{timeLeft}</span>
+      <span className="inline-flex items-center gap-[10px]">
+        <span className="text-t4">
+          you · <span className="text-t2">{timeLeft}</span>
+        </span>
+        <button
+          type="button"
+          onClick={onRelease}
+          className="font-mono text-[9px] tracking-[0.22em] uppercase text-t3 hover:text-t1 transition-colors px-[8px] py-[3px] border border-rule-2 rounded-sm hover:border-[rgba(var(--d),0.5)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2"
+          aria-label="Release edit lock on this signal"
+        >
+          Release
+        </button>
       </span>
     );
   }
 
-  // Someone else — lean warning color
+  // Someone else — lean warning color, no button (no stealing)
   const holder = status.lockedByEmail ?? "someone";
   const shortHolder = holder.includes("@") ? holder.split("@")[0] : holder;
   return (

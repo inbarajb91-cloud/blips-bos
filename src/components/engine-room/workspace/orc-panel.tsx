@@ -173,7 +173,13 @@ export function OrcPanel({
             onSend={handleSend}
             disabled={conversationId === null || pending || !canSend}
             signalShortcode={signal.shortcode}
-            readOnly={!canSend}
+            disabledReason={
+              !canSend
+                ? lockStatus && lockStatus.lockedByEmail
+                  ? "other-user"
+                  : "self-released"
+                : null
+            }
           />
           <button
             type="button"
@@ -248,16 +254,19 @@ function OrcInput({
   onSend,
   disabled,
   signalShortcode,
-  readOnly,
+  disabledReason,
 }: {
   value: string;
   onChange: (v: string) => void;
   onSend: () => void;
   disabled: boolean;
   signalShortcode: string;
-  /** When true, placeholder text shifts to "read-only" messaging so
-   *  the user knows why the input won't accept. */
-  readOnly?: boolean;
+  /** Why is the input disabled? Drives the placeholder message so the
+   *  user understands the state:
+   *    - "other-user": someone else holds the edit lock
+   *    - "self-released": user voluntarily released, can re-lock via rail
+   *    - null: input is active */
+  disabledReason?: "other-user" | "self-released" | null;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -287,7 +296,13 @@ function OrcInput({
           onSend();
         }
       }}
-      placeholder={readOnly ? "read-only — another user is editing" : "ask, nudge, or steer…"}
+      placeholder={
+        disabledReason === "other-user"
+          ? "read-only — another user is editing"
+          : disabledReason === "self-released"
+            ? "unlocked — click Lock in left rail to send"
+            : "ask, nudge, or steer…"
+      }
       aria-label={`Message ORC about signal ${signalShortcode}`}
       disabled={disabled}
       maxLength={2000}

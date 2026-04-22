@@ -105,7 +105,16 @@ export function WorkspaceFrame({
   // fresh lock), we still render the workspace — just read-only, with
   // the OrcPanel input disabled and a lock chip in the rail explaining
   // who holds it.
+  //
+  // Voluntary release (Phase 7 post-feedback):
+  //   The lock row in LeftRail exposes a [Release] button. When the
+  //   user clicks it, we flip `userReleasedRef` so:
+  //     - the 5-min renew skips (doesn't silently re-acquire)
+  //     - unmount + beforeunload skip the auto-release (nothing to release)
+  //   Re-acquire via the [Lock] button clears the flag and starts the
+  //   lifecycle again.
   const [lockStatus, setLockStatus] = useState<LockStatus | null>(null);
+  const userReleasedRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -128,9 +137,12 @@ export function WorkspaceFrame({
         }
       });
 
-    // Renew every 5 minutes so the lock doesn't expire on an active tab
+    // Renew every 5 minutes so the lock doesn't expire on an active tab.
+    // Skip when the user has voluntarily released — otherwise we'd
+    // silently steal the lock back every 5 min and defeat the toggle.
     const renewInterval = setInterval(
       () => {
+        if (userReleasedRef.current) return;
         renewSignalLock(signal.id)
           .then((status) => {
             if (!cancelled) setLockStatus(status);
@@ -146,6 +158,7 @@ export function WorkspaceFrame({
     // async, so this is fire-and-forget; the lock's 30-min expiry covers
     // the case where release doesn't complete before tab close.
     const handleBeforeUnload = () => {
+      if (userReleasedRef.current) return;
       releaseSignalLock(signal.id).catch(() => {
         /* ignore — expiry will clean up */
       });
@@ -156,12 +169,44 @@ export function WorkspaceFrame({
       cancelled = true;
       clearInterval(renewInterval);
       window.removeEventListener("beforeunload", handleBeforeUnload);
-      // Explicit release on navigation away within the app
-      releaseSignalLock(signal.id).catch(() => {
-        /* ignore */
-      });
+      // Explicit release on navigation away within the app — but only
+      // if we still hold it. If user voluntarily released earlier, the
+      // row is already gone; no need to call again.
+      if (!userReleasedRef.current) {
+        releaseSignalLock(signal.id).catch(() => {
+          /* ignore */
+        });
+      }
     };
   }, [signal.id]);
+
+  // Handlers for the LeftRail lock toggle.
+  async function handleReleaseLock() {
+    try {
+      await releaseSignalLock(signal.id);
+      userReleasedRef.current = true;
+      // Reflect "no lock" immediately — OrcPanel will disable send,
+      // LeftRail will swap to the [Lock] button.
+      setLockStatus({
+        heldByMe: false,
+        lockedByAuthId: null,
+        lockedByEmail: null,
+        expiresAt: null,
+      });
+    } catch (e) {
+      console.error("Failed to release signal lock:", e);
+    }
+  }
+
+  async function handleAcquireLock() {
+    try {
+      const status = await acquireSignalLock(signal.id);
+      userReleasedRef.current = false;
+      setLockStatus(status);
+    } catch (e) {
+      console.error("Failed to re-acquire signal lock:", e);
+    }
+  }
 
   // Resize handle drag
   const resizingRef = useRef(false);
@@ -344,6 +389,8 @@ export function WorkspaceFrame({
               signal={signal}
               collection={collection}
               lockStatus={lockStatus}
+              onReleaseLock={handleReleaseLock}
+              onAcquireLock={handleAcquireLock}
             />
           </div>
         </aside>
