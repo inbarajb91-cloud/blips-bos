@@ -1,9 +1,12 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, lte, sql } from "drizzle-orm";
 import { inngest } from "../client";
-import { runSkill } from "@/lib/orc/orchestrator";
-import { db, bunkerCandidates, signals, type agentOutputs } from "@/db";
+import {
+  db,
+  bunkerCandidates,
+  collections,
+  collectionRuns,
+} from "@/db";
 import { computeContentHash } from "@/lib/sources/dedup";
-import { logAgentCall } from "@/lib/ai/logger";
 import { fetchMockCandidates } from "@/lib/sources/mock";
 import { fetchRedditCandidates } from "@/lib/sources/reddit";
 import { fetchRssCandidates } from "@/lib/sources/rss";
@@ -52,8 +55,9 @@ export async function runBunkerCollection(params: {
   orgId: string;
   sources?: string[];
   limit?: number;
+  collectionId?: string; // Phase 6.5: if present, tag every candidate with it
 }) {
-  const { orgId, sources, limit = 20 } = params;
+  const { orgId, sources, limit = 20, collectionId } = params;
   const enabledSources = sources ?? Object.keys(SOURCES);
 
   let fetched = 0;
@@ -80,6 +84,9 @@ export async function runBunkerCollection(params: {
     fetched += raw.length;
 
     for (const item of raw) {
+      // Respect target_count: stop extracting once we've hit the goal.
+      if (extracted >= limit) break;
+
       const contentHash = computeContentHash({
         url: item.url,
         title: item.title,
@@ -132,11 +139,12 @@ export async function runBunkerCollection(params: {
         continue;
       }
 
-      // Persist candidate row
+      // Persist candidate row — stamped with collectionId when present.
       const [row] = await db
         .insert(bunkerCandidates)
         .values({
           orgId,
+          collectionId: collectionId ?? null,
           shortcode: bunkerOutput.shortcode,
           workingTitle: bunkerOutput.working_title,
           concept: bunkerOutput.concept,
@@ -223,8 +231,9 @@ export const bunkerCollectionScheduled = inngest.createFunction(
 );
 
 /**
- * On-demand BUNKER collection — fired from the Bridge "Collect now" button.
- * User can restrict to specific sources via event data.
+ * Legacy on-demand BUNKER collection — no collection context.
+ * Phase 6.5: the Collect-now modal uses bunker.collection.run instead
+ * (which runs a specific named collection). Kept for legacy callers.
  */
 export const bunkerCollectionOnDemand = inngest.createFunction(
   {
@@ -242,3 +251,203 @@ export const bunkerCollectionOnDemand = inngest.createFunction(
     return stats;
   },
 );
+
+/**
+ * Phase 6.5 — Run BUNKER against a specific collection.
+ * Fired by createCollection (Instant/Batch) or the scheduled-check cron.
+ * Writes a collection_runs row for observability and updates the
+ * collection's status + counters in lockstep with the run.
+ *
+ * Resilience: onFailure handler below flips the collection + its run back
+ * to 'failed' if Inngest exhausts retries. Without this, a crashed run
+ * (Gemini timeout, DB hiccup, etc.) leaves the collection stuck at
+ * status='running' forever — Run now won't help because it gates on
+ * !isActive. onFailure is Inngest's permanent-failure hook.
+ */
+export const bunkerCollectionRun = inngest.createFunction(
+  {
+    id: "bunker-collection-run",
+    triggers: [{ event: "bunker.collection.run" }],
+    onFailure: async ({ event, error }) => {
+      const { orgId, collectionId } = (
+        event as unknown as {
+          data: { event: { data: { orgId: string; collectionId: string } } };
+        }
+      ).data.event.data;
+      const msg = (error as Error)?.message?.slice(0, 500) ?? "unknown error";
+      try {
+        await db
+          .update(collections)
+          .set({ status: "failed", updatedAt: new Date() })
+          .where(
+            and(
+              eq(collections.id, collectionId),
+              eq(collections.orgId, orgId),
+            ),
+          );
+        await db
+          .update(collectionRuns)
+          .set({
+            status: "failed",
+            completedAt: new Date(),
+            errorMessage: msg,
+          })
+          .where(
+            and(
+              eq(collectionRuns.collectionId, collectionId),
+              eq(collectionRuns.orgId, orgId),
+              eq(collectionRuns.status, "running"),
+            ),
+          );
+      } catch (cleanupErr) {
+        console.error(
+          "[bunker-collection-run] onFailure cleanup failed:",
+          cleanupErr,
+        );
+      }
+    },
+  },
+  async ({ event, step }) => {
+    const { orgId, collectionId } = event.data as {
+      orgId: string;
+      collectionId: string;
+    };
+
+    // Load collection + create run row, mark running.
+    const { collection, runId } = await step.run("start-run", async () => {
+      const [c] = await db
+        .select()
+        .from(collections)
+        .where(
+          and(eq(collections.id, collectionId), eq(collections.orgId, orgId)),
+        )
+        .limit(1);
+      if (!c) throw new Error("Collection not found");
+
+      const [run] = await db
+        .insert(collectionRuns)
+        .values({
+          collectionId,
+          orgId,
+          status: "running",
+          startedAt: new Date(),
+        })
+        .returning({ id: collectionRuns.id });
+
+      await db
+        .update(collections)
+        .set({ status: "running", updatedAt: new Date() })
+        .where(eq(collections.id, collectionId));
+
+      return { collection: c, runId: run.id };
+    });
+
+    // Execute BUNKER run against this collection's target.
+    const stats = await step.run("collect", async () => {
+      return await runBunkerCollection({
+        orgId,
+        limit: collection.targetCount,
+        collectionId,
+      });
+    });
+
+    // Finalize run + update collection counters.
+    await step.run("finalize-run", async () => {
+      await db
+        .update(collectionRuns)
+        .set({
+          status: stats.errors > 0 && stats.extracted === 0 ? "failed" : "idle",
+          completedAt: new Date(),
+          fetchedRaw: stats.fetched,
+          deduped: stats.deduped,
+          extracted: stats.extracted,
+          errors: stats.errors,
+        })
+        .where(eq(collectionRuns.id, runId));
+
+      // Compute nextRunAt for scheduled collections.
+      const nextRunAt =
+        collection.type === "scheduled" && collection.cadence
+          ? cadenceToNextRun(collection.cadence)
+          : null;
+
+      await db
+        .update(collections)
+        .set({
+          status: "idle",
+          lastRunAt: new Date(),
+          nextRunAt,
+          candidateCount: sql`(SELECT count(*) FROM bunker_candidates WHERE collection_id = ${collectionId} AND org_id = ${orgId} AND status = 'PENDING_REVIEW')`,
+          signalCount: sql`(SELECT count(*) FROM signals WHERE collection_id = ${collectionId} AND org_id = ${orgId})`,
+          updatedAt: new Date(),
+        })
+        .where(and(eq(collections.id, collectionId), eq(collections.orgId, orgId)));
+    });
+
+    return { runId, ...stats };
+  },
+);
+
+/**
+ * Hourly cron — find scheduled collections whose next_run_at has passed,
+ * fan out to bunker.collection.run for each.
+ */
+export const bunkerScheduledCheck = inngest.createFunction(
+  {
+    id: "bunker-scheduled-check",
+    triggers: [{ cron: "0 * * * *" }],
+  },
+  async ({ step }) => {
+    const due = await step.run("find-due", async () => {
+      return await db
+        .select({
+          id: collections.id,
+          orgId: collections.orgId,
+          name: collections.name,
+        })
+        .from(collections)
+        .where(
+          and(
+            eq(collections.type, "scheduled"),
+            eq(collections.status, "idle"),
+            lte(collections.nextRunAt, new Date()),
+          ),
+        );
+    });
+
+    for (const c of due) {
+      await step.sendEvent("fire-run", {
+        name: "bunker.collection.run",
+        data: { orgId: c.orgId, collectionId: c.id },
+      });
+    }
+
+    return { fired: due.length };
+  },
+);
+
+function cadenceToNextRun(cadence: string): Date {
+  const now = new Date();
+  const next = new Date(now);
+  switch (cadence) {
+    case "daily":
+      next.setDate(now.getDate() + 1);
+      next.setHours(6, 0, 0, 0);
+      break;
+    case "weekly":
+      next.setDate(now.getDate() + 7);
+      next.setHours(6, 0, 0, 0);
+      break;
+    case "monthly":
+      next.setMonth(now.getMonth() + 1);
+      next.setHours(6, 0, 0, 0);
+      break;
+    case "custom":
+      // Custom cron parsing deferred; schedule 1h out so hourly check picks it up.
+      next.setHours(now.getHours() + 1);
+      break;
+    default:
+      next.setDate(now.getDate() + 7);
+  }
+  return next;
+}

@@ -1,9 +1,15 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, ne } from "drizzle-orm";
 import { redirect } from "next/navigation";
-import { db, bunkerCandidates } from "@/db";
+import {
+  db,
+  bunkerCandidates,
+  collections as collectionsTable,
+  collectionRuns as collectionRunsTable,
+  signals as signalsTable,
+} from "@/db";
 import { getCurrentUserWithOrg } from "@/lib/auth/current-user";
-import { CandidateCard } from "@/components/engine-room/candidate-card";
-import { CollectButton } from "@/components/engine-room/collect-button";
+import { CollectionCard } from "@/components/engine-room/collection-card";
+import { CollectNowDialog } from "@/components/engine-room/collect-now-dialog";
 import { SubmitSignalDialog } from "@/components/engine-room/submit-signal-dialog";
 import { BridgeRealtime } from "@/components/engine-room/bridge-realtime";
 
@@ -12,98 +18,229 @@ export const metadata = { title: "Bridge · Engine Room · BLIPS BOS" };
 /**
  * Bridge — the Engine Room's home view.
  *
- * Phase 6 scope:
- *   - Triage queue of PENDING_REVIEW candidates (BUNKER's output awaiting
- *     founder approve/dismiss)
- *   - "Collect now" button fires on-demand BUNKER run via Inngest
- *   - Realtime subscription invalidates the page on any candidate change,
- *     so new candidates surface live during collection
+ * Phase 6.5: collection-centric. Each collection is a spine with an
+ * expandable body containing both:
+ *   1. Triage — pending candidates awaiting approve/dismiss
+ *   2. Pipeline — approved signals with 6-stage pips + link to workspace
  *
- * Phase 7 adds: batch folders, signal rows with 6-stage progress,
- * ORC command panel, Source 01 direct input form.
+ * Stream is ordered by most-recently-updated collection first. Archived
+ * collections hidden. Empty-state shows when no collections exist.
  */
 export default async function BridgePage() {
   const user = await getCurrentUserWithOrg();
   if (!user) redirect("/login");
 
-  const pending = await db
-    .select({
-      id: bunkerCandidates.id,
-      shortcode: bunkerCandidates.shortcode,
-      workingTitle: bunkerCandidates.workingTitle,
-      concept: bunkerCandidates.concept,
-      source: bunkerCandidates.source,
-      createdAt: bunkerCandidates.createdAt,
-      rawMetadata: bunkerCandidates.rawMetadata,
-    })
-    .from(bunkerCandidates)
-    .where(
-      and(
-        eq(bunkerCandidates.orgId, user.orgId),
-        eq(bunkerCandidates.status, "PENDING_REVIEW"),
-      ),
-    )
-    .orderBy(desc(bunkerCandidates.createdAt));
+  // Four round-trips in parallel: collections, pending candidates,
+  // active signals, recent collection_runs. The runs query feeds the
+  // spine's secondary meta line ("0 new · 23 deduped" etc.).
+  const [colRows, candRows, sigRows, runRows] = await Promise.all([
+    db
+      .select()
+      .from(collectionsTable)
+      .where(
+        and(
+          eq(collectionsTable.orgId, user.orgId),
+          ne(collectionsTable.status, "archived"),
+        ),
+      )
+      .orderBy(desc(collectionsTable.updatedAt)),
+    db
+      .select({
+        id: bunkerCandidates.id,
+        collectionId: bunkerCandidates.collectionId,
+        shortcode: bunkerCandidates.shortcode,
+        workingTitle: bunkerCandidates.workingTitle,
+        concept: bunkerCandidates.concept,
+        source: bunkerCandidates.source,
+        createdAt: bunkerCandidates.createdAt,
+      })
+      .from(bunkerCandidates)
+      .where(
+        and(
+          eq(bunkerCandidates.orgId, user.orgId),
+          eq(bunkerCandidates.status, "PENDING_REVIEW"),
+        ),
+      )
+      .orderBy(desc(bunkerCandidates.createdAt)),
+    db
+      .select({
+        id: signalsTable.id,
+        collectionId: signalsTable.collectionId,
+        shortcode: signalsTable.shortcode,
+        workingTitle: signalsTable.workingTitle,
+        concept: signalsTable.concept,
+        source: signalsTable.source,
+        status: signalsTable.status,
+        updatedAt: signalsTable.updatedAt,
+      })
+      .from(signalsTable)
+      .where(
+        and(
+          eq(signalsTable.orgId, user.orgId),
+          ne(signalsTable.status, "DISMISSED"),
+        ),
+      )
+      .orderBy(desc(signalsTable.updatedAt)),
+    db
+      .select({
+        id: collectionRunsTable.id,
+        collectionId: collectionRunsTable.collectionId,
+        status: collectionRunsTable.status,
+        fetchedRaw: collectionRunsTable.fetchedRaw,
+        deduped: collectionRunsTable.deduped,
+        extracted: collectionRunsTable.extracted,
+        errors: collectionRunsTable.errors,
+        startedAt: collectionRunsTable.startedAt,
+        completedAt: collectionRunsTable.completedAt,
+        createdAt: collectionRunsTable.createdAt,
+      })
+      .from(collectionRunsTable)
+      .where(eq(collectionRunsTable.orgId, user.orgId))
+      .orderBy(desc(collectionRunsTable.createdAt)),
+  ]);
+
+  // Keep only the most recent run per collection. "Most recent" = first
+  // match in the desc-by-createdAt result.
+  const latestRunByCollection = new Map<string, (typeof runRows)[number]>();
+  for (const run of runRows) {
+    if (!latestRunByCollection.has(run.collectionId)) {
+      latestRunByCollection.set(run.collectionId, run);
+    }
+  }
+
+  const totalPending = candRows.length;
+  const activeCollectionCount = colRows.length;
+  const nextScheduled = colRows
+    .filter((c) => c.type === "scheduled" && c.nextRunAt)
+    .sort(
+      (a, b) =>
+        (a.nextRunAt?.getTime() ?? Infinity) -
+        (b.nextRunAt?.getTime() ?? Infinity),
+    )[0];
 
   return (
-    <div className="w-full max-w-[1800px] mx-auto px-6 md:px-10 lg:px-14 pt-10 pb-16">
+    <div className="w-full max-w-[1600px] mx-auto px-6 md:px-10 lg:px-14 pt-12 pb-40">
       <BridgeRealtime />
 
-      <header className="mb-10 flex items-end justify-between gap-6 flex-wrap">
-        <div className="max-w-2xl">
-          <h1 className="font-display text-2xl font-semibold leading-tight">
+      {/* Heading + aggregate + actions */}
+      <header className="mb-10 flex items-baseline justify-between gap-8 flex-wrap">
+        <div className="flex flex-col gap-4">
+          <h1 className="font-display font-medium text-[32px] -tracking-[0.015em] leading-none">
             Bridge
           </h1>
-          <p className="font-mono text-xs text-warm-muted mt-2 leading-relaxed">
-            Pipeline overview. Triage queue below shows signals BUNKER pulled
-            in — approve to enter the pipeline, dismiss to park.
-          </p>
+          <div className="font-mono text-[11px] tracking-[0.18em] uppercase text-t4">
+            <span className="text-t2">{totalPending}</span> pending
+            &nbsp;·&nbsp;
+            <span className="text-t2">{activeCollectionCount}</span>{" "}
+            collection{activeCollectionCount === 1 ? "" : "s"}
+            {nextScheduled && nextScheduled.nextRunAt && (
+              <>
+                &nbsp;·&nbsp; next scheduled run{" "}
+                <span className="text-t2">
+                  {formatRelativeFuture(nextScheduled.nextRunAt)}
+                </span>
+              </>
+            )}
+          </div>
         </div>
-        <div className="flex items-center gap-3">
-          <CollectButton />
+        <div className="flex gap-2.5 items-center">
           <SubmitSignalDialog />
+          <CollectNowDialog />
         </div>
       </header>
 
-      <section>
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="font-mono text-[10px] tracking-[0.25em] uppercase text-warm-muted">
-            Triage Queue
-          </h2>
-          <span className="font-mono text-[10px] tracking-[0.2em] uppercase text-warm-muted">
-            {pending.length} pending
-          </span>
+      {/* Collections stream */}
+      {colRows.length === 0 ? (
+        <div className="border border-dashed border-rule-2 rounded-md py-20 px-8 flex flex-col items-center gap-4 text-center">
+          <p className="font-editorial italic text-t2 text-[22px] leading-tight">
+            no collections yet.
+          </p>
+          <p className="font-mono text-[11px] tracking-[0.22em] uppercase text-t4 max-w-sm leading-relaxed">
+            click <span className="text-t2">Collect now</span> to start a run ·{" "}
+            <span className="text-t2">Submit signal</span> to paste one in
+            directly
+          </p>
         </div>
-
-        {pending.length === 0 ? (
-          <div className="border border-dashed border-deep-divider rounded-md py-16 px-8 flex flex-col items-center gap-3 text-center">
-            <p className="font-editorial italic text-warm-bright text-xl">
-              No candidates waiting.
-            </p>
-            <p className="font-mono text-[11px] uppercase tracking-[0.22em] text-warm-muted">
-              Click <span className="text-warm-bright">Collect now</span> to
-              run BUNKER · New candidates will stream in live
-            </p>
+      ) : (
+        <>
+          <div className="font-mono text-[10px] tracking-[0.28em] uppercase text-t5 mb-3.5">
+            Collections
           </div>
-        ) : (
-          <div className="flex flex-col gap-3">
-            {pending.map((c) => (
-              <CandidateCard
-                key={c.id}
-                id={c.id}
-                shortcode={c.shortcode}
-                workingTitle={c.workingTitle}
-                concept={c.concept}
-                source={c.source}
-                createdAt={new Date(c.createdAt)}
-                rawMetadata={
-                  c.rawMetadata as Record<string, unknown> | null
-                }
-              />
-            ))}
+          <div className="flex flex-col">
+            {colRows.map((c, i) => {
+              const candidatesForC = candRows
+                .filter((cand) => cand.collectionId === c.id)
+                .map((cand) => ({
+                  id: cand.id,
+                  shortcode: cand.shortcode,
+                  workingTitle: cand.workingTitle,
+                  concept: cand.concept,
+                  source: cand.source,
+                  createdAt: cand.createdAt,
+                }));
+              const signalsForC = sigRows
+                .filter((s) => s.collectionId === c.id)
+                .map((s) => ({
+                  id: s.id,
+                  shortcode: s.shortcode,
+                  workingTitle: s.workingTitle,
+                  concept: s.concept,
+                  source: s.source,
+                  status: s.status,
+                  updatedAt: s.updatedAt,
+                }));
+              const latestRun = latestRunByCollection.get(c.id) ?? null;
+              return (
+                <CollectionCard
+                  key={c.id}
+                  collection={{
+                    id: c.id,
+                    name: c.name,
+                    outline: c.outline,
+                    type: c.type,
+                    status: c.status,
+                    candidateCount: candidatesForC.length,
+                    signalCount: signalsForC.length,
+                    targetCount: c.targetCount,
+                    cadence: c.cadence,
+                    lastRunAt: c.lastRunAt,
+                    nextRunAt: c.nextRunAt,
+                    createdAt: c.createdAt,
+                    updatedAt: c.updatedAt,
+                  }}
+                  latestRun={
+                    latestRun
+                      ? {
+                          status: latestRun.status,
+                          fetchedRaw: latestRun.fetchedRaw,
+                          deduped: latestRun.deduped,
+                          extracted: latestRun.extracted,
+                          errors: latestRun.errors,
+                          completedAt: latestRun.completedAt,
+                        }
+                      : null
+                  }
+                  candidates={candidatesForC}
+                  signals={signalsForC}
+                  defaultOpen={i === 0}
+                />
+              );
+            })}
           </div>
-        )}
-      </section>
+        </>
+      )}
     </div>
   );
+}
+
+function formatRelativeFuture(date: Date): string {
+  const ms = new Date(date).getTime() - Date.now();
+  if (ms < 0) return "any minute";
+  const mins = Math.floor(ms / 1000 / 60);
+  if (mins < 60) return `in ${mins}m`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `in ${hours}h`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `in ${days}d`;
+  return `in ${Math.floor(days / 30)}mo`;
 }

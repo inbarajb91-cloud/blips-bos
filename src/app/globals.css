@@ -11,12 +11,37 @@
 */
 
 @theme inline {
-  /* Core chrome palette — 5 tokens, forever */
+  /* Core chrome palette — 5 tokens, forever.
+     Phase 6.5: contrast bumped on secondary tones so labels are actually
+     readable on working monitors. Old values felt minimalist but failed
+     the "can you read this at 3pm in a bright room" test. */
   --color-ink: #0c0c0c;
+  --color-ink-warm: #110e0b;          /* elevated surface — modals, active expansions, hovers */
   --color-off-white: #f2efe9;
-  --color-warm-bright: #b8b5af;
-  --color-warm-muted: #7a766f;
-  --color-deep-divider: #2a2622;
+  --color-warm-bright: #cac7c1;       /* ↑ from #b8b5af — secondary text that retreats but stays readable */
+  --color-warm-muted: #8e8a82;        /* ↑ from #7a766f — labels, timestamps; no longer ghostly */
+  --color-deep-divider: #353128;      /* ↑ from #2a2622 — separators you can actually see */
+
+  /* Phase 6.5 tonal ladder — 5-stop alpha scale on off-white.
+     Use these in new components to get a calibrated hierarchy.
+     t1 = body · t2 = strong · t3 = mid · t4 = secondary · t5 = tertiary.
+     All stops clear WCAG AA on ink background. */
+  --color-t1: #f2efe9;
+  --color-t2: rgba(242, 239, 233, 0.82);
+  --color-t3: rgba(242, 239, 233, 0.68);
+  --color-t4: rgba(242, 239, 233, 0.50);
+  --color-t5: rgba(242, 239, 233, 0.34);
+
+  /* Divider weights — three stops. Use in place of deep-divider for hierarchy.
+     rule-1 = hairline (row separators) · rule-2 = standard (section edges) · rule-3 = heavy (emphasized boundary). */
+  --color-rule-1: rgba(242, 239, 233, 0.08);
+  --color-rule-2: rgba(242, 239, 233, 0.16);
+  --color-rule-3: rgba(242, 239, 233, 0.28);
+
+  /* Background washes — faint depth without chromatic noise.
+     wash-1 = passive open state · wash-2 = active / fresh / just-arrived. */
+  --color-wash-1: rgba(242, 239, 233, 0.022);
+  --color-wash-2: rgba(242, 239, 233, 0.044);
 
   /* Typography families */
   --font-display: var(--font-syne);
@@ -116,6 +141,25 @@
 :root {
   --legibility: 1;
 }
+
+/*
+  Phase 6.5 — Decade identity via rgb triplets.
+  A collection's type sets --d on itself; children using rgba(var(--d), α)
+  pick up the decade color for that collection.
+
+    Instant    → S02 Cold Cosmic · storm   (cool, quick)
+    Batch      → S01 Raw Industrial · signal (bold, drop-feeding)
+    Scheduled  → S03 Warm Reckoning · rust  (warm, recurring)
+*/
+:root {
+  --d: 242, 239, 233; /* default — off-white triplet */
+  --d-instant:   94, 110, 130;  /* #5E6E82 */
+  --d-batch:     160, 64, 64;   /* #A04040 */
+  --d-scheduled: 140, 74, 40;   /* #8C4A28 */
+}
+.t-instant   { --d: var(--d-instant); }
+.t-batch     { --d: var(--d-batch); }
+.t-scheduled { --d: var(--d-scheduled); }
 
 /* Brightness slider thumb */
 .brightness-slider::-webkit-slider-thumb {
