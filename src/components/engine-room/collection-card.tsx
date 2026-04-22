@@ -155,11 +155,17 @@ export function CollectionCard({
             : `rgba(var(--d), 0.012)`,
       }}
     >
-      {/* Spine: clickable area + optional Run-now button. Split button +
-          button nesting is illegal — the whole spine is a <div> with a
-          dedicated expand button on the left and a Run-now button on the
-          right when applicable. */}
-      <div className="grid grid-cols-[16px_1fr_auto_auto] gap-5 items-baseline px-4 py-5">
+      {/* Spine: clickable area + count + Regenerate action.
+          Column order matters for alignment: dot | title | count | action.
+          The Regenerate cell sits on the far right so its right edge is
+          anchored to the container padding — the picker open/close state
+          and varying count-cell widths can't slide it around. Count's
+          content is right-aligned, so its numbers also line up across
+          cards even as the subtitle text width varies.
+          The Regenerate cell has a min-width covering both the closed
+          ("Regenerate") and open ([input] [Go] [Cancel]) states so the
+          action doesn't visually jump when the picker toggles. */}
+      <div className="grid grid-cols-[16px_1fr_auto_minmax(112px,auto)] gap-5 items-baseline px-4 py-5">
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
@@ -263,77 +269,6 @@ export function CollectionCard({
           )}
         </button>
 
-        {canRegenerate ? (
-          pickerOpen ? (
-            <div className="flex items-center gap-1.5">
-              <input
-                ref={inputRef}
-                type="number"
-                min={1}
-                max={100}
-                value={regenCount}
-                onChange={(e) => {
-                  // Clamp to 1-100 server-side too; here we just keep a
-                  // reasonable number in the input. Empty string → 1.
-                  const raw = e.target.value;
-                  if (raw === "") {
-                    setRegenCount(1);
-                    return;
-                  }
-                  const n = Math.max(1, Math.min(100, Number(raw) || 1));
-                  setRegenCount(n);
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    fireRegenerate();
-                  } else if (e.key === "Escape") {
-                    e.preventDefault();
-                    setPickerOpen(false);
-                  }
-                }}
-                disabled={runPending}
-                aria-label="Number of signals to regenerate"
-                className="w-[52px] font-mono text-[12px] text-center bg-transparent border border-rule-2 rounded-sm py-1.5 text-t1 focus-visible:outline-none focus-visible:border-t2 disabled:opacity-50"
-              />
-              <button
-                type="button"
-                onClick={fireRegenerate}
-                disabled={runPending}
-                className="font-mono text-[10px] tracking-[0.22em] uppercase px-3 py-1.5 rounded-sm border text-t1 transition-all disabled:opacity-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2"
-                style={{
-                  borderColor: "rgba(var(--d), 0.72)",
-                  background: runPending
-                    ? "rgba(var(--d), 0.12)"
-                    : "transparent",
-                }}
-                aria-label={`Regenerate ${regenCount} signal${regenCount === 1 ? "" : "s"} for ${c.name}`}
-              >
-                {runPending ? "Firing…" : "Go"}
-              </button>
-              <button
-                type="button"
-                onClick={() => setPickerOpen(false)}
-                disabled={runPending}
-                className="font-mono text-[10px] tracking-[0.22em] uppercase px-2 py-1.5 rounded-sm text-t5 hover:text-t3 transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2"
-              >
-                Cancel
-              </button>
-            </div>
-          ) : (
-            <button
-              type="button"
-              onClick={() => setPickerOpen(true)}
-              className="font-mono text-[10px] tracking-[0.22em] uppercase px-3 py-1.5 rounded-sm border border-rule-2 text-t3 hover:text-t1 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2"
-              aria-label={`Regenerate ${c.name}`}
-            >
-              Regenerate
-            </button>
-          )
-        ) : (
-          <span />
-        )}
-
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
@@ -368,6 +303,81 @@ export function CollectionCard({
                     : "empty"}
           </span>
         </button>
+
+        {/* Regenerate cell — anchored to the right edge of the spine via
+            the grid's last column. Both closed and open states are
+            justified-end inside this cell so the button/picker don't
+            shift when toggled. */}
+        <div className="flex items-center justify-end">
+          {canRegenerate ? (
+            pickerOpen ? (
+              <div className="flex items-center gap-1.5">
+                <input
+                  ref={inputRef}
+                  type="number"
+                  min={1}
+                  max={100}
+                  value={regenCount}
+                  onChange={(e) => {
+                    // Clamp to 1-100 server-side too; here we just keep a
+                    // reasonable number in the input. Empty string → 1.
+                    const raw = e.target.value;
+                    if (raw === "") {
+                      setRegenCount(1);
+                      return;
+                    }
+                    const n = Math.max(1, Math.min(100, Number(raw) || 1));
+                    setRegenCount(n);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      fireRegenerate();
+                    } else if (e.key === "Escape") {
+                      e.preventDefault();
+                      setPickerOpen(false);
+                    }
+                  }}
+                  disabled={runPending}
+                  aria-label="Number of signals to regenerate"
+                  className="w-[52px] font-mono text-[12px] text-center bg-transparent border border-rule-2 rounded-sm py-1.5 text-t1 focus-visible:outline-none focus-visible:border-t2 disabled:opacity-50"
+                />
+                <button
+                  type="button"
+                  onClick={fireRegenerate}
+                  disabled={runPending}
+                  className="font-mono text-[10px] tracking-[0.22em] uppercase px-3 py-1.5 rounded-sm border text-t1 transition-all disabled:opacity-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2"
+                  style={{
+                    borderColor: "rgba(var(--d), 0.72)",
+                    background: runPending
+                      ? "rgba(var(--d), 0.12)"
+                      : "transparent",
+                  }}
+                  aria-label={`Regenerate ${regenCount} signal${regenCount === 1 ? "" : "s"} for ${c.name}`}
+                >
+                  {runPending ? "Firing…" : "Go"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPickerOpen(false)}
+                  disabled={runPending}
+                  className="font-mono text-[10px] tracking-[0.22em] uppercase px-2 py-1.5 rounded-sm text-t5 hover:text-t3 transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setPickerOpen(true)}
+                className="font-mono text-[10px] tracking-[0.22em] uppercase px-3 py-1.5 rounded-sm border border-rule-2 text-t3 hover:text-t1 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2"
+                aria-label={`Regenerate ${c.name}`}
+              >
+                Regenerate
+              </button>
+            )
+          ) : null}
+        </div>
       </div>
 
       {/* Progress bar — now visible during queued AND running. Thicker than
@@ -396,57 +406,70 @@ export function CollectionCard({
         </div>
       )}
 
-      {/* Expanded body */}
+      {/* Expanded body — grid-template-rows trick for a single fluid
+          collapse. Outer grid animates from 1fr → 0fr, which smoothly
+          tracks the inner content's actual height down to zero. This
+          replaces the old max-height approach which created a visible
+          two-stage feel (ceiling drops with content pinned, then content
+          snaps off the bottom). Padding lives on the deepest wrapper so
+          it gets clipped together with the content, not animated
+          independently. */}
       <div
         id={`collection-body-${c.id}`}
-        className="overflow-hidden transition-[max-height,padding] duration-300 ease-out ml-[42px] border-l"
-        style={{
-          maxHeight: open ? "3200px" : "0",
-          padding: open ? "8px 24px 28px 28px" : "0 24px 0 28px",
-          borderLeftColor: open ? "rgba(var(--d), 0.55)" : "transparent",
-        }}
+        className="grid transition-[grid-template-rows] duration-300 ease-out"
+        style={{ gridTemplateRows: open ? "1fr" : "0fr" }}
+        aria-hidden={!open}
       >
-        {c.outline && (
-          <p className="font-editorial italic text-[14px] leading-[1.5] text-t3 py-1.5 pb-4 max-w-[620px]">
-            {c.outline}
-          </p>
-        )}
+        <div
+          className="overflow-hidden ml-[42px] border-l transition-[border-color] duration-300 ease-out"
+          style={{
+            borderLeftColor: open ? "rgba(var(--d), 0.55)" : "transparent",
+          }}
+        >
+          <div className="pt-2 pb-7 pl-7 pr-6">
+            {c.outline && (
+              <p className="font-editorial italic text-[14px] leading-[1.5] text-t3 py-1.5 pb-4 max-w-[620px]">
+                {c.outline}
+              </p>
+            )}
 
-        {/* PIPELINE first — approved signals moving through stages.
-            Showing progress before obligation: the work you're making
-            is visible immediately; the triage chore comes after. */}
-        {signals.length > 0 && (
-          <section className="mt-2 mb-7">
-            <SectionLabel>
-              Pipeline · {signals.length} in motion · click row to open
-            </SectionLabel>
-            <div className="flex flex-col">
-              {signals.map((s) => (
-                <SignalRow key={s.id} s={s} />
-              ))}
-            </div>
-          </section>
-        )}
+            {/* PIPELINE first — approved signals moving through stages.
+                Showing progress before obligation: the work you're making
+                is visible immediately; the triage chore comes after. */}
+            {signals.length > 0 && (
+              <section className="mt-2 mb-7">
+                <SectionLabel>
+                  Pipeline · {signals.length} in motion · click row to open
+                </SectionLabel>
+                <div className="flex flex-col">
+                  {signals.map((s) => (
+                    <SignalRow key={s.id} s={s} />
+                  ))}
+                </div>
+              </section>
+            )}
 
-        {/* TRIAGE — pending candidates awaiting your approve/dismiss */}
-        {candidates.length > 0 && (
-          <section className="mt-2">
-            <SectionLabel>
-              Triage · {candidates.length} awaiting review
-            </SectionLabel>
-            <div className="flex flex-col">
-              {candidates.map((cand) => (
-                <CandidateRow key={cand.id} c={cand} />
-              ))}
-            </div>
-          </section>
-        )}
+            {/* TRIAGE — pending candidates awaiting your approve/dismiss */}
+            {candidates.length > 0 && (
+              <section className="mt-2">
+                <SectionLabel>
+                  Triage · {candidates.length} awaiting review
+                </SectionLabel>
+                <div className="flex flex-col">
+                  {candidates.map((cand) => (
+                    <CandidateRow key={cand.id} c={cand} />
+                  ))}
+                </div>
+              </section>
+            )}
 
-        {candidates.length === 0 && signals.length === 0 && (
-          <p className="font-editorial italic text-[14px] text-t4 py-6">
-            nothing here yet. {isRunning ? "collecting…" : "re-run to refresh."}
-          </p>
-        )}
+            {candidates.length === 0 && signals.length === 0 && (
+              <p className="font-editorial italic text-[14px] text-t4 py-6">
+                nothing here yet. {isRunning ? "collecting…" : "re-run to refresh."}
+              </p>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
