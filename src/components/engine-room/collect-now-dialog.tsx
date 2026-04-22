@@ -235,12 +235,33 @@ export function CollectNowDialog() {
                       : "what are you looking for? one-liner for your own reference."
                   }
                   rows={3}
-                  className="bg-transparent text-t1 border border-rule-2 rounded-sm px-3.5 py-3 font-editorial italic text-[14px] leading-[1.5] resize-y min-h-[72px] outline-none w-full focus:border-t2 transition-colors placeholder:text-t5"
+                  className={`bg-transparent text-t1 border rounded-sm px-3.5 py-3 font-editorial italic text-[14px] leading-[1.5] resize-y min-h-[72px] outline-none w-full focus:border-t2 transition-colors placeholder:text-t5 ${
+                    searchMode === "reference" &&
+                    outline.trim().length > 0 &&
+                    outline.trim().length < 10
+                      ? "border-[#d4908a]/60"
+                      : "border-rule-2"
+                  }`}
                   maxLength={500}
+                  // Reference mode treats outline as the actual search query,
+                  // so the server enforces ≥10 chars. Mirror it in the form
+                  // so the Start button + textarea both signal the rule
+                  // before submit — otherwise the user hits a server error
+                  // for an easily preventable mistake.
+                  required={searchMode === "reference"}
+                  aria-required={searchMode === "reference"}
+                  minLength={searchMode === "reference" ? 10 : undefined}
+                  aria-invalid={
+                    searchMode === "reference" &&
+                    outline.trim().length > 0 &&
+                    outline.trim().length < 10
+                  }
                 />
                 <div className="font-editorial italic text-[12.5px] text-t5 leading-[1.5]">
                   {searchMode === "reference"
-                    ? "reference mode — outline becomes the actual web search query via Gemini grounded search. ~$0.03–0.05 per run."
+                    ? outline.trim().length > 0 && outline.trim().length < 10
+                      ? `reference mode — needs at least 10 characters to become a search query. currently ${outline.trim().length}.`
+                      : "reference mode — outline becomes the actual web search query via Gemini grounded search. ~$0.03–0.05 per run."
                     : "trend mode — BUNKER pulls from standing 5 sources (Reddit, RSS, Trends, LLM synthesis, direct). outline is a label only."}
                 </div>
               </div>
@@ -400,7 +421,15 @@ export function CollectNowDialog() {
               <button
                 type="button"
                 onClick={handleStart}
-                disabled={pending || !name.trim()}
+                // Reference mode requires a meaningful outline (≥10 chars)
+                // as the actual search query — gate submit client-side so
+                // users don't hit a server validation throw for something
+                // the form itself knows is invalid.
+                disabled={
+                  pending ||
+                  !name.trim() ||
+                  (searchMode === "reference" && outline.trim().length < 10)
+                }
                 className="font-mono text-[10.5px] tracking-[0.22em] uppercase px-4 py-2.5 rounded-sm border text-t1 transition-all disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-off-white"
                 style={{
                   borderColor: "rgba(var(--d), 0.75)",

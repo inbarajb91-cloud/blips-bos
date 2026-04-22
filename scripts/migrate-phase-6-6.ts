@@ -16,21 +16,41 @@
  * Run: npx tsx scripts/migrate-phase-6-6.ts
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import postgres from "postgres";
 
-const envFile = readFileSync(".env.local", "utf-8");
-for (const line of envFile.split("\n")) {
-  const t = line.trim();
-  if (!t || t.startsWith("#")) continue;
-  const eq = t.indexOf("=");
-  if (eq === -1) continue;
-  const k = t.slice(0, eq).trim();
-  const v = t
-    .slice(eq + 1)
-    .trim()
-    .replace(/^["']|["']$/g, "");
-  if (!process.env[k]) process.env[k] = v;
+// Optional .env.local loader — same rationale as fix-scheduled-stuck-queued:
+// scripts need to run both locally (where .env.local is present) and in
+// prod/CI shells (where DATABASE_URL is already exported). Fall through
+// silently if the file is absent.
+try {
+  if (existsSync(".env.local")) {
+    const envFile = readFileSync(".env.local", "utf-8");
+    for (const line of envFile.split("\n")) {
+      const t = line.trim();
+      if (!t || t.startsWith("#")) continue;
+      const eq = t.indexOf("=");
+      if (eq === -1) continue;
+      const k = t.slice(0, eq).trim();
+      const v = t
+        .slice(eq + 1)
+        .trim()
+        .replace(/^["']|["']$/g, "");
+      if (!process.env[k]) process.env[k] = v;
+    }
+  }
+} catch (e) {
+  console.warn(
+    "[env] .env.local present but could not be parsed:",
+    (e as Error).message,
+  );
+}
+
+if (!process.env.DATABASE_URL) {
+  console.error(
+    "Missing DATABASE_URL — set it via .env.local or the shell environment.",
+  );
+  process.exit(1);
 }
 
 async function main() {
