@@ -93,10 +93,17 @@ export function CollectionCard({
   const isFailed = c.status === "failed";
   const isActive = isRunning || isQueued; // "something is happening"
   const totalCount = c.candidateCount + c.signalCount;
+  // Run now only belongs on scheduled collections that are waiting for
+  // their next cadence tick. You can fire them early; you can't re-run a
+  // finished instant/batch (those are one-shot) and you can't nudge the
+  // Direct submissions / Legacy buckets — neither is a real BUNKER run.
   const canRunNow =
     !isActive &&
-    (c.type === "batch" || c.type === "scheduled") &&
-    c.name !== "Direct submissions"; // the singleton direct-input bucket doesn't run
+    c.type === "scheduled" &&
+    c.name !== "Direct submissions" &&
+    c.name !== "Legacy — pre-6.5" &&
+    c.nextRunAt !== null &&
+    new Date(c.nextRunAt) > new Date();
 
   // Decide what to surface from the latest run. Only show when the run
   // actually ran (completed or failed) AND the result is informative —
