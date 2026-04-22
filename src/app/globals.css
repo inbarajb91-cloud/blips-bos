@@ -142,6 +142,25 @@
   --legibility: 1;
 }
 
+/*
+  Phase 6.5 — Decade identity via rgb triplets.
+  A collection's type sets --d on itself; children using rgba(var(--d), α)
+  pick up the decade color for that collection.
+
+    Instant    → S02 Cold Cosmic · storm   (cool, quick)
+    Batch      → S01 Raw Industrial · signal (bold, drop-feeding)
+    Scheduled  → S03 Warm Reckoning · rust  (warm, recurring)
+*/
+:root {
+  --d: 242, 239, 233; /* default — off-white triplet */
+  --d-instant:   94, 110, 130;  /* #5E6E82 */
+  --d-batch:     160, 64, 64;   /* #A04040 */
+  --d-scheduled: 140, 74, 40;   /* #8C4A28 */
+}
+.t-instant   { --d: var(--d-instant); }
+.t-batch     { --d: var(--d-batch); }
+.t-scheduled { --d: var(--d-scheduled); }
+
 /* Brightness slider thumb */
 .brightness-slider::-webkit-slider-thumb {
   -webkit-appearance: none;

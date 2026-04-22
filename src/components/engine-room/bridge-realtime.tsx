@@ -4,19 +4,23 @@ import { useRouter } from "next/navigation";
 import { useRealtimeChannel } from "@/lib/realtime/use-realtime";
 
 /**
- * Silent client component that subscribes to `bunker_candidates` table
- * changes via Supabase Realtime. On any insert/update/delete, invalidates
- * the server-rendered Bridge page so the triage queue reflects live state.
+ * Silent client component that keeps Bridge live against Supabase Realtime.
+ * Subscribes to:
+ *   - bunker_candidates  (new candidates arriving during a run)
+ *   - collections        (status flips: queued → running → idle)
+ *   - collection_runs    (run progress updates)
+ *   - signals            (status transitions as stages advance)
  *
- * Rendered as a zero-height invisible sibling of the Bridge page content.
- * No visible UI.
+ * Any change → router.refresh() → page re-renders against fresh data.
+ * Noop UI — rendered as a zero-height invisible sibling.
  */
 export function BridgeRealtime() {
   const router = useRouter();
 
-  useRealtimeChannel("bunker_candidates", () => {
-    router.refresh();
-  });
+  useRealtimeChannel("bunker_candidates", () => router.refresh());
+  useRealtimeChannel("collections", () => router.refresh());
+  useRealtimeChannel("collection_runs", () => router.refresh());
+  useRealtimeChannel("signals", () => router.refresh());
 
   return null;
 }
