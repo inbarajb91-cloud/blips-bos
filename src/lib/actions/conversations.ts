@@ -221,8 +221,17 @@ export async function appendUserMessage(
   //     scope as part of the WHERE (not a separate read)
   //   - `messages || jsonb_build_array(...)` does the append in place,
   //     so no client-side read of the current array is needed
-  //   - If the WHERE fails (conversation missing, wrong org, etc.)
-  //     RETURNING yields zero rows and we surface "not found"
+  //   - If the WHERE fails (conversation missing, wrong agent, wrong
+  //     org, etc.) RETURNING yields zero rows and we surface "not found"
+  //
+  // CodeRabbit round 2 flagged: the WHERE only scoped by conversationId
+  // + org, not by agent_name. The function is `appendUserMessage`
+  // called from ORC panel and uses StageKey stamping — it has no
+  // business writing into a BUNKER/STOKER/etc. thread even if one
+  // existed on the same table with a guessable ID. Pinning
+  // `agent_name = 'ORC'` in the WHERE makes the function match its
+  // name and keeps future phases' per-agent threads isolated from
+  // cross-agent append.
   //
   // Concurrent appends serialize on the row's write lock — the DB is
   // the source of truth for ordering, not the client. No message drop.
@@ -233,6 +242,7 @@ export async function appendUserMessage(
         updated_at = NOW()
     FROM signals AS s
     WHERE ac.id = ${conversationId}::uuid
+      AND ac.agent_name = 'ORC'
       AND s.id = ac.signal_id
       AND s.org_id = ${user.orgId}::uuid
     RETURNING ac.messages
