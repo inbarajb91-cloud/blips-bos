@@ -33,6 +33,7 @@ import type { SignalStatus } from "@/components/engine-room/stage-pips";
  */
 
 const STORAGE_KEY = "ws.railRight";
+const LAST_SIGNAL_KEY = "ws.lastSignalShortcode";
 const DEFAULT_RIGHT = 380;
 const MIN_RIGHT = 300;
 const MAX_RIGHT = 620;
@@ -77,6 +78,19 @@ export function WorkspaceFrame({
       /* localStorage may be unavailable; use default */
     }
   }, []);
+
+  // Remember the last-viewed signal so the Signal Workspace section tab
+  // can return to it. Without this, clicking the section tab from another
+  // section lands on an empty state — frustrating UX when the user had a
+  // signal open seconds ago. Persists across sessions (localStorage, not
+  // sessionStorage) so returning next day also resumes the last signal.
+  useEffect(() => {
+    try {
+      localStorage.setItem(LAST_SIGNAL_KEY, signal.shortcode);
+    } catch {
+      /* ignore */
+    }
+  }, [signal.shortcode]);
 
   // Resize handle drag
   const resizingRef = useRef(false);
