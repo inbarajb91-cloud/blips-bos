@@ -178,28 +178,39 @@ export function CollectNowDialog() {
                       ? "Search query (required)"
                       : "Outline (optional)"}
                   </div>
-                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                  {/* The whole label is the clickable switch — moving role
+                      + handlers up from the inner span fixes two things:
+                      (a) `cursor-pointer` on the label actually does
+                      something, so the "use as query" text toggles too,
+                      and (b) screen readers announce a single labelled
+                      control ("use as query, switch, on/off") instead of
+                      an unnamed switch adjacent to unrelated text. The
+                      inner spans stay purely presentational. */}
+                  <label
+                    role="switch"
+                    aria-checked={searchMode === "reference"}
+                    tabIndex={0}
+                    onClick={() =>
+                      setSearchMode(
+                        searchMode === "reference" ? "trend" : "reference",
+                      )
+                    }
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        setSearchMode(
+                          searchMode === "reference" ? "trend" : "reference",
+                        );
+                      }
+                    }}
+                    className="flex items-center gap-2 cursor-pointer select-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2 rounded-sm"
+                  >
                     <span className="font-mono text-[10px] tracking-[0.22em] uppercase text-t4">
                       use as query
                     </span>
                     <span
-                      onClick={() =>
-                        setSearchMode(
-                          searchMode === "reference" ? "trend" : "reference",
-                        )
-                      }
-                      role="switch"
-                      aria-checked={searchMode === "reference"}
-                      tabIndex={0}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault();
-                          setSearchMode(
-                            searchMode === "reference" ? "trend" : "reference",
-                          );
-                        }
-                      }}
-                      className={`relative inline-block w-[34px] h-[18px] rounded-full border transition-all cursor-pointer ${
+                      aria-hidden
+                      className={`relative inline-block w-[34px] h-[18px] rounded-full border transition-all ${
                         searchMode === "reference"
                           ? "border-t1 bg-[rgba(var(--d),0.15)]"
                           : "border-rule-2"
