@@ -92,7 +92,7 @@ export default async function BridgePage() {
     )[0];
 
   return (
-    <div className="w-full max-w-[1600px] mx-auto px-6 md:px-10 lg:px-14 pt-12 pb-24">
+    <div className="w-full max-w-[1600px] mx-auto px-6 md:px-10 lg:px-14 pt-12 pb-40">
       <BridgeRealtime />
 
       {/* Heading + aggregate + actions */}

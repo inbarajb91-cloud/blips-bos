@@ -6,6 +6,7 @@ import {
   approveCandidate,
   dismissCandidate,
 } from "@/lib/actions/candidates";
+import { runCollectionNow } from "@/lib/actions/collections";
 import { StagePips, type SignalStatus } from "./stage-pips";
 
 /**
@@ -72,10 +73,18 @@ export function CollectionCard({
   defaultOpen = false,
 }: CollectionCardProps) {
   const [open, setOpen] = useState(defaultOpen);
+  const [runPending, startRunTransition] = useTransition();
 
   const typeLabel = c.type.charAt(0).toUpperCase() + c.type.slice(1);
   const isRunning = c.status === "running";
+  const isQueued = c.status === "queued";
+  const isFailed = c.status === "failed";
+  const isActive = isRunning || isQueued; // "something is happening"
   const totalCount = c.candidateCount + c.signalCount;
+  const canRunNow =
+    !isActive &&
+    (c.type === "batch" || c.type === "scheduled") &&
+    c.name !== "Direct submissions"; // the singleton direct-input bucket doesn't run
 
   // Relative time for meta row
   const timeMeta = formatCollectionTime(c);
@@ -86,45 +95,57 @@ export function CollectionCard({
 
   return (
     <div
-      className={`t-${c.type} border-t border-rule-1 last:border-b transition-colors duration-200 ${
-        open ? "" : ""
-      }`}
+      className={`t-${c.type} border-t border-rule-1 last:border-b transition-colors duration-200`}
       style={{
         background: open
           ? `linear-gradient(to bottom, rgba(var(--d), 0.034), rgba(var(--d), 0.022))`
-          : `rgba(var(--d), 0.012)`,
+          : isActive
+            ? `rgba(var(--d), 0.028)`
+            : `rgba(var(--d), 0.012)`,
       }}
     >
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="w-full text-left grid grid-cols-[16px_1fr_auto] gap-5 items-baseline px-4 py-5 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2 rounded-sm"
-        aria-expanded={open}
-        aria-controls={`collection-body-${c.id}`}
-      >
-        <span
-          className="rounded-full self-center transition-colors"
-          style={{
-            width: 7,
-            height: 7,
-            background: isRunning
-              ? "rgba(var(--d), 1)"
-              : c.type === "scheduled"
-                ? "transparent"
-                : open
-                  ? "rgba(var(--d), 0.92)"
-                  : "rgba(var(--d), 0.65)",
-            border:
-              c.type === "scheduled"
-                ? "1.5px solid rgba(var(--d), 0.72)"
-                : "none",
-            boxShadow: isRunning ? "0 0 6px rgba(var(--d), 0.4)" : "none",
-            animation: isRunning ? "breathe 2.8s ease-in-out infinite" : "none",
-          }}
-          aria-hidden
-        />
+      {/* Spine: clickable area + optional Run-now button. Split button +
+          button nesting is illegal — the whole spine is a <div> with a
+          dedicated expand button on the left and a Run-now button on the
+          right when applicable. */}
+      <div className="grid grid-cols-[16px_1fr_auto_auto] gap-5 items-baseline px-4 py-5">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          aria-controls={`collection-body-${c.id}`}
+          aria-label={open ? "Collapse collection" : "Expand collection"}
+          className="flex items-center justify-center rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2 cursor-pointer"
+          style={{ height: 22 }}
+        >
+          <span
+            className="rounded-full transition-colors"
+            style={{
+              width: 7,
+              height: 7,
+              background: isActive
+                ? "rgba(var(--d), 1)"
+                : c.type === "scheduled"
+                  ? "transparent"
+                  : open
+                    ? "rgba(var(--d), 0.92)"
+                    : "rgba(var(--d), 0.65)",
+              border:
+                c.type === "scheduled"
+                  ? "1.5px solid rgba(var(--d), 0.72)"
+                  : "none",
+              boxShadow: isActive ? "0 0 6px rgba(var(--d), 0.45)" : "none",
+              animation: isActive ? "breathe 2.8s ease-in-out infinite" : "none",
+            }}
+            aria-hidden
+          />
+        </button>
 
-        <div className="flex flex-col gap-1 min-w-0">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="text-left flex flex-col gap-1 min-w-0 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2 rounded-sm"
+        >
           <div className="font-display font-medium text-[17px] -tracking-[0.005em] leading-[1.3] text-t1">
             {c.name}
           </div>
@@ -148,15 +169,64 @@ export function CollectionCard({
             {isRunning && (
               <>
                 <span className="text-t5">·</span>
-                <span className="breathe" style={{ color: "var(--color-t1)" }}>
-                  live
+                <span
+                  className="breathe font-medium"
+                  style={{ color: "rgba(var(--d), 1)" }}
+                >
+                  LIVE · collecting
                 </span>
               </>
             )}
+            {isQueued && (
+              <>
+                <span className="text-t5">·</span>
+                <span
+                  className="breathe font-medium"
+                  style={{ color: "rgba(var(--d), 1)" }}
+                >
+                  QUEUED · starting…
+                </span>
+              </>
+            )}
+            {isFailed && (
+              <>
+                <span className="text-t5">·</span>
+                <span className="font-medium text-[#d4908a]">FAILED</span>
+              </>
+            )}
           </div>
-        </div>
+        </button>
 
-        <div className="flex flex-col items-end gap-0.5 whitespace-nowrap">
+        {canRunNow ? (
+          <button
+            type="button"
+            onClick={() => {
+              startRunTransition(async () => {
+                try {
+                  await runCollectionNow(c.id);
+                } catch (e) {
+                  console.error("Run now failed:", e);
+                }
+              });
+            }}
+            disabled={runPending}
+            className="font-mono text-[10px] tracking-[0.22em] uppercase px-3 py-1.5 rounded-sm border border-rule-2 text-t3 hover:text-t1 transition-all disabled:opacity-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2"
+            style={{
+              borderColor: runPending ? "rgba(var(--d), 0.85)" : undefined,
+            }}
+            aria-label={`Run ${c.name} now`}
+          >
+            {runPending ? "Firing…" : "Run now"}
+          </button>
+        ) : (
+          <span />
+        )}
+
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="flex flex-col items-end gap-0.5 whitespace-nowrap cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2 rounded-sm"
+        >
           <span
             className="font-display font-medium text-[16px]"
             style={{
@@ -165,9 +235,9 @@ export function CollectionCard({
                 : "var(--color-t1)",
             }}
           >
-            {isRunning ? (
+            {isActive ? (
               <span className="breathe">
-                {c.candidateCount + c.signalCount}
+                {totalCount}
                 <span className="text-t4"> / {c.targetCount}</span>
               </span>
             ) : (
@@ -181,23 +251,34 @@ export function CollectionCard({
                 ? `${c.signalCount} pipeline`
                 : c.candidateCount > 0
                   ? `${c.candidateCount} triage`
-                  : "empty"}
+                  : isActive
+                    ? "starting"
+                    : "empty"}
           </span>
-        </div>
-      </button>
+        </button>
+      </div>
 
-      {/* Running progress hairline */}
-      {isRunning && (
+      {/* Progress bar — now visible during queued AND running. Thicker than
+          the old 1px hairline so you can actually see it. */}
+      {isActive && (
         <div
-          className="relative h-px mx-4 ml-[42px] bg-rule-1 overflow-hidden"
-          aria-hidden
+          className="relative h-[3px] mx-4 ml-[42px] rounded-[1.5px] overflow-hidden"
+          style={{ background: "rgba(var(--d), 0.12)" }}
+          aria-label="Collection progress"
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={c.targetCount}
+          aria-valuenow={totalCount}
         >
           <div
-            className="absolute inset-y-0 left-0 breathe"
+            className="absolute inset-y-0 left-0 rounded-[1.5px] breathe"
             style={{
-              width: `${Math.min(100, ((c.candidateCount + c.signalCount) / Math.max(1, c.targetCount)) * 100)}%`,
-              background: "rgba(var(--d), 0.85)",
-              boxShadow: "0 0 4px rgba(var(--d), 0.4)",
+              width: isQueued
+                ? "12%" // indeterminate-ish pulse while queued
+                : `${Math.max(3, Math.min(100, (totalCount / Math.max(1, c.targetCount)) * 100))}%`,
+              background: "rgba(var(--d), 0.95)",
+              boxShadow: "0 0 6px rgba(var(--d), 0.5)",
+              transition: "width 600ms ease-out",
             }}
           />
         </div>
@@ -219,29 +300,31 @@ export function CollectionCard({
           </p>
         )}
 
-        {/* TRIAGE section — pending candidates */}
-        {candidates.length > 0 && (
+        {/* PIPELINE first — approved signals moving through stages.
+            Showing progress before obligation: the work you're making
+            is visible immediately; the triage chore comes after. */}
+        {signals.length > 0 && (
           <section className="mt-2 mb-7">
+            <SectionLabel>
+              Pipeline · {signals.length} in motion · click row to open
+            </SectionLabel>
+            <div className="flex flex-col">
+              {signals.map((s) => (
+                <SignalRow key={s.id} s={s} />
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* TRIAGE — pending candidates awaiting your approve/dismiss */}
+        {candidates.length > 0 && (
+          <section className="mt-2">
             <SectionLabel>
               Triage · {candidates.length} awaiting review
             </SectionLabel>
             <div className="flex flex-col">
               {candidates.map((cand) => (
                 <CandidateRow key={cand.id} c={cand} />
-              ))}
-            </div>
-          </section>
-        )}
-
-        {/* PIPELINE section — approved signals moving through stages */}
-        {signals.length > 0 && (
-          <section className="mt-2">
-            <SectionLabel>
-              Pipeline · {signals.length} in motion
-            </SectionLabel>
-            <div className="flex flex-col">
-              {signals.map((s) => (
-                <SignalRow key={s.id} s={s} />
               ))}
             </div>
           </section>
