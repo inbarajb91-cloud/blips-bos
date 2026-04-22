@@ -286,10 +286,15 @@ function stageLabelFor(status: SignalStatus): string {
 }
 
 function formatDate(date: Date): string {
+  // Locale pinned to en-GB so SSR and client agree on ordering — passing
+  // `undefined` here made the server use its default (US, "Apr 23") while
+  // browsers in India/UK rendered day-first ("23 Apr"), triggering a
+  // hydration mismatch. en-GB matches the day-first style we want and is
+  // deterministic across environments.
   const d = new Date(date);
   const now = new Date();
   const sameYear = d.getFullYear() === now.getFullYear();
-  return d.toLocaleDateString(undefined, {
+  return d.toLocaleDateString("en-GB", {
     month: "short",
     day: "numeric",
     ...(sameYear ? {} : { year: "numeric" }),
