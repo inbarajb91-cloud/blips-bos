@@ -64,12 +64,16 @@ const candidateSchema = z.object({
 const candidatesArraySchema = z.array(candidateSchema).min(1).max(10);
 
 interface GroundedSearchParams {
-  orgId: string;
   outline: string;
   decadeHint?: "any" | "RCK" | "RCL" | "RCD";
   /** How many candidates to request. Default 6 — BUNKER extraction + dedup
    * will trim further. */
   targetCount?: number;
+  // NOTE: orgId was declared here but never used. Removed to keep the
+  // interface honest. Per-org observability for grounded-search calls
+  // (billable Gemini tier — ~$0.03-0.05 per run) belongs in the
+  // agent_logs pattern used by other skills, wired up alongside the
+  // broader Phase 7+ observability pass.
 }
 
 function decadeInstruction(hint: GroundedSearchParams["decadeHint"]): string {

@@ -88,7 +88,6 @@ export async function runBunkerCollection(params: {
     fetchRawByKey = {
       grounded_search: () =>
         fetchGroundedSearchCandidates({
-          orgId,
           outline: outline.trim(),
           decadeHint,
           targetCount: Math.min(limit + 2, 10), // over-fetch slightly for dedup headroom
