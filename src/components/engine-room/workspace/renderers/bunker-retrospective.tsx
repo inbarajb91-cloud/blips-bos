@@ -147,40 +147,41 @@ export function BunkerRetrospective({ signal, state }: RendererProps) {
         </div>
       </section>
 
-      {/* Review section — timeline of what happened */}
+      {/* Review section — timeline of what we actually know about this
+          signal. Kept deliberately short; anything we don't have a real
+          source for is left out. Two gaps flagged here that we may wire
+          later:
+          - Candidate extraction time + cost/model/tokens: BUNKER bypasses
+            agent_logs pre-signal (FK constraint), so this data isn't
+            recoverable for existing signals. Tech debt in REVIEWS.md.
+          - Explicit "approved by X at T" record: `approveCandidate`
+            doesn't write to decision_history yet. Adding that write in a
+            later pass gives us real audit trail; until then we use
+            signal.createdAt as a proxy. */}
       <section className="mb-9">
-        <SectionLabel>Review · What happened</SectionLabel>
+        <SectionLabel>Review · What we know</SectionLabel>
         <div className="flex flex-col px-[22px] py-[14px] bg-wash-1 border border-rule-1 rounded-sm">
-          <TimelineEvent
-            what={
-              <>
-                Candidate extracted by BUNKER
-                {/* Cost + model detail will be wired to agent_logs in a
-                    later pass — for now we keep it simple. */}
-              </>
-            }
-            when={formatAge(signal.createdAt)}
-          />
           <TimelineEvent
             you
             what={
               <>
-                Approved by <b className="text-t1 font-medium">you</b> ·
-                advanced to next stage
+                Candidate approved · signal created at{" "}
+                <b className="text-t1 font-medium">
+                  {stageFromStatus(signal.status)}
+                </b>
               </>
             }
             when={formatAge(signal.createdAt)}
           />
-          {state === "completed" && (
+          {/* Only render the "last update" event when updatedAt materially
+              differs from createdAt (>5 min) — otherwise it's just the
+              same moment as the approval and we'd show two identical-age
+              events. */}
+          {new Date(signal.updatedAt).getTime() -
+            new Date(signal.createdAt).getTime() >
+            5 * 60 * 1000 && (
             <TimelineEvent
-              what={
-                <>
-                  Signal is now in the pipeline · currently at stage{" "}
-                  <b className="text-t1 font-medium">
-                    {stageFromStatus(signal.status)}
-                  </b>
-                </>
-              }
+              what={<>Last updated</>}
               when={formatAge(signal.updatedAt)}
             />
           )}
