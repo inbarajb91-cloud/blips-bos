@@ -5,6 +5,8 @@ import {
   createCollection,
   type CollectionType,
   type Cadence,
+  type SearchMode,
+  type DecadeHint,
 } from "@/lib/actions/collections";
 
 /**
@@ -41,6 +43,9 @@ export function CollectNowDialog() {
   const [cadence, setCadence] = useState<Cadence>("weekly");
   const [name, setName] = useState("");
   const [outline, setOutline] = useState("");
+  // Phase 6.6 — trend (default) vs reference (outline-as-query via grounded search)
+  const [searchMode, setSearchMode] = useState<SearchMode>("trend");
+  const [decadeHint, setDecadeHint] = useState<DecadeHint>("any");
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const firstRef = useRef<HTMLInputElement>(null);
@@ -71,6 +76,8 @@ export function CollectNowDialog() {
     setCadence("weekly");
     setName("");
     setOutline("");
+    setSearchMode("trend");
+    setDecadeHint("any");
     setError(null);
   }
 
@@ -84,6 +91,8 @@ export function CollectNowDialog() {
           type,
           targetCount: count,
           cadence: type === "scheduled" ? cadence : undefined,
+          searchMode,
+          decadeHint,
         });
         setOpen(false);
         reset();
@@ -163,17 +172,101 @@ export function CollectNowDialog() {
               </div>
 
               <div className="flex flex-col gap-2">
-                <div className="font-mono text-[10px] tracking-[0.24em] uppercase text-t5">
-                  Outline
+                <div className="flex items-center justify-between gap-4">
+                  <div className="font-mono text-[10px] tracking-[0.24em] uppercase text-t5">
+                    {searchMode === "reference"
+                      ? "Search query (required)"
+                      : "Outline (optional)"}
+                  </div>
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <span className="font-mono text-[10px] tracking-[0.22em] uppercase text-t4">
+                      use as query
+                    </span>
+                    <span
+                      onClick={() =>
+                        setSearchMode(
+                          searchMode === "reference" ? "trend" : "reference",
+                        )
+                      }
+                      role="switch"
+                      aria-checked={searchMode === "reference"}
+                      tabIndex={0}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          setSearchMode(
+                            searchMode === "reference" ? "trend" : "reference",
+                          );
+                        }
+                      }}
+                      className={`relative inline-block w-[34px] h-[18px] rounded-full border transition-all cursor-pointer ${
+                        searchMode === "reference"
+                          ? "border-t1 bg-[rgba(var(--d),0.15)]"
+                          : "border-rule-2"
+                      }`}
+                    >
+                      <span
+                        className={`absolute top-[2px] w-[12px] h-[12px] rounded-full transition-all ${
+                          searchMode === "reference"
+                            ? "left-[18px] bg-t1"
+                            : "left-[2px] bg-t4"
+                        }`}
+                      />
+                    </span>
+                  </label>
                 </div>
                 <textarea
                   value={outline}
                   onChange={(e) => setOutline(e.target.value)}
-                  placeholder="what are you looking for? one-liner for your own reference."
+                  placeholder={
+                    searchMode === "reference"
+                      ? "the theme you want BUNKER to search for — e.g. 'food anarchism in Indian metros'"
+                      : "what are you looking for? one-liner for your own reference."
+                  }
                   rows={3}
                   className="bg-transparent text-t1 border border-rule-2 rounded-sm px-3.5 py-3 font-editorial italic text-[14px] leading-[1.5] resize-y min-h-[72px] outline-none w-full focus:border-t2 transition-colors placeholder:text-t5"
                   maxLength={500}
                 />
+                <div className="font-editorial italic text-[12.5px] text-t5 leading-[1.5]">
+                  {searchMode === "reference"
+                    ? "reference mode — outline becomes the actual web search query via Gemini grounded search. ~$0.03–0.05 per run."
+                    : "trend mode — BUNKER pulls from standing 5 sources (Reddit, RSS, Trends, LLM synthesis, direct). outline is a label only."}
+                </div>
+              </div>
+
+              {/* Phase 6.6 — optional decade picker. Sourcing bias only. */}
+              <div className="flex flex-col gap-2.5">
+                <div className="font-mono text-[10px] tracking-[0.24em] uppercase text-t5">
+                  Primary audience (optional)
+                </div>
+                <div className="flex gap-1.5 flex-wrap">
+                  {(
+                    [
+                      { key: "any", label: "Any" },
+                      { key: "RCK", label: "RCK · 28-38" },
+                      { key: "RCL", label: "RCL · 38-48" },
+                      { key: "RCD", label: "RCD · 48-58" },
+                    ] as const
+                  ).map((d) => (
+                    <button
+                      key={d.key}
+                      type="button"
+                      onClick={() => setDecadeHint(d.key)}
+                      className={`font-mono text-[10px] tracking-[0.22em] uppercase px-3.5 py-2 rounded-sm border transition-all ${
+                        decadeHint === d.key
+                          ? "text-t1 border-t1"
+                          : "text-t3 border-rule-2 hover:text-t1 hover:border-t2"
+                      }`}
+                    >
+                      {d.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="font-editorial italic text-[12.5px] text-t5 leading-[1.5]">
+                  {decadeHint === "any"
+                    ? "span all three decades. BUNKER finds tensions that resonate across."
+                    : `bias sourcing toward ${decadeHint}. STOKER will still fan out to matching decades downstream — this doesn't replace that.`}
+                </div>
               </div>
 
               <div className="flex flex-col gap-2.5">

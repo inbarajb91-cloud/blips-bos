@@ -30,6 +30,7 @@ const inputSchema = z.object({
     "newsapi",
     "upload",
     "llm_synthesis",
+    "grounded_search", // Phase 6.6
   ]),
   title: z.string().min(1),
   body: z.string().min(1),
@@ -154,6 +155,7 @@ const bunkerSkill: Skill<BunkerInput, BunkerOutput> = {
       newsapi: "news article",
       upload: "uploaded document",
       llm_synthesis: "LLM-generated topic exploration",
+      grounded_search: "Gemini grounded-search synthesis from web results",
     }[input.source];
 
     const urlLine = input.url ? `URL: ${input.url}\n` : "";

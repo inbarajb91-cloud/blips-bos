@@ -12,6 +12,7 @@ import { fetchRedditCandidates } from "@/lib/sources/reddit";
 import { fetchRssCandidates } from "@/lib/sources/rss";
 import { fetchTrendsCandidates } from "@/lib/sources/trends";
 import { fetchLlmSynthesisCandidates } from "@/lib/sources/llm-synthesis";
+import { fetchGroundedSearchCandidates } from "@/lib/sources/grounded-search";
 import type { SourceConnector, RawCandidate } from "@/lib/sources/types";
 import type { BunkerInput, BunkerOutput } from "@/skills/bunker";
 
@@ -56,9 +57,54 @@ export async function runBunkerCollection(params: {
   sources?: string[];
   limit?: number;
   collectionId?: string; // Phase 6.5: if present, tag every candidate with it
+  // Phase 6.6: if reference mode, the runner ignores `sources` (standing 5)
+  // and dispatches grounded-search only, driven by the collection's outline.
+  searchMode?: "trend" | "reference";
+  outline?: string | null;
+  decadeHint?: "any" | "RCK" | "RCL" | "RCD";
 }) {
-  const { orgId, sources, limit = 20, collectionId } = params;
-  const enabledSources = sources ?? Object.keys(SOURCES);
+  const {
+    orgId,
+    sources,
+    limit = 20,
+    collectionId,
+    searchMode = "trend",
+    outline,
+    decadeHint = "any",
+  } = params;
+
+  // In reference mode, grounded-search is the sole source. In trend mode,
+  // use the standing 5 (or caller-specified subset).
+  let fetchRawByKey: Record<
+    string,
+    () => Promise<RawCandidate[]>
+  > = {};
+  if (searchMode === "reference") {
+    if (!outline || outline.trim().length < 10) {
+      throw new Error(
+        "Reference-mode collection missing outline (≥10 chars required).",
+      );
+    }
+    fetchRawByKey = {
+      grounded_search: () =>
+        fetchGroundedSearchCandidates({
+          orgId,
+          outline: outline.trim(),
+          decadeHint,
+          targetCount: Math.min(limit + 2, 10), // over-fetch slightly for dedup headroom
+        }),
+    };
+  } else {
+    const enabled = sources ?? Object.keys(SOURCES);
+    for (const key of enabled) {
+      const connector = SOURCES[key];
+      if (!connector) {
+        console.warn(`[BUNKER] unknown source: ${key}`);
+        continue;
+      }
+      fetchRawByKey[key] = () => connector({ orgId, limit });
+    }
+  }
 
   let fetched = 0;
   let deduped = 0;
@@ -66,16 +112,10 @@ export async function runBunkerCollection(params: {
   let errors = 0;
   const candidates: Array<{ id: string; shortcode: string }> = [];
 
-  for (const sourceKey of enabledSources) {
-    const connector = SOURCES[sourceKey];
-    if (!connector) {
-      console.warn(`[BUNKER] unknown source: ${sourceKey}`);
-      continue;
-    }
-
+  for (const sourceKey of Object.keys(fetchRawByKey)) {
     let raw: RawCandidate[] = [];
     try {
-      raw = await connector({ orgId, limit });
+      raw = await fetchRawByKey[sourceKey]();
     } catch (e) {
       console.error(`[BUNKER] ${sourceKey} fetch failed:`, (e as Error).message);
       errors++;
@@ -167,7 +207,7 @@ export async function runBunkerCollection(params: {
   }
 
   return {
-    sources: enabledSources,
+    sources: Object.keys(fetchRawByKey),
     fetched,
     deduped,
     extracted,
@@ -343,11 +383,20 @@ export const bunkerCollectionRun = inngest.createFunction(
     });
 
     // Execute BUNKER run against this collection's target.
-    const stats = await step.run("collect", async () => {
+    // Phase 6.6: pass search_mode + outline + decade_hint so the runner
+    // picks grounded-search (reference) vs standing-5 (trend) per collection.
+    // Inngest's step.run types the result as unknown when the return object
+    // shape isn't declared upfront — explicit annotation here keeps finalize-run
+    // cleanly typed without a cast.
+    type CollectStats = Awaited<ReturnType<typeof runBunkerCollection>>;
+    const stats: CollectStats = await step.run("collect", async () => {
       return await runBunkerCollection({
         orgId,
         limit: collection.targetCount,
         collectionId,
+        searchMode: collection.searchMode,
+        outline: collection.outline,
+        decadeHint: collection.decadeHint,
       });
     });
 

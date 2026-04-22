@@ -20,6 +20,8 @@ import { inngest } from "@/lib/inngest/client";
 
 export type CollectionType = "instant" | "batch" | "scheduled";
 export type Cadence = "daily" | "weekly" | "monthly" | "custom";
+export type SearchMode = "trend" | "reference";
+export type DecadeHint = "any" | "RCK" | "RCL" | "RCD";
 
 export interface CreateCollectionInput {
   name: string;
@@ -28,6 +30,12 @@ export interface CreateCollectionInput {
   targetCount: number;
   cadence?: Cadence;
   cadenceCron?: string;
+  /** Phase 6.6 — trend (default) uses standing 5 sources + filter.
+   *  reference uses Gemini grounded-search with outline as the query. */
+  searchMode?: SearchMode;
+  /** Phase 6.6 — optional audience bias on sourcing. Does NOT replace
+   *  STOKER's decade-manifestation fan-out downstream. */
+  decadeHint?: DecadeHint;
 }
 
 /**
@@ -61,6 +69,18 @@ export async function createCollection(input: CreateCollectionInput) {
     }
   }
 
+  // Phase 6.6 — reference mode requires a meaningful outline as the query
+  const searchMode: SearchMode = input.searchMode ?? "trend";
+  const decadeHint: DecadeHint = input.decadeHint ?? "any";
+  const trimmedOutline = input.outline?.trim() || null;
+  if (searchMode === "reference") {
+    if (!trimmedOutline || trimmedOutline.length < 10) {
+      throw new Error(
+        "Reference mode needs an outline of at least 10 characters — it becomes the actual search query.",
+      );
+    }
+  }
+
   const nextRunAt =
     input.type === "scheduled" ? computeNextRunAt(input.cadence!) : null;
 
@@ -69,11 +89,13 @@ export async function createCollection(input: CreateCollectionInput) {
     .values({
       orgId: user.orgId,
       name,
-      outline: input.outline?.trim() || null,
+      outline: trimmedOutline,
       type: input.type,
       targetCount: input.targetCount,
       cadence: input.cadence ?? null,
       cadenceCron: input.cadenceCron ?? null,
+      searchMode,
+      decadeHint,
       status: "queued",
       createdBy: user.authId,
       nextRunAt,
