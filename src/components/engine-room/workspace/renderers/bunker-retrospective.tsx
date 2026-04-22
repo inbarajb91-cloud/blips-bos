@@ -33,7 +33,7 @@ const SOURCE_LABELS: Record<string, string> = {
   grounded_search: "Grounded Search · Gemini web search",
 };
 
-export function BunkerRetrospective({ signal, state }: RendererProps) {
+export function BunkerRetrospective({ signal }: RendererProps) {
   const metadata = (signal.rawMetadata ?? {}) as Record<string, unknown>;
   const sourceContext =
     typeof metadata.source_context === "string"
@@ -42,34 +42,15 @@ export function BunkerRetrospective({ signal, state }: RendererProps) {
   const sourceUrl =
     typeof metadata.url === "string" ? metadata.url : null;
 
-  const stateLabel =
-    state === "completed"
-      ? `Completed · ${formatAge(signal.updatedAt)}`
-      : state === "active"
-        ? "Active"
-        : "Not yet reached";
-
   return (
     <div>
-      {/* Header — stage name + state chip (state chip carries the tense:
-          Completed, Active, Not yet reached — no redundant "retrospective"
-          subtitle needed). */}
-      <div className="flex items-baseline justify-between pb-[18px] border-b border-rule-2 mb-8">
-        <span className="font-display font-semibold text-[14px] tracking-[0.22em] uppercase text-t1">
-          BUNKER
-        </span>
-        <span
-          className={`font-mono text-[10px] tracking-[0.22em] uppercase ${
-            state === "completed"
-              ? "text-t3"
-              : state === "active"
-                ? "text-t2"
-                : "text-t4"
-          }`}
-        >
-          {stateLabel}
-        </span>
-      </div>
+      {/* Previously rendered "BUNKER" heading + "Active/Completed" chip
+          at the top of the canvas. Removed — the AgentTabStrip above
+          already tells the user which stage they're on, and the state
+          label was confusing mid-pipeline ("Active" while the signal
+          was actually in STOKER). The three sections below — Source,
+          Extraction, Review — carry the retrospective voice on their
+          own; no header restate needed. */}
 
       {/* Source section — what BUNKER ingested */}
       <section className="mb-9">

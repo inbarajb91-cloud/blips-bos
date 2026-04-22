@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import type { signals, collections } from "@/db/schema";
-import { StagePips, type SignalStatus } from "@/components/engine-room/stage-pips";
 import type { LockStatus } from "@/lib/actions/signal-locks";
 
 /**
@@ -87,17 +86,11 @@ export function LeftRail({
         </div>
       )}
 
-      <Label>Pipeline Progress</Label>
-      <div className="flex items-center gap-2 mb-7">
-        <StagePips
-          status={signal.status as SignalStatus}
-          size={6}
-          showLabel={false}
-        />
-        <span className="font-mono text-[10px] tracking-[0.22em] uppercase text-t3 ml-1">
-          {stageLabelFor(signal.status as SignalStatus)}
-        </span>
-      </div>
+      {/* Previously rendered a "Pipeline Progress" row with StagePips
+          + a stage label. Removed — the AgentTabStrip at the top of
+          the canvas already shows all six stages with their breathing
+          underline + completed/active/future dot states, so the rail
+          row was restating the same information three inches away. */}
 
       <div>
         <Label>Signal</Label>
@@ -270,30 +263,6 @@ function collectionCountsText(signalCount: number, candidateCount: number): stri
   return parts.length > 0 ? parts.join(" · ") : "empty";
 }
 
-function stageLabelFor(status: SignalStatus): string {
-  switch (status) {
-    case "IN_BUNKER":
-      return "BUNKER";
-    case "IN_STOKER":
-      return "STOKER";
-    case "IN_FURNACE":
-      return "FURNACE";
-    case "IN_BOILER":
-      return "BOILER";
-    case "IN_ENGINE":
-      return "ENGINE";
-    case "AT_PROPELLER":
-      return "PROPELLER";
-    case "DOCKED":
-      return "DOCKED";
-    case "COLD_BUNKER":
-      return "COLD";
-    case "DISMISSED":
-      return "DISMISSED";
-    default:
-      return status;
-  }
-}
 
 function formatDate(date: Date): string {
   // Locale pinned to en-US — two reasons:

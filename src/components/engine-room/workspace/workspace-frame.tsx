@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { signals, collections } from "@/db/schema";
 import { AgentTabStrip } from "./agent-tab-strip";
@@ -291,20 +290,14 @@ export function WorkspaceFrame({
   // canvas extent.
   return (
     <div className={`${typeClass} flex flex-col bg-ink`}>
-      {/* Header — back link + just the title. Everything else (concept,
-          from-collection, lock, source metadata) moved to the left rail.
-          Phase 7 chrome cleanup: workspace header is identity +
-          navigation only; context lives in the rail so the canvas gets
-          more vertical breathing room. */}
+      {/* Header — identity only: shortcode + working title. The previous
+          "Back to Bridge" link was redundant with the BRIDGE item in the
+          top-nav SectionTabs (one row above the workspace), so it
+          shouted navigation at the user while actual navigation already
+          sat right there. Removed to clean the header's visual weight
+          and give the title a quieter landing. Context (concept, source,
+          lock) stays in the left rail. */}
       <section className="px-11 pt-5 pb-6">
-        <Link
-          href="/engine-room"
-          className="font-mono text-[10.5px] tracking-[0.22em] uppercase text-t3 hover:text-t1 transition-colors inline-flex items-center gap-[6px] rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2 mb-5"
-        >
-          <span style={{ color: "rgba(var(--d), 0.75)" }}>‹</span>
-          Back to Bridge
-        </Link>
-
         <div className="flex items-baseline gap-8">
           <span className="font-display font-bold text-[13px] tracking-[0.16em] text-t1">
             {signal.shortcode}
