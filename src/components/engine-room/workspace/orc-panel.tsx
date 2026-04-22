@@ -25,7 +25,7 @@ export function OrcPanel({
   const stubMessages = buildStubMessages(signal, activeStage);
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col">
       {/* Head */}
       <div className="p-[22px_24px_16px] border-b border-rule-1">
         <div className="font-display font-semibold text-[12.5px] tracking-[0.22em] uppercase text-t1 flex items-center gap-[10px] mb-1">
@@ -45,11 +45,11 @@ export function OrcPanel({
         </div>
       </div>
 
-      {/* Thread — fills remaining height. min-h-0 on the flex child is
-          required for overflow-y-auto to actually scroll inside a flex
-          column, otherwise flex-1 expands to content height and the
-          panel grows. */}
-      <div className="flex-1 min-h-0 overflow-y-auto p-[18px_24px] flex flex-col gap-[22px]">
+      {/* Thread — flows with the document. Each message appears inline;
+          no internal scroll. Long conversations grow the panel; the
+          whole workspace scrolls as one document via engine-room
+          layout's overflow container. */}
+      <div className="p-[18px_24px] flex flex-col gap-[22px]">
         {stubMessages.map((msg, i) => (
           <div key={i} className="flex flex-col gap-[6px]">
             <div

@@ -155,10 +155,30 @@ export function WorkspaceFrame({
   const typeClass = collection ? `t-${collection.type}` : "";
   const railLeftWidth = railCollapsed ? 36 : 300;
 
+  // Layout model: document-scroll, not internal-scroll.
+  //
+  // Previous attempt used h-full + overflow-y-auto on the canvas cell,
+  // which meant the canvas scrolled internally while rails stayed fixed
+  // — but the UX felt trapped (can't scroll from outside the canvas,
+  // short viewport made the canvas region tiny). Switched to letting
+  // the whole workspace flow naturally and scroll as a document in the
+  // engine-room layout's existing overflow container.
+  //
+  // Tab strip is `sticky top: 0` so it stays visible as the user scrolls
+  // through long stage content. Signal header above it scrolls away on
+  // purpose — it's hero context, not navigation.
+  //
+  // Rails use `align-self: start` so they're their natural content
+  // height instead of stretching to match the canvas. The resize handle
+  // between canvas and right rail stretches to row height (max of cell
+  // heights) so you can still grab it anywhere vertically along the
+  // canvas extent.
   return (
-    <div className={`${typeClass} flex flex-col h-full bg-ink`}>
-      {/* Header region — back link, signal identity, tab strip */}
-      <section className="px-11 pt-5 border-b border-rule-1">
+    <div className={`${typeClass} flex flex-col bg-ink`}>
+      {/* Header region — back link, signal identity. Scrolls away
+          naturally when user reads long stage content. The tab strip
+          (below) is sticky so it stays reachable. */}
+      <section className="px-11 pt-5">
         <div className="flex items-center justify-between mb-[18px]">
           <Link
             href="/engine-room"
@@ -216,26 +236,39 @@ export function WorkspaceFrame({
           )}
         </div>
 
+      </section>
+
+      {/* Tab strip — sticky to top of the scroll container (engine-room
+          layout's overflow-auto). As the user scrolls through stage
+          content, the strip stays visible so tab navigation remains
+          reachable without scrolling back up. Sticky within the
+          document-scroll model; no internal-scroll nesting. */}
+      <div
+        className="sticky top-0 z-10 bg-ink border-b border-rule-1 px-11"
+      >
         <AgentTabStrip
           states={states}
           activeTab={activeTab}
           onTabChange={setActiveTab}
         />
-      </section>
+      </div>
 
-      {/* Three-region grid */}
+      {/* Three-region grid — natural height, flows with document. Rails
+          use align-self: start so they don't stretch to match the canvas
+          height. The resize handle stretches (default behavior) so it's
+          grabbable along the canvas's full vertical extent. */}
       <div
-        className="grid flex-1 min-h-0 transition-[grid-template-columns] duration-300 ease-out"
+        className="grid transition-[grid-template-columns] duration-300 ease-out"
         style={{
           gridTemplateColumns: `${railLeftWidth}px 1fr 6px ${railRight}px`,
         }}
       >
-        {/* Left rail — min-h-0 so the grid cell can shrink below content
-            height and let overflow-y-auto on the inner content handle
-            scrolling. Without min-h-0, the cell grows with content and
-            the whole workspace locks up. */}
+        {/* Left rail — align-self: start so it doesn't stretch to match
+            the canvas height; it's its natural content height and sits
+            at the top of the grid row. Content flows with the document
+            scroll; no internal overflow. */}
         <aside
-          className="border-r border-rule-1 bg-wash-1 relative overflow-hidden min-h-0"
+          className="border-r border-rule-1 bg-wash-1 relative self-start"
           aria-label="Collection context"
         >
           {/* Collapse toggle sits on the rail's right edge, always visible */}
@@ -269,7 +302,6 @@ export function WorkspaceFrame({
           )}
 
           <div
-            className="h-full overflow-y-auto"
             style={{
               opacity: railCollapsed ? 0 : 1,
               pointerEvents: railCollapsed ? "none" : "auto",
@@ -280,15 +312,14 @@ export function WorkspaceFrame({
           </div>
         </aside>
 
-        {/* Canvas — min-h-0 + overflow-y-auto so tall retrospective content
-            scrolls within the canvas region while left rail / ORC panel
-            stay fixed. Otherwise the grid cell grew to content height
-            and the whole page couldn't scroll. */}
+        {/* Canvas — natural content height. Flows with document scroll.
+            min-w-0 prevents text/grid overflow pushing the canvas cell
+            wider than its grid track. */}
         <main
           id="workspace-canvas"
           role="tabpanel"
           aria-labelledby={`tab-${activeTab}`}
-          className="overflow-y-auto min-h-0"
+          className="min-w-0"
         >
           <div className="max-w-[880px] w-full px-12 py-10">
             <Renderer signal={signal} collection={collection} state={states[activeTab]} />
@@ -317,12 +348,12 @@ export function WorkspaceFrame({
           />
         </div>
 
-        {/* Right panel — ORC conversation. min-h-0 on the grid cell itself
-            and on every descendant up to the thread div ensures the
-            thread's overflow-y-auto actually scrolls instead of the
-            panel growing to content height. */}
+        {/* Right panel — ORC conversation. align-self: start so it's its
+            natural content height and doesn't stretch to match the
+            canvas. Flows with document scroll. Long conversations just
+            grow the panel; no internal scroll to trap the user. */}
         <aside
-          className="border-l border-rule-1 bg-wash-1 flex flex-col min-h-0 overflow-hidden"
+          className="border-l border-rule-1 bg-wash-1 flex flex-col self-start"
           aria-label="ORC conversation"
         >
           <OrcPanel signal={signal} activeStage={activeTab} />
