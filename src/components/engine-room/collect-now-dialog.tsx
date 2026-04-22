@@ -284,6 +284,7 @@ export function CollectNowDialog() {
                       key={d.key}
                       type="button"
                       onClick={() => setDecadeHint(d.key)}
+                      aria-pressed={decadeHint === d.key}
                       className={`font-mono text-[10px] tracking-[0.22em] uppercase px-3.5 py-2 rounded-sm border transition-all ${
                         decadeHint === d.key
                           ? "text-t1 border-t1"
@@ -311,6 +312,7 @@ export function CollectNowDialog() {
                       key={t}
                       type="button"
                       onClick={() => pickType(t)}
+                      aria-pressed={type === t}
                       className={`font-mono text-[10px] tracking-[0.22em] uppercase px-3.5 py-2 rounded-sm border transition-all ${
                         type === t
                           ? "text-t1"
@@ -372,6 +374,7 @@ export function CollectNowDialog() {
                         key={c}
                         type="button"
                         onClick={() => setCadence(c)}
+                        aria-pressed={cadence === c}
                         className={`font-mono text-[10px] tracking-[0.22em] uppercase px-3.5 py-2 rounded-sm border transition-all ${
                           cadence === c
                             ? "text-t1"
