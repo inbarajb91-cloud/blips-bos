@@ -487,11 +487,33 @@ function SignalRow({ s }: { s: SignalForCard }) {
 
 function formatCollectionTime(c: CollectionForCard): string {
   if (c.status === "running") return "live";
+  // Scheduled collections waiting for their next cron fire — surface the
+  // wait time, not the creation age. Priority over lastRunAt so a scheduled
+  // that just finished shows "next in 24h" rather than "updated 1m ago".
+  if (c.type === "scheduled" && c.status === "idle" && c.nextRunAt) {
+    const until = formatUntil(c.nextRunAt);
+    if (until) return `next run ${until}`;
+  }
   if (c.lastRunAt) {
     const ago = formatAge(c.lastRunAt);
     return `updated ${ago}`;
   }
   return formatAge(c.createdAt);
+}
+
+/** "in 12h" / "in 3d" / "in 5m" — returns null if the date is already past. */
+function formatUntil(date: Date): string | null {
+  const seconds = Math.floor((new Date(date).getTime() - Date.now()) / 1000);
+  if (seconds <= 0) return null;
+  if (seconds < 60) return `in ${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `in ${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `in ${hours}h`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `in ${days}d`;
+  const months = Math.floor(days / 30);
+  return `in ${months}mo`;
 }
 
 function formatAge(date: Date): string {

@@ -84,6 +84,18 @@ export async function createCollection(input: CreateCollectionInput) {
   const nextRunAt =
     input.type === "scheduled" ? computeNextRunAt(input.cadence!) : null;
 
+  // Status semantics:
+  //   Instant/Batch — created as 'queued' because we immediately fire an
+  //     Inngest event; queued means "event sent, awaiting pickup" for a
+  //     short window before the runner flips it to 'running'.
+  //   Scheduled   — created as 'idle' with a nextRunAt. Queued doesn't fit:
+  //     no event is sent on creation. The hourly cron (bunkerScheduledCheck)
+  //     filters status='idle' + nextRunAt<=now — so a scheduled collection
+  //     must start idle to ever be picked up. Also unblocks the Run Now
+  //     button on the spine, which hides while isActive (queued|running).
+  const initialStatus: "queued" | "idle" =
+    input.type === "scheduled" ? "idle" : "queued";
+
   const [collection] = await db
     .insert(collections)
     .values({
@@ -96,7 +108,7 @@ export async function createCollection(input: CreateCollectionInput) {
       cadenceCron: input.cadenceCron ?? null,
       searchMode,
       decadeHint,
-      status: "queued",
+      status: initialStatus,
       createdBy: user.authId,
       nextRunAt,
     })
