@@ -92,6 +92,31 @@ export const signalSource = pgEnum("signal_source", [
   "llm_synthesis",
 ]);
 
+// Phase 6.5 — Collections replace the original `batches` concept.
+// Collections wrap the whole lifecycle of a BUNKER run: the triage queue
+// of candidates, then the signals those candidates become, tracked
+// through every pipeline stage.
+export const collectionType = pgEnum("collection_type", [
+  "instant", // fixed 5 signals, one-shot
+  "batch", // 6-100 signals, one-shot
+  "scheduled", // 1-100 per run, recurring via cadence
+]);
+
+export const collectionStatus = pgEnum("collection_status", [
+  "queued", // just created, Inngest has the event
+  "running", // actively collecting
+  "idle", // finished (one-shot) or waiting for next run (scheduled)
+  "archived", // user archived
+  "failed",
+]);
+
+export const collectionCadence = pgEnum("collection_cadence", [
+  "daily",
+  "weekly",
+  "monthly",
+  "custom",
+]);
+
 // ══════════════════════════════════════════════════════════════════
 // CORE — orgs + users (profile linked to auth.users)
 // ══════════════════════════════════════════════════════════════════
@@ -159,7 +184,12 @@ export const signals = pgTable(
     source: signalSource("source").notNull(),
     rawText: text("raw_text"), // preserved original
     rawMetadata: jsonb("raw_metadata"), // upvotes, url, subreddit, etc.
+    // Legacy — superseded by collectionId as of Phase 6.5. Kept for back-compat.
     batchId: uuid("batch_id").references(() => batches.id, {
+      onDelete: "set null",
+    }),
+    // Phase 6.5 — signal inherits its originating collection at approve time.
+    collectionId: uuid("collection_id").references(() => collections.id, {
       onDelete: "set null",
     }),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -173,6 +203,7 @@ export const signals = pgTable(
     uniqueIndex("signals_org_shortcode_uq").on(t.orgId, t.shortcode),
     index("signals_org_status_idx").on(t.orgId, t.status),
     index("signals_org_batch_idx").on(t.orgId, t.batchId),
+    index("signals_org_collection_idx").on(t.orgId, t.collectionId),
     index("signals_org_created_idx").on(t.orgId, t.createdAt),
   ],
 );
@@ -203,6 +234,11 @@ export const bunkerCandidates = pgTable(
     orgId: uuid("org_id")
       .notNull()
       .references(() => orgs.id, { onDelete: "cascade" }),
+    // Phase 6.5 — each candidate belongs to the collection that produced it.
+    // Nullable so pre-6.5 rows don't break the FK; new rows always populate.
+    collectionId: uuid("collection_id").references(() => collections.id, {
+      onDelete: "set null",
+    }),
     shortcode: text("shortcode").notNull(),
     workingTitle: text("working_title").notNull(),
     concept: text("concept"),
@@ -218,6 +254,81 @@ export const bunkerCandidates = pgTable(
   (t) => [
     uniqueIndex("bunker_candidates_org_hash_uq").on(t.orgId, t.contentHash),
     index("bunker_candidates_org_status_idx").on(t.orgId, t.status),
+    index("bunker_candidates_collection_idx").on(t.collectionId),
+  ],
+);
+
+// ══════════════════════════════════════════════════════════════════
+// COLLECTIONS — Phase 6.5. Container for a BUNKER run's whole lifecycle:
+// candidates (triage) → signals (pipeline) → through every stage.
+// ══════════════════════════════════════════════════════════════════
+
+export const collections = pgTable(
+  "collections",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    outline: text("outline"), // user-facing description; future BUNKER prompt hint
+    type: collectionType("type").notNull(),
+    targetCount: integer("target_count").notNull(), // 5 for instant; 6-100 batch; 1-100 per-run scheduled
+    cadence: collectionCadence("cadence"), // only set for scheduled
+    cadenceCron: text("cadence_cron"), // only set when cadence='custom'
+    status: collectionStatus("status").notNull().default("queued"),
+    // Aggregate counters for display; kept in sync on candidate/signal state changes.
+    candidateCount: integer("candidate_count").notNull().default(0),
+    signalCount: integer("signal_count").notNull().default(0),
+    createdBy: uuid("created_by").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    lastRunAt: timestamp("last_run_at", { withTimezone: true }),
+    nextRunAt: timestamp("next_run_at", { withTimezone: true }), // only scheduled rows populate this; cron checker queries it
+  },
+  (t) => [
+    index("collections_org_status_idx").on(t.orgId, t.status),
+    index("collections_org_created_idx").on(t.orgId, t.createdAt),
+    index("collections_next_run_idx").on(t.nextRunAt),
+  ],
+);
+
+// Each cadence fire (or single fire for instant/batch) is a run.
+// Candidates get linked to the run that produced them via content_hash +
+// timestamp ordering; we don't FK candidates directly to runs to keep the
+// dedup flow simple.
+export const collectionRuns = pgTable(
+  "collection_runs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    collectionId: uuid("collection_id")
+      .notNull()
+      .references(() => collections.id, { onDelete: "cascade" }),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id, { onDelete: "cascade" }),
+    status: collectionStatus("status").notNull().default("queued"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    fetchedRaw: integer("fetched_raw").notNull().default(0),
+    deduped: integer("deduped").notNull().default(0),
+    extracted: integer("extracted").notNull().default(0),
+    errors: integer("errors").notNull().default(0),
+    sourcesSnapshot: jsonb("sources_snapshot"), // { sources_enabled, per-source caps, etc. at time of run }
+    errorMessage: text("error_message"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("collection_runs_collection_idx").on(t.collectionId),
+    index("collection_runs_org_created_idx").on(t.orgId, t.createdAt),
   ],
 );
 
@@ -416,6 +527,8 @@ export const allTables = {
   orgs,
   users,
   batches,
+  collections,
+  collectionRuns,
   signals,
   signalDecades,
   bunkerCandidates,
