@@ -126,19 +126,29 @@ export function LeftRail({
       {/* Read-only banner — appears when the lock is held by someone
           else. Phase 7 + 8 will wire editable affordances (ORC send,
           stage-approve); the banner preempts them with a visible
-          explanation so the user knows why things are disabled. */}
-      {lockStatus && !lockStatus.heldByMe && lockStatus.lockedByEmail && (
-        <div className="mt-6 p-[12px_14px] border border-[#d4908a]/30 bg-[#a04040]/10 rounded-sm">
-          <div className="font-mono text-[9.5px] tracking-[0.22em] uppercase text-[#d4908a] mb-1">
-            Read-only
+          explanation so the user knows why things are disabled.
+          Gating (post-CodeRabbit): trigger on "someone else holds an
+          active lock" (lockedByAuthId present + heldByMe false) — NOT
+          on lockedByEmail. Email can be null (users table join missed,
+          deleted user, not-yet-provisioned auth row) and in that case
+          the user still deserves an explanation for why edits are
+          disabled. We fall back to a generic identity string so the
+          banner never disappears when the condition that triggers it
+          is active. */}
+      {lockStatus &&
+        !lockStatus.heldByMe &&
+        lockStatus.lockedByAuthId && (
+          <div className="mt-6 p-[12px_14px] border border-[#d4908a]/30 bg-[#a04040]/10 rounded-sm">
+            <div className="font-mono text-[9.5px] tracking-[0.22em] uppercase text-[#d4908a] mb-1">
+              Read-only
+            </div>
+            <p className="font-editorial italic text-[13.5px] leading-[1.5] text-t3">
+              {lockStatus.lockedByEmail ?? "Another user"} is currently
+              editing this signal. You can view — edits unlock when
+              their session ends or the lock expires.
+            </p>
           </div>
-          <p className="font-editorial italic text-[13.5px] leading-[1.5] text-t3">
-            {lockStatus.lockedByEmail} is currently editing this signal.
-            You can view — edits unlock when their session ends or the
-            lock expires.
-          </p>
-        </div>
-      )}
+        )}
     </div>
   );
 }
@@ -286,15 +296,20 @@ function stageLabelFor(status: SignalStatus): string {
 }
 
 function formatDate(date: Date): string {
-  // Locale pinned to en-GB so SSR and client agree on ordering — passing
-  // `undefined` here made the server use its default (US, "Apr 23") while
-  // browsers in India/UK rendered day-first ("23 Apr"), triggering a
-  // hydration mismatch. en-GB matches the day-first style we want and is
-  // deterministic across environments.
+  // Locale pinned to en-US — two reasons:
+  //   1. Determinism: `toLocaleDateString(undefined, …)` is
+  //      runtime-locale dependent, so SSR (server in its TZ/locale) and
+  //      client (browser in India/UK) disagreed on ordering ("Apr 23"
+  //      vs. "23 Apr") and triggered a hydration mismatch.
+  //   2. Codebase convention: src/app/(app)/profile/page.tsx uses
+  //      "en-US" for both created_at (toLocaleDateString) and
+  //      last_sign_in_at (toLocaleString). Matching that keeps date
+  //      rendering consistent across screens without the reader
+  //      flipping mental formats mid-session.
   const d = new Date(date);
   const now = new Date();
   const sameYear = d.getFullYear() === now.getFullYear();
-  return d.toLocaleDateString("en-GB", {
+  return d.toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
     ...(sameYear ? {} : { year: "numeric" }),

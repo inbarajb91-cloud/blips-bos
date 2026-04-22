@@ -15,6 +15,23 @@ import { motion } from "framer-motion";
  * Moved from a dedicated sub-nav strip into the top Nav as part of
  * Phase 7 chrome cleanup — one less row of chrome, more workspace
  * real estate.
+ *
+ * A11y (CodeRabbit — Phase 7): these are route-changing links, not
+ * in-page tabpanels. Using `role="tablist"` / `role="tab"` on them
+ * tells screen readers to expect tab keyboard semantics (arrow keys
+ * moving focus, Space/Enter toggling panels) and an `aria-controls`
+ * panel relationship — none of which this component provides. Wrong
+ * mental model for the user, broken affordance.
+ *
+ * Native navigation semantics are the correct pattern: `<nav>` / `<ul>`
+ * / `<li>` / `<a>` with `aria-current="page"` on the active link. SRs
+ * announce "navigation landmark, current page" which is exactly what's
+ * happening. Visual treatment (active color + breathing underline) is
+ * unchanged — only the roles/attributes differ.
+ *
+ * The AgentTabStrip inside the workspace canvas is a real tab widget
+ * (buttons that swap an in-page tabpanel) and keeps `role="tablist"`
+ * there correctly.
  */
 const TABS = [
   { href: "/engine-room", label: "Bridge" },
@@ -39,39 +56,36 @@ export function SectionTabs() {
   if (!pathname.startsWith("/engine-room")) return null;
 
   return (
-    <div
-      role="tablist"
-      aria-label="Engine Room sections"
-      className="flex items-center gap-6 h-full"
-    >
-      {TABS.map((tab) => {
-        const active = isActive(pathname, tab.href);
-        return (
-          <Link
-            key={tab.href}
-            href={tab.href}
-            role="tab"
-            aria-selected={active}
-            aria-current={active ? "page" : undefined}
-            className={`relative inline-flex items-center h-full font-mono text-[10px] tracking-[0.22em] uppercase transition-colors ${
-              active
-                ? "text-off-white"
-                : "text-warm-muted hover:text-warm-bright"
-            } focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-off-white focus-visible:ring-offset-2 focus-visible:ring-offset-ink rounded-[2px]`}
-          >
-            {tab.label}
-            {active && (
-              <motion.span
-                layoutId="section-tab-underline"
-                aria-hidden
-                className="absolute left-0 right-0 bottom-0 h-[1.5px] bg-off-white"
-                style={{ animation: "breathe 2.8s ease-in-out infinite" }}
-                transition={{ type: "spring", stiffness: 420, damping: 34 }}
-              />
-            )}
-          </Link>
-        );
-      })}
-    </div>
+    <nav aria-label="Engine Room sections" className="h-full">
+      <ul className="flex items-center gap-6 h-full m-0 p-0 list-none">
+        {TABS.map((tab) => {
+          const active = isActive(pathname, tab.href);
+          return (
+            <li key={tab.href} className="h-full">
+              <Link
+                href={tab.href}
+                aria-current={active ? "page" : undefined}
+                className={`relative inline-flex items-center h-full font-mono text-[10px] tracking-[0.22em] uppercase transition-colors ${
+                  active
+                    ? "text-off-white"
+                    : "text-warm-muted hover:text-warm-bright"
+                } focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-off-white focus-visible:ring-offset-2 focus-visible:ring-offset-ink rounded-[2px]`}
+              >
+                {tab.label}
+                {active && (
+                  <motion.span
+                    layoutId="section-tab-underline"
+                    aria-hidden
+                    className="absolute left-0 right-0 bottom-0 h-[1.5px] bg-off-white"
+                    style={{ animation: "breathe 2.8s ease-in-out infinite" }}
+                    transition={{ type: "spring", stiffness: 420, damping: 34 }}
+                  />
+                )}
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
+    </nav>
   );
 }

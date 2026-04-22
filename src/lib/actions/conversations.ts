@@ -1,8 +1,8 @@
 "use server";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
-import { db, agentConversations, signals } from "@/db";
+import { db, signals } from "@/db";
 import { getCurrentUserWithOrg } from "@/lib/auth/current-user";
 
 /**
@@ -72,48 +72,45 @@ export async function getOrCreateOrcConversation(
     .limit(1);
   if (!signal) throw new Error("Signal not found");
 
-  // Look for existing conversation
-  const [existing] = await db
-    .select()
-    .from(agentConversations)
-    .where(
-      and(
-        eq(agentConversations.signalId, signalId),
-        eq(agentConversations.agentName, "ORC"),
-      ),
-    )
-    .limit(1);
-
-  if (existing) {
-    return {
-      id: existing.id,
-      signalId: existing.signalId,
-      messages: (existing.messages as Message[]) ?? [],
-    };
-  }
-
-  // Create new conversation with a seed opening message. Template is
-  // server-side so it's canonical + persists consistently; Phase 8
-  // real ORC can regenerate if the template turns out wrong.
+  // Atomic insert-or-get.
+  //
+  // Previous implementation read-then-wrote: SELECT, branch on existence,
+  // INSERT if missing. Two concurrent first-opens could both miss the
+  // SELECT and both INSERT, leaving duplicate ORC threads — and the
+  // `.limit(1)` lookup would pick nondeterministically. The DB now has
+  // a UNIQUE INDEX on (signal_id, agent_name) (migration 0001) so the
+  // duplicate INSERT would fail with 23505.
+  //
+  // We use INSERT ... ON CONFLICT DO UPDATE with a no-op assignment so
+  // we get RETURNING rows in both the insert path and the conflict
+  // path. Seed message is only persisted on the genuine insert path —
+  // on conflict the no-op keeps the existing messages array intact.
+  // Result: one round-trip, race-safe, no duplicates.
   const seedMessage: Message = {
     role: "orc",
     content: buildSeedMessage(signal.source, signal.workingTitle),
     ts: new Date().toISOString(),
   };
+  const seedJson = JSON.stringify([seedMessage]);
 
-  const [created] = await db
-    .insert(agentConversations)
-    .values({
-      signalId,
-      agentName: "ORC",
-      messages: [seedMessage],
-    })
-    .returning();
+  const rows = await db.execute<{
+    id: string;
+    signal_id: string;
+    messages: Message[];
+  }>(sql`
+    INSERT INTO agent_conversations (signal_id, agent_name, messages)
+    VALUES (${signalId}::uuid, 'ORC', ${seedJson}::jsonb)
+    ON CONFLICT (signal_id, agent_name) DO UPDATE
+      SET updated_at = agent_conversations.updated_at
+    RETURNING id, signal_id, messages
+  `);
 
+  const row = rows[0];
+  if (!row) throw new Error("Failed to upsert ORC conversation");
   return {
-    id: created.id,
-    signalId: created.signalId,
-    messages: (created.messages as Message[]) ?? [],
+    id: row.id,
+    signalId: row.signal_id,
+    messages: (row.messages as Message[]) ?? [],
   };
 }
 
@@ -138,49 +135,55 @@ export async function appendUserMessage(
     throw new Error("Message is too long (2000 character max).");
   }
 
-  // Load conversation + verify scope via signal → org
-  const [convo] = await db
-    .select({
-      id: agentConversations.id,
-      signalId: agentConversations.signalId,
-      messages: agentConversations.messages,
-    })
-    .from(agentConversations)
-    .where(eq(agentConversations.id, conversationId))
-    .limit(1);
-  if (!convo) throw new Error("Conversation not found");
-
-  // Scope check: signal belongs to this user's org
-  const [signal] = await db
-    .select({ id: signals.id })
-    .from(signals)
-    .where(
-      and(eq(signals.id, convo.signalId), eq(signals.orgId, user.orgId)),
-    )
-    .limit(1);
-  if (!signal) throw new Error("Signal not found");
-
-  const existingMessages = (convo.messages as Message[]) ?? [];
   const newMessage: Message = {
     role: "user",
     content: trimmed,
     ts: new Date().toISOString(),
     ...(stage ? { stage } : {}),
   };
-  const nextMessages = [...existingMessages, newMessage];
 
-  await db
-    .update(agentConversations)
-    .set({
-      messages: nextMessages,
-      updatedAt: new Date(),
-    })
-    .where(eq(agentConversations.id, conversationId));
+  // Atomic append via Postgres JSONB `||` operator.
+  //
+  // Previous implementation was read-modify-write: SELECT messages,
+  // spread-append in JS, UPDATE whole array. Two concurrent sends
+  // could both read the same pre-state, each append locally, and the
+  // second UPDATE would overwrite — dropping the first user's message
+  // silently. CodeRabbit flagged this as Critical.
+  //
+  // We now merge the scope check and the append into one UPDATE:
+  //   - JOIN signals in the FROM clause so Postgres enforces the org
+  //     scope as part of the WHERE (not a separate read)
+  //   - `messages || jsonb_build_array(...)` does the append in place,
+  //     so no client-side read of the current array is needed
+  //   - If the WHERE fails (conversation missing, wrong org, etc.)
+  //     RETURNING yields zero rows and we surface "not found"
+  //
+  // Concurrent appends serialize on the row's write lock — the DB is
+  // the source of truth for ordering, not the client. No message drop.
+  const newMessageJson = JSON.stringify(newMessage);
+  const rows = await db.execute<{ messages: Message[] }>(sql`
+    UPDATE agent_conversations AS ac
+    SET messages = ac.messages || jsonb_build_array(${newMessageJson}::jsonb),
+        updated_at = NOW()
+    FROM signals AS s
+    WHERE ac.id = ${conversationId}::uuid
+      AND s.id = ac.signal_id
+      AND s.org_id = ${user.orgId}::uuid
+    RETURNING ac.messages
+  `);
+
+  if (rows.length === 0) {
+    // Either the conversation doesn't exist or the signal isn't in
+    // this user's org. We don't differentiate — same "not found" from
+    // the caller's perspective, less info leaking about existence of
+    // cross-org rows.
+    throw new Error("Conversation not found");
+  }
 
   // Revalidate so the workspace page re-reads on next navigation/render
   revalidatePath(`/engine-room/signals`, "layout");
 
-  return nextMessages;
+  return (rows[0].messages as Message[]) ?? [];
 }
 
 // ─── Seed message templates ─────────────────────────────────────────
