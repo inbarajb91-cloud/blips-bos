@@ -175,67 +175,28 @@ export function WorkspaceFrame({
   // canvas extent.
   return (
     <div className={`${typeClass} flex flex-col bg-ink`}>
-      {/* Header region — back link, signal identity. Scrolls away
-          naturally when user reads long stage content. The tab strip
-          (below) is sticky so it stays reachable. */}
-      <section className="px-11 pt-5">
-        <div className="flex items-center justify-between mb-[18px]">
-          <Link
-            href="/engine-room"
-            className="font-mono text-[10.5px] tracking-[0.22em] uppercase text-t3 hover:text-t1 transition-colors inline-flex items-center gap-[6px] rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2"
-          >
-            <span style={{ color: "rgba(var(--d), 0.75)" }}>‹</span>
-            Back to Bridge
-          </Link>
-          {/* Lock chip — Phase 7E wires the real lock; for now we show a
-              demoted self-lock placeholder so the real estate is reserved
-              and the visual doesn't shift when the lock lands. */}
-          <div
-            className="inline-flex items-center gap-[6px] text-t5 font-mono text-[10px] tracking-[0.18em] uppercase"
-            title="Signal locks ship in Phase 7E"
-          >
-            <span
-              aria-hidden
-              style={{
-                width: 10,
-                height: 10,
-                border: "1.25px solid var(--color-t5)",
-                borderRadius: "50%",
-                position: "relative",
-              }}
-            />
-            <span className="text-t4">lock · phase 7e</span>
-          </div>
-        </div>
+      {/* Header — back link + just the title. Everything else (concept,
+          from-collection, lock, source metadata) moved to the left rail.
+          Phase 7 chrome cleanup: workspace header is identity +
+          navigation only; context lives in the rail so the canvas gets
+          more vertical breathing room. */}
+      <section className="px-11 pt-5 pb-6">
+        <Link
+          href="/engine-room"
+          className="font-mono text-[10.5px] tracking-[0.22em] uppercase text-t3 hover:text-t1 transition-colors inline-flex items-center gap-[6px] rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2 mb-5"
+        >
+          <span style={{ color: "rgba(var(--d), 0.75)" }}>‹</span>
+          Back to Bridge
+        </Link>
 
-        {/* Signal identity — shortcode, working title, collection name, concept */}
-        <div className="grid grid-cols-[auto_1fr] gap-y-2 gap-x-8 items-baseline pb-6">
-          <div className="font-display font-bold text-[13px] tracking-[0.16em] text-t1 pt-[14px]">
+        <div className="flex items-baseline gap-8">
+          <span className="font-display font-bold text-[13px] tracking-[0.16em] text-t1">
             {signal.shortcode}
-          </div>
-          <h1 className="font-display font-medium text-[40px] -tracking-[0.012em] leading-[1.1] text-t1">
+          </span>
+          <h1 className="font-display font-medium text-[40px] -tracking-[0.012em] leading-[1.05] text-t1">
             {signal.workingTitle}
           </h1>
-          {collection && (
-            <>
-              <div className="font-mono text-[10px] tracking-[0.22em] uppercase text-t5 whitespace-nowrap">
-                From Collection
-              </div>
-              <div className="font-editorial italic text-[14px] text-t4 leading-[1.45]">
-                {collection.name}
-              </div>
-            </>
-          )}
-          {signal.concept && (
-            <>
-              <div />
-              <p className="font-editorial italic text-[18.5px] leading-[1.45] text-t3 max-w-[72ch] mt-1">
-                &ldquo;{signal.concept}&rdquo;
-              </p>
-            </>
-          )}
         </div>
-
       </section>
 
       {/* Tab strip — sticky to top of the scroll container (engine-room

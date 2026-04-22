@@ -67,6 +67,15 @@ export function LeftRail({
         </>
       )}
 
+      {signal.concept && (
+        <div>
+          <Label>Concept</Label>
+          <p className="font-editorial italic text-[15px] leading-[1.5] text-t2 mb-7">
+            &ldquo;{signal.concept}&rdquo;
+          </p>
+        </div>
+      )}
+
       <Label>Pipeline Progress</Label>
       <div className="flex items-center gap-2 mb-7">
         <StagePips
@@ -83,13 +92,14 @@ export function LeftRail({
         <Label>Signal</Label>
         <MetaRow k="Shortcode" v={signal.shortcode} />
         <MetaRow k="Source" v={signal.source} />
+        <MetaRow k="Created" v={formatDate(signal.createdAt)} />
+        <MetaRow k="Updated" v={formatDate(signal.updatedAt)} />
+        {/* Lock indicator — self-lock is demoted to a small row in the
+            rail. Phase 7E wires the real lock with expiry; for now this
+            reserves the row so the layout doesn't shift when 7E lands. */}
         <MetaRow
-          k="Created"
-          v={formatDate(signal.createdAt)}
-        />
-        <MetaRow
-          k="Updated"
-          v={formatDate(signal.updatedAt)}
+          k="Lock"
+          v={<span className="text-t4">you · phase 7e</span>}
         />
       </div>
     </div>
