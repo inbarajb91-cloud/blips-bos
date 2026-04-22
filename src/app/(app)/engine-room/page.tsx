@@ -4,6 +4,7 @@ import {
   db,
   bunkerCandidates,
   collections as collectionsTable,
+  collectionRuns as collectionRunsTable,
   signals as signalsTable,
 } from "@/db";
 import { getCurrentUserWithOrg } from "@/lib/auth/current-user";
@@ -29,9 +30,10 @@ export default async function BridgePage() {
   const user = await getCurrentUserWithOrg();
   if (!user) redirect("/login");
 
-  // One round-trip each for collections, pending candidates, active signals.
-  // Keeps total DB calls to three regardless of how many collections there are.
-  const [colRows, candRows, sigRows] = await Promise.all([
+  // Four round-trips in parallel: collections, pending candidates,
+  // active signals, recent collection_runs. The runs query feeds the
+  // spine's secondary meta line ("0 new · 23 deduped" etc.).
+  const [colRows, candRows, sigRows, runRows] = await Promise.all([
     db
       .select()
       .from(collectionsTable)
@@ -79,7 +81,32 @@ export default async function BridgePage() {
         ),
       )
       .orderBy(desc(signalsTable.updatedAt)),
+    db
+      .select({
+        id: collectionRunsTable.id,
+        collectionId: collectionRunsTable.collectionId,
+        status: collectionRunsTable.status,
+        fetchedRaw: collectionRunsTable.fetchedRaw,
+        deduped: collectionRunsTable.deduped,
+        extracted: collectionRunsTable.extracted,
+        errors: collectionRunsTable.errors,
+        startedAt: collectionRunsTable.startedAt,
+        completedAt: collectionRunsTable.completedAt,
+        createdAt: collectionRunsTable.createdAt,
+      })
+      .from(collectionRunsTable)
+      .where(eq(collectionRunsTable.orgId, user.orgId))
+      .orderBy(desc(collectionRunsTable.createdAt)),
   ]);
+
+  // Keep only the most recent run per collection. "Most recent" = first
+  // match in the desc-by-createdAt result.
+  const latestRunByCollection = new Map<string, (typeof runRows)[number]>();
+  for (const run of runRows) {
+    if (!latestRunByCollection.has(run.collectionId)) {
+      latestRunByCollection.set(run.collectionId, run);
+    }
+  }
 
   const totalPending = candRows.length;
   const activeCollectionCount = colRows.length;
@@ -162,6 +189,7 @@ export default async function BridgePage() {
                   status: s.status,
                   updatedAt: s.updatedAt,
                 }));
+              const latestRun = latestRunByCollection.get(c.id) ?? null;
               return (
                 <CollectionCard
                   key={c.id}
@@ -180,6 +208,18 @@ export default async function BridgePage() {
                     createdAt: c.createdAt,
                     updatedAt: c.updatedAt,
                   }}
+                  latestRun={
+                    latestRun
+                      ? {
+                          status: latestRun.status,
+                          fetchedRaw: latestRun.fetchedRaw,
+                          deduped: latestRun.deduped,
+                          extracted: latestRun.extracted,
+                          errors: latestRun.errors,
+                          completedAt: latestRun.completedAt,
+                        }
+                      : null
+                  }
                   candidates={candidatesForC}
                   signals={signalsForC}
                   defaultOpen={i === 0}

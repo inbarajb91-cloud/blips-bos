@@ -58,10 +58,21 @@ export interface SignalForCard {
   updatedAt: Date;
 }
 
+/** Summary of the collection's most recent run — surfaces on the spine. */
+export interface LatestRunSummary {
+  status: "queued" | "running" | "idle" | "archived" | "failed";
+  fetchedRaw: number;
+  deduped: number;
+  extracted: number;
+  errors: number;
+  completedAt: Date | null;
+}
+
 export interface CollectionCardProps {
   collection: CollectionForCard;
   candidates: CandidateForCard[];
   signals: SignalForCard[];
+  latestRun?: LatestRunSummary | null;
   /** Expand this collection on initial render. */
   defaultOpen?: boolean;
 }
@@ -70,6 +81,7 @@ export function CollectionCard({
   collection: c,
   candidates,
   signals,
+  latestRun = null,
   defaultOpen = false,
 }: CollectionCardProps) {
   const [open, setOpen] = useState(defaultOpen);
@@ -85,6 +97,12 @@ export function CollectionCard({
     !isActive &&
     (c.type === "batch" || c.type === "scheduled") &&
     c.name !== "Direct submissions"; // the singleton direct-input bucket doesn't run
+
+  // Decide what to surface from the latest run. Only show when the run
+  // actually ran (completed or failed) AND the result is informative —
+  // "ran clean with new signals" is already clear from the aggregate count,
+  // so we skip it. We DO want to surface "0 new · deduped" and "errors".
+  const runInfo = !isActive && latestRun ? interpretRun(latestRun) : null;
 
   // Relative time for meta row
   const timeMeta = formatCollectionTime(c);
@@ -195,6 +213,14 @@ export function CollectionCard({
               </>
             )}
           </div>
+
+          {/* Secondary run-summary line — only when last run is worth
+              calling out (0 new / errors). Small, retreating. */}
+          {runInfo && (
+            <div className="font-mono text-[10px] tracking-[0.18em] uppercase text-t5 mt-1">
+              {runInfo.text}
+            </div>
+          )}
         </button>
 
         {canRunNow ? (
@@ -466,6 +492,41 @@ function formatAge(date: Date): string {
   if (days < 30) return `${days}d ago`;
   const months = Math.floor(days / 30);
   return `${months}mo ago`;
+}
+
+/**
+ * Decide whether the latest run is worth surfacing on the spine.
+ *
+ * Rules:
+ *   - Clean win (extracted > 0, errors = 0) → null. The count on the right
+ *     already tells the story; don't clutter the meta.
+ *   - 0 extracted, all dedup'd (BUNKER saw stuff but nothing was new) →
+ *     "0 new · N deduped". Helps the user understand why the count is 0.
+ *   - Errors present → surface them.
+ *   - Nothing happened (fetched 0 raw) → null. Probably a transient source
+ *     glitch; will self-correct on next run.
+ */
+function interpretRun(run: LatestRunSummary): { text: string } | null {
+  const { fetchedRaw, deduped, extracted, errors } = run;
+
+  // Pure success — let the spine count speak for itself.
+  if (extracted > 0 && errors === 0) return null;
+
+  // Nothing fetched — probably network blip, not actionable info for user.
+  if (fetchedRaw === 0 && errors === 0) return null;
+
+  const parts: string[] = [];
+  if (extracted === 0) {
+    parts.push("0 new");
+  } else if (errors > 0) {
+    parts.push(`${extracted} new`);
+  }
+  if (deduped > 0) parts.push(`${deduped} already seen`);
+  if (errors > 0) {
+    parts.push(`${errors} source ${errors === 1 ? "error" : "errors"}`);
+  }
+  if (parts.length === 0) return null;
+  return { text: parts.join(" · ") };
 }
 
 function currentStageLabel(status: SignalStatus): string {
