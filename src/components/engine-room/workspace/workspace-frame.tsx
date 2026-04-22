@@ -356,7 +356,15 @@ export function WorkspaceFrame({
           aria-labelledby={`tab-${activeTab}`}
           className="min-w-0"
         >
-          <div className="max-w-[880px] w-full px-12 py-10">
+          {/* Canvas content fills the grid track — no max-width cap.
+              The earlier 880px cap left ~200px of dead space between
+              the extraction grid and the ORC panel's left edge on
+              wider viewports. Extraction cells, source metadata, and
+              the Review timeline all benefit from breathing room; the
+              content has its own internal max-widths where readability
+              matters (paragraphs stay reasonable line-lengths via
+              their own font-size + leading). */}
+          <div className="w-full px-12 py-10">
             <Renderer
               signal={signal}
               collection={collection}

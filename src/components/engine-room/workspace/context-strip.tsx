@@ -75,24 +75,38 @@ export function ContextStrip({
   return (
     <section
       aria-label="Signal context"
-      className="px-11 border-b border-rule-1 bg-wash-1"
+      className="px-11 border-y border-rule-1 bg-wash-1"
     >
       {/* Collapsed row — single-line summary. Always visible, even when
           the strip is expanded (the expanded body sits beneath it, same
           row just taller). Keeping the collapsed row visible in both
           states gives the chevron a stable perch and makes the
           collapse/expand affordance feel like a disclosure, not a
-          page-shift. */}
+          page-shift.
+          Alignment (post-walkthrough fix):
+            - Outer flex keeps `items-center` so the lock toggle +
+              chevron button stay vertically centered with the text.
+            - Inner left group uses `items-baseline` so the
+              uppercase-mono FROM COLLECTION label shares a typographic
+              baseline with the display-font collection name and the
+              mono type/counts chips. Without this, the stacked-layout
+              `Label` component's bottom margin pushed the label up
+              relative to its siblings and the row read as two rows
+              glued together.
+            - The collapsed row uses inline label markup (not the
+              `<Label>` helper) because `<Label>` carries `mb-[10px]`
+              for the expanded column layout. Reusing it inline would
+              re-introduce the same misalignment. */}
       <div className="flex items-center justify-between gap-6 h-[44px]">
-        <div className="flex items-center gap-5 min-w-0">
+        <div className="flex items-baseline gap-5 min-w-0">
           {collection ? (
             <>
-              <Label>From Collection</Label>
+              <InlineLabel>From Collection</InlineLabel>
               <Link
                 href="/engine-room"
-                className="flex items-baseline gap-[10px] min-w-0 group"
+                className="inline-flex items-baseline gap-[10px] min-w-0 group"
               >
-                <span className="font-display font-medium text-[14px] -tracking-[0.005em] text-t1 leading-none truncate group-hover:text-off-white transition-colors">
+                <span className="font-display font-medium text-[14px] -tracking-[0.005em] text-t1 truncate group-hover:text-off-white transition-colors">
                   {collection.name}
                 </span>
                 <span
@@ -112,7 +126,7 @@ export function ContextStrip({
             </>
           ) : (
             <>
-              <Label>Signal origin</Label>
+              <InlineLabel>Signal origin</InlineLabel>
               <span className="font-editorial italic text-[13.5px] text-t4 truncate">
                 Direct submission · no parent collection
               </span>
@@ -359,11 +373,29 @@ function formatTimeLeft(expiresAt: Date): string {
   return `${hr}h left`;
 }
 
+/**
+ * `<Label>` — stacked variant used in the expanded-body columns
+ * (label sits above its content, so carries a bottom margin).
+ */
 function Label({ children }: { children: React.ReactNode }) {
   return (
     <div className="font-mono text-[10px] tracking-[0.28em] uppercase text-t5 mb-[10px] shrink-0">
       {children}
     </div>
+  );
+}
+
+/**
+ * `<InlineLabel>` — inline variant used in the collapsed row where
+ * the label sits next to its content on the same text baseline. No
+ * bottom margin (would break baseline alignment); keeps `shrink-0`
+ * so the label stays intact if the sibling content truncates.
+ */
+function InlineLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="font-mono text-[10px] tracking-[0.28em] uppercase text-t5 shrink-0">
+      {children}
+    </span>
   );
 }
 

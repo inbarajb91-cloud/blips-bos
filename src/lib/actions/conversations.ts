@@ -2,7 +2,7 @@
 
 import { and, eq, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
-import { db, signals } from "@/db";
+import { db, agentConversations, signals } from "@/db";
 import { getCurrentUserWithOrg } from "@/lib/auth/current-user";
 
 /**
@@ -72,46 +72,112 @@ export async function getOrCreateOrcConversation(
     .limit(1);
   if (!signal) throw new Error("Signal not found");
 
-  // Atomic insert-or-get.
+  // SELECT first, INSERT if missing, catch 23505 on the race.
   //
-  // Previous implementation read-then-wrote: SELECT, branch on existence,
-  // INSERT if missing. Two concurrent first-opens could both miss the
-  // SELECT and both INSERT, leaving duplicate ORC threads — and the
-  // `.limit(1)` lookup would pick nondeterministically. The DB now has
-  // a UNIQUE INDEX on (signal_id, agent_name) (migration 0001) so the
-  // duplicate INSERT would fail with 23505.
+  // The earlier draft used `INSERT ... ON CONFLICT (signal_id,
+  // agent_name) DO UPDATE` — elegant when the unique index exists, but
+  // statement-fatal when it doesn't. Postgres parses `ON CONFLICT
+  // (cols)` against the catalog at execution time and errors with
+  // "there is no unique or exclusion constraint matching the ON
+  // CONFLICT specification" if no matching index is found. That bit
+  // prod: the schema ships the `uniqueIndex` declaration, but the
+  // matching migration (0001_unique_orc_thread.sql) has to be applied
+  // manually to Supabase (the repo uses hand-managed SQL sidecars, not
+  // drizzle-kit auto-migrate), and between the code landing and the
+  // SQL running, every signal open raised an error.
   //
-  // We use INSERT ... ON CONFLICT DO UPDATE with a no-op assignment so
-  // we get RETURNING rows in both the insert path and the conflict
-  // path. Seed message is only persisted on the genuine insert path —
-  // on conflict the no-op keeps the existing messages array intact.
-  // Result: one round-trip, race-safe, no duplicates.
+  // The pattern here is resilient to both states:
+  //
+  //   1. Index not yet created: SELECT returns either the existing
+  //      row (normal) or nothing → INSERT proceeds and succeeds. No
+  //      23505 is possible because there's no unique constraint. A
+  //      concurrent race can still produce duplicates (old behavior
+  //      before this PR — accepted transiently until migration lands).
+  //
+  //   2. Index created: a losing racer hits 23505. We catch it,
+  //      re-SELECT, and return the winning row. No duplicates land.
+  //
+  // Either way the caller always gets a valid OrcConversation back.
+  const [existing] = await db
+    .select()
+    .from(agentConversations)
+    .where(
+      and(
+        eq(agentConversations.signalId, signalId),
+        eq(agentConversations.agentName, "ORC"),
+      ),
+    )
+    .orderBy(agentConversations.createdAt)
+    .limit(1);
+
+  if (existing) {
+    return {
+      id: existing.id,
+      signalId: existing.signalId,
+      messages: (existing.messages as Message[]) ?? [],
+    };
+  }
+
   const seedMessage: Message = {
     role: "orc",
     content: buildSeedMessage(signal.source, signal.workingTitle),
     ts: new Date().toISOString(),
   };
-  const seedJson = JSON.stringify([seedMessage]);
 
-  const rows = await db.execute<{
-    id: string;
-    signal_id: string;
-    messages: Message[];
-  }>(sql`
-    INSERT INTO agent_conversations (signal_id, agent_name, messages)
-    VALUES (${signalId}::uuid, 'ORC', ${seedJson}::jsonb)
-    ON CONFLICT (signal_id, agent_name) DO UPDATE
-      SET updated_at = agent_conversations.updated_at
-    RETURNING id, signal_id, messages
-  `);
+  try {
+    const [created] = await db
+      .insert(agentConversations)
+      .values({
+        signalId,
+        agentName: "ORC",
+        messages: [seedMessage],
+      })
+      .returning();
+    return {
+      id: created.id,
+      signalId: created.signalId,
+      messages: (created.messages as Message[]) ?? [],
+    };
+  } catch (e) {
+    if (!isUniqueViolation(e)) throw e;
+    // Lost the race. Re-SELECT to return the winning row.
+    const [raced] = await db
+      .select()
+      .from(agentConversations)
+      .where(
+        and(
+          eq(agentConversations.signalId, signalId),
+          eq(agentConversations.agentName, "ORC"),
+        ),
+      )
+      .orderBy(agentConversations.createdAt)
+      .limit(1);
+    if (!raced) {
+      // Shouldn't happen: 23505 means there's already a row on the
+      // (signal_id, agent_name) pair. If the select misses, something
+      // is truly wrong — surface the original error to keep diagnostics.
+      throw e;
+    }
+    return {
+      id: raced.id,
+      signalId: raced.signalId,
+      messages: (raced.messages as Message[]) ?? [],
+    };
+  }
+}
 
-  const row = rows[0];
-  if (!row) throw new Error("Failed to upsert ORC conversation");
-  return {
-    id: row.id,
-    signalId: row.signal_id,
-    messages: (row.messages as Message[]) ?? [],
-  };
+/**
+ * Detect Postgres unique_violation (SQLSTATE 23505). Wraps the check
+ * in defensive property access since the error shape varies between
+ * postgres.js / node-postgres / drizzle wrappers; some attach `code`
+ * on the error itself, others wrap it in `.cause`.
+ */
+function isUniqueViolation(e: unknown): boolean {
+  if (e && typeof e === "object") {
+    if ("code" in e && (e as { code?: string }).code === "23505") return true;
+    if ("cause" in e) return isUniqueViolation((e as { cause?: unknown }).cause);
+  }
+  return false;
 }
 
 /**

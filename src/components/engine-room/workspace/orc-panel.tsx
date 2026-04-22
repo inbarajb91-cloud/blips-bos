@@ -174,11 +174,29 @@ export function OrcPanel({
             disabled={conversationId === null || pending || !canSend}
             signalShortcode={signal.shortcode}
             disabledReason={
-              !canSend
-                ? lockStatus && lockStatus.lockedByEmail
-                  ? "other-user"
-                  : "self-released"
-                : null
+              // Four distinct states:
+              //   canSend=true          → null (input live)
+              //   canSend=false, loading → "loading" (lock query in flight)
+              //   canSend=false, other user holds   → "other-user"
+              //   canSend=false, no lock (released) → "self-released"
+              //
+              // CodeRabbit flagged: previous ternary conflated the
+              // "loading" case into "self-released", which flashed the
+              // misleading "unlocked — click Lock above to send" message
+              // during the first render while the acquire round-trip
+              // was still in flight. Splitting the states keeps the
+              // placeholder honest at every instant of the lifecycle.
+              //
+              // Gating on lockedByAuthId (not lockedByEmail) for the
+              // other-user case, mirroring the banner fix — email can
+              // be null (users-join miss), but the lock is still real.
+              canSend
+                ? null
+                : lockStatus === null
+                  ? "loading"
+                  : lockStatus.lockedByAuthId
+                    ? "other-user"
+                    : "self-released"
             }
           />
           <button
@@ -209,13 +227,21 @@ export function OrcPanel({
         )}
         {/* Read-only notice — only when lock is held by someone else.
             Keeps the input visible (for viewing) but makes disability
-            explanatory, not just a dead field. */}
-        {lockStatus !== null && !lockStatus.heldByMe && lockStatus.lockedByEmail && (
-          <div className="font-mono text-[10px] tracking-[0.18em] uppercase text-t5">
-            Read-only while {lockStatus.lockedByEmail.split("@")[0]} is
-            editing
-          </div>
-        )}
+            explanatory, not just a dead field. Gating on
+            lockedByAuthId (not email) so the notice still renders
+            when the users join returns null; falls back to "another
+            user" for the holder string. */}
+        {lockStatus !== null &&
+          !lockStatus.heldByMe &&
+          lockStatus.lockedByAuthId && (
+            <div className="font-mono text-[10px] tracking-[0.18em] uppercase text-t5">
+              Read-only while{" "}
+              {lockStatus.lockedByEmail
+                ? lockStatus.lockedByEmail.split("@")[0]
+                : "another user"}{" "}
+              is editing
+            </div>
+          )}
       </div>
     </div>
   );
@@ -263,10 +289,11 @@ function OrcInput({
   signalShortcode: string;
   /** Why is the input disabled? Drives the placeholder message so the
    *  user understands the state:
+   *    - "loading": lock status query in flight (first render)
    *    - "other-user": someone else holds the edit lock
-   *    - "self-released": user voluntarily released, can re-lock via rail
+   *    - "self-released": user voluntarily released, can re-lock above
    *    - null: input is active */
-  disabledReason?: "other-user" | "self-released" | null;
+  disabledReason?: "loading" | "other-user" | "self-released" | null;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -297,11 +324,13 @@ function OrcInput({
         }
       }}
       placeholder={
-        disabledReason === "other-user"
-          ? "read-only — another user is editing"
-          : disabledReason === "self-released"
-            ? "unlocked — click Lock in left rail to send"
-            : "ask, nudge, or steer…"
+        disabledReason === "loading"
+          ? "checking lock status…"
+          : disabledReason === "other-user"
+            ? "read-only — another user is editing"
+            : disabledReason === "self-released"
+              ? "unlocked — click Lock above to send"
+              : "ask, nudge, or steer…"
       }
       aria-label={`Message ORC about signal ${signalShortcode}`}
       disabled={disabled}
