@@ -1,6 +1,6 @@
 "use server";
 
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, ne } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db, collections, collectionRuns, bunkerCandidates, signals } from "@/db";
 import { getCurrentUserWithOrg } from "@/lib/auth/current-user";
@@ -155,19 +155,16 @@ export async function listCollections() {
   const user = await getCurrentUserWithOrg();
   if (!user) throw new Error("Unauthenticated");
 
-  const rows = await db
+  return await db
     .select()
     .from(collections)
     .where(
       and(
         eq(collections.orgId, user.orgId),
-        // Show everything except archived (including running, idle, failed)
+        ne(collections.status, "archived"),
       ),
     )
     .orderBy(desc(collections.updatedAt));
-
-  // Filter archived client-side for now (can push to query later if needed)
-  return rows.filter((r) => r.status !== "archived");
 }
 
 /**

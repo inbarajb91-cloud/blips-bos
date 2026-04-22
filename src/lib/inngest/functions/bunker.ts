@@ -257,11 +257,55 @@ export const bunkerCollectionOnDemand = inngest.createFunction(
  * Fired by createCollection (Instant/Batch) or the scheduled-check cron.
  * Writes a collection_runs row for observability and updates the
  * collection's status + counters in lockstep with the run.
+ *
+ * Resilience: onFailure handler below flips the collection + its run back
+ * to 'failed' if Inngest exhausts retries. Without this, a crashed run
+ * (Gemini timeout, DB hiccup, etc.) leaves the collection stuck at
+ * status='running' forever — Run now won't help because it gates on
+ * !isActive. onFailure is Inngest's permanent-failure hook.
  */
 export const bunkerCollectionRun = inngest.createFunction(
   {
     id: "bunker-collection-run",
     triggers: [{ event: "bunker.collection.run" }],
+    onFailure: async ({ event, error }) => {
+      const { orgId, collectionId } = (
+        event as unknown as {
+          data: { event: { data: { orgId: string; collectionId: string } } };
+        }
+      ).data.event.data;
+      const msg = (error as Error)?.message?.slice(0, 500) ?? "unknown error";
+      try {
+        await db
+          .update(collections)
+          .set({ status: "failed", updatedAt: new Date() })
+          .where(
+            and(
+              eq(collections.id, collectionId),
+              eq(collections.orgId, orgId),
+            ),
+          );
+        await db
+          .update(collectionRuns)
+          .set({
+            status: "failed",
+            completedAt: new Date(),
+            errorMessage: msg,
+          })
+          .where(
+            and(
+              eq(collectionRuns.collectionId, collectionId),
+              eq(collectionRuns.orgId, orgId),
+              eq(collectionRuns.status, "running"),
+            ),
+          );
+      } catch (cleanupErr) {
+        console.error(
+          "[bunker-collection-run] onFailure cleanup failed:",
+          cleanupErr,
+        );
+      }
+    },
   },
   async ({ event, step }) => {
     const { orgId, collectionId } = event.data as {
@@ -333,11 +377,11 @@ export const bunkerCollectionRun = inngest.createFunction(
           status: "idle",
           lastRunAt: new Date(),
           nextRunAt,
-          candidateCount: sql`(SELECT count(*) FROM bunker_candidates WHERE collection_id = ${collectionId} AND status = 'PENDING_REVIEW')`,
-          signalCount: sql`(SELECT count(*) FROM signals WHERE collection_id = ${collectionId})`,
+          candidateCount: sql`(SELECT count(*) FROM bunker_candidates WHERE collection_id = ${collectionId} AND org_id = ${orgId} AND status = 'PENDING_REVIEW')`,
+          signalCount: sql`(SELECT count(*) FROM signals WHERE collection_id = ${collectionId} AND org_id = ${orgId})`,
           updatedAt: new Date(),
         })
-        .where(eq(collections.id, collectionId));
+        .where(and(eq(collections.id, collectionId), eq(collections.orgId, orgId)));
     });
 
     return { runId, ...stats };

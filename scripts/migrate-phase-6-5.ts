@@ -84,7 +84,14 @@ async function main() {
     await sql`CREATE INDEX IF NOT EXISTS collections_org_status_idx ON collections(org_id, status)`;
     await sql`CREATE INDEX IF NOT EXISTS collections_org_created_idx ON collections(org_id, created_at)`;
     await sql`CREATE INDEX IF NOT EXISTS collections_next_run_idx ON collections(next_run_at)`;
-    console.log("   ✓ collections + 3 indexes");
+    // Partial unique: only the singleton "bucket" collections must have
+    // unique names per org. Real user collections can freely share names.
+    // Prevents race-condition duplicates on find-or-create flows for
+    // 'Direct submissions' and 'Legacy — pre-6.5'.
+    await sql`CREATE UNIQUE INDEX IF NOT EXISTS collections_org_singleton_uq
+      ON collections(org_id, name)
+      WHERE name IN ('Direct submissions', 'Legacy — pre-6.5')`;
+    console.log("   ✓ collections + 4 indexes (incl. singleton uniqueness)");
 
     // ── collection_runs ────────────────────────────────────
     console.log("\n3. Creating collection_runs table (idempotent)…");

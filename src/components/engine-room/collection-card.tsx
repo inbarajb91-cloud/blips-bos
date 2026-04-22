@@ -93,17 +93,16 @@ export function CollectionCard({
   const isFailed = c.status === "failed";
   const isActive = isRunning || isQueued; // "something is happening"
   const totalCount = c.candidateCount + c.signalCount;
-  // Run now only belongs on scheduled collections that are waiting for
-  // their next cadence tick. You can fire them early; you can't re-run a
-  // finished instant/batch (those are one-shot) and you can't nudge the
-  // Direct submissions / Legacy buckets — neither is a real BUNKER run.
+  // Run now only belongs on scheduled collections. Instant/Batch are
+  // one-shot; Direct submissions / Legacy are buckets, not runnable.
+  // The server action gates on status already, so we don't gate on
+  // nextRunAt here — otherwise the button vanishes in the window between
+  // nextRunAt passing and the hourly cron firing.
   const canRunNow =
     !isActive &&
     c.type === "scheduled" &&
     c.name !== "Direct submissions" &&
-    c.name !== "Legacy — pre-6.5" &&
-    c.nextRunAt !== null &&
-    new Date(c.nextRunAt) > new Date();
+    c.name !== "Legacy — pre-6.5";
 
   // Decide what to surface from the latest run. Only show when the run
   // actually ran (completed or failed) AND the result is informative —

@@ -63,15 +63,23 @@ export async function approveCandidate(candidateId: string) {
     .where(eq(bunkerCandidates.id, candidateId));
 
   // Update aggregate counters on the collection.
+  // Subqueries include org_id even though collection_id is UUID-unique
+  // globally — these actions use the service-role connection which bypasses
+  // RLS, so defense-in-depth keeps multi-tenant safe.
   if (candidate.collectionId) {
     await db
       .update(collections)
       .set({
-        candidateCount: sql`(SELECT count(*) FROM bunker_candidates WHERE collection_id = ${candidate.collectionId} AND status = 'PENDING_REVIEW')`,
-        signalCount: sql`(SELECT count(*) FROM signals WHERE collection_id = ${candidate.collectionId})`,
+        candidateCount: sql`(SELECT count(*) FROM bunker_candidates WHERE collection_id = ${candidate.collectionId} AND org_id = ${user.orgId} AND status = 'PENDING_REVIEW')`,
+        signalCount: sql`(SELECT count(*) FROM signals WHERE collection_id = ${candidate.collectionId} AND org_id = ${user.orgId})`,
         updatedAt: new Date(),
       })
-      .where(eq(collections.id, candidate.collectionId));
+      .where(
+        and(
+          eq(collections.id, candidate.collectionId),
+          eq(collections.orgId, user.orgId),
+        ),
+      );
   }
 
   // Fire event — STOKER handler will pick it up in Phase 9
@@ -86,6 +94,61 @@ export async function approveCandidate(candidateId: string) {
 
   revalidatePath("/engine-room");
   return { signalId: signal.id };
+}
+
+/**
+ * Get-or-create the per-org "Direct submissions" singleton collection.
+ * Race-safe: two concurrent calls will both enter, one will insert, the
+ * other will hit the partial unique index + re-fetch the existing row.
+ */
+async function findOrCreateDirectSubmissions(
+  orgId: string,
+  userId: string,
+): Promise<{ id: string }> {
+  const [existing] = await db
+    .select({ id: collections.id })
+    .from(collections)
+    .where(
+      and(
+        eq(collections.orgId, orgId),
+        eq(collections.name, "Direct submissions"),
+      ),
+    )
+    .limit(1);
+  if (existing) return existing;
+
+  try {
+    const [created] = await db
+      .insert(collections)
+      .values({
+        orgId,
+        name: "Direct submissions",
+        outline:
+          "Signals you pasted in directly. One ongoing bucket so nothing lives homeless.",
+        type: "scheduled",
+        targetCount: 100,
+        cadence: "custom",
+        cadenceCron: "never", // never auto-fires; grows only via direct input
+        status: "idle",
+        createdBy: userId,
+      })
+      .returning({ id: collections.id });
+    return created;
+  } catch (e) {
+    // Unique violation — concurrent insert won. Re-select.
+    const [raced] = await db
+      .select({ id: collections.id })
+      .from(collections)
+      .where(
+        and(
+          eq(collections.orgId, orgId),
+          eq(collections.name, "Direct submissions"),
+        ),
+      )
+      .limit(1);
+    if (!raced) throw e;
+    return raced;
+  }
 }
 
 /**
@@ -121,10 +184,15 @@ export async function dismissCandidate(candidateId: string) {
     await db
       .update(collections)
       .set({
-        candidateCount: sql`(SELECT count(*) FROM bunker_candidates WHERE collection_id = ${candidate.collectionId} AND status = 'PENDING_REVIEW')`,
+        candidateCount: sql`(SELECT count(*) FROM bunker_candidates WHERE collection_id = ${candidate.collectionId} AND org_id = ${user.orgId} AND status = 'PENDING_REVIEW')`,
         updatedAt: new Date(),
       })
-      .where(eq(collections.id, candidate.collectionId));
+      .where(
+        and(
+          eq(collections.id, candidate.collectionId),
+          eq(collections.orgId, user.orgId),
+        ),
+      );
   }
 
   revalidatePath("/engine-room");
@@ -220,37 +288,10 @@ export async function submitDirectInput(rawText: string) {
   });
 
   // Phase 6.5: direct inputs flow into a singleton "Direct submissions"
-  // collection — find-or-create so all a founder's directly-submitted
-  // signals accumulate in one place on Bridge.
-  let [directCol] = await db
-    .select({ id: collections.id })
-    .from(collections)
-    .where(
-      and(
-        eq(collections.orgId, user.orgId),
-        eq(collections.name, "Direct submissions"),
-      ),
-    )
-    .limit(1);
-
-  if (!directCol) {
-    const [created] = await db
-      .insert(collections)
-      .values({
-        orgId: user.orgId,
-        name: "Direct submissions",
-        outline:
-          "Signals you pasted in directly. One ongoing bucket so nothing lives homeless.",
-        type: "scheduled", // "scheduled" conceptually — it's a long-running accumulator
-        targetCount: 100,
-        cadence: "custom",
-        cadenceCron: "never", // never auto-fires; grows only via direct input
-        status: "idle",
-        createdBy: user.authId,
-      })
-      .returning({ id: collections.id });
-    directCol = created;
-  }
+  // collection — find-or-create. The partial unique index in the migration
+  // on (org_id, name) WHERE name IN (...) makes concurrent creates safe:
+  // the SECOND insert gets a unique violation and we re-fetch.
+  const directCol = await findOrCreateDirectSubmissions(user.orgId, user.authId);
 
   const [row] = await db
     .insert(bunkerCandidates)
@@ -280,10 +321,12 @@ export async function submitDirectInput(rawText: string) {
   await db
     .update(collections)
     .set({
-      candidateCount: sql`(SELECT count(*) FROM bunker_candidates WHERE collection_id = ${directCol.id} AND status = 'PENDING_REVIEW')`,
+      candidateCount: sql`(SELECT count(*) FROM bunker_candidates WHERE collection_id = ${directCol.id} AND org_id = ${user.orgId} AND status = 'PENDING_REVIEW')`,
       updatedAt: new Date(),
     })
-    .where(eq(collections.id, directCol.id));
+    .where(
+      and(eq(collections.id, directCol.id), eq(collections.orgId, user.orgId)),
+    );
 
   revalidatePath("/engine-room");
   return {
