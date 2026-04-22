@@ -185,6 +185,11 @@ export async function runCollectionNow(
     .limit(1);
   if (!c) throw new Error("Collection not found.");
   if (c.status === "running") throw new Error("Collection is already running.");
+  // Catching 'queued' here too prevents double-queueing when a second click
+  // slips through before Realtime propagates the first flip to the client,
+  // or when the hourly cron fires the same collection at the same moment
+  // the user manually hits Regenerate.
+  if (c.status === "queued") throw new Error("Collection is already queued.");
   if (c.status === "archived") throw new Error("Collection is archived.");
 
   // Validate count override when present. 1–100 is the allowed window —
@@ -200,6 +205,15 @@ export async function runCollectionNow(
 
   // Optimistic status flip — button hides + progress pulse appears instantly.
   // Inngest's runner will flip to 'running' when it actually picks up.
+  //
+  // Compensating revert: if inngest.send fails (network blip, outage, auth
+  // drift), we'd leave the collection stranded in 'queued' with no event
+  // in flight — the UI hides the Regenerate button on isActive so the user
+  // can't retry, and onFailure only runs if a runner actually picks up. We
+  // snapshot the prior state, wrap send in try/catch, and revert on error.
+  const previousStatus = c.status;
+  const previousUpdatedAt = c.updatedAt;
+
   await db
     .update(collections)
     .set({ status: "queued", updatedAt: new Date() })
@@ -210,14 +224,41 @@ export async function runCollectionNow(
       ),
     );
 
-  await inngest.send({
-    name: "bunker.collection.run",
-    data: {
-      orgId: user.orgId,
+  try {
+    await inngest.send({
+      name: "bunker.collection.run",
+      data: {
+        orgId: user.orgId,
+        collectionId: c.id,
+        ...(count !== undefined ? { count } : {}),
+      },
+    });
+  } catch (sendErr) {
+    // Best-effort revert. If this itself fails, log loudly — the collection
+    // is still recoverable via manual SQL, and the #2 status gate will at
+    // least fail cleanly on next attempt.
+    try {
+      await db
+        .update(collections)
+        .set({ status: previousStatus, updatedAt: previousUpdatedAt })
+        .where(
+          and(
+            eq(collections.id, collectionId),
+            eq(collections.orgId, user.orgId),
+          ),
+        );
+    } catch (revertErr) {
+      console.error(
+        "[runCollectionNow] revert after inngest.send failure also failed",
+        { collectionId: c.id, sendErr, revertErr },
+      );
+    }
+    console.error("[runCollectionNow] inngest.send failed", {
       collectionId: c.id,
-      ...(count !== undefined ? { count } : {}),
-    },
-  });
+      err: sendErr,
+    });
+    throw new Error("Could not queue collection run. Please try again.");
+  }
 
   revalidatePath("/engine-room");
 }

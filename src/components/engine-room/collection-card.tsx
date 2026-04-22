@@ -91,17 +91,19 @@ export function CollectionCard({
   // 2 clicks (Regenerate → Go).
   const [pickerOpen, setPickerOpen] = useState(false);
   const [regenCount, setRegenCount] = useState<number>(c.targetCount);
+  const [regenError, setRegenError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Auto-focus + select the count on open so users can overwrite with a
-  // single keystroke. Reset count when closed so the next open starts
-  // clean.
+  // single keystroke. Reset count + error when closed so the next open
+  // starts clean.
   useEffect(() => {
     if (pickerOpen) {
       inputRef.current?.focus();
       inputRef.current?.select();
     } else {
       setRegenCount(c.targetCount);
+      setRegenError(null);
     }
   }, [pickerOpen, c.targetCount]);
 
@@ -121,12 +123,23 @@ export function CollectionCard({
     c.name !== "Legacy — pre-6.5";
 
   const fireRegenerate = () => {
+    setRegenError(null);
     startRunTransition(async () => {
       try {
         await runCollectionNow(c.id, { count: regenCount });
         setPickerOpen(false);
       } catch (e) {
+        // Surface the error inline under the picker so the user actually
+        // sees why regenerate didn't fire — "already running," "count out
+        // of range," "could not queue collection run" etc. Without this,
+        // the picker just closes out of pending state with no feedback
+        // and looks like a dead button.
         console.error("Regenerate failed:", e);
+        setRegenError(
+          e instanceof Error
+            ? e.message
+            : "Could not start regeneration.",
+        );
       }
     });
   };
@@ -307,8 +320,9 @@ export function CollectionCard({
         {/* Regenerate cell — anchored to the right edge of the spine via
             the grid's last column. Both closed and open states are
             justified-end inside this cell so the button/picker don't
-            shift when toggled. */}
-        <div className="flex items-center justify-end">
+            shift when toggled. When a regenerate error surfaces, it
+            renders beneath the picker row in the same cell. */}
+        <div className="flex flex-col items-end gap-1.5">
           {canRegenerate ? (
             pickerOpen ? (
               <div className="flex items-center gap-1.5">
@@ -377,6 +391,14 @@ export function CollectionCard({
               </button>
             )
           ) : null}
+          {regenError && (
+            <div
+              role="alert"
+              className="font-mono text-[10px] tracking-[0.14em] text-[#d4908a] max-w-[280px] text-right leading-[1.4]"
+            >
+              {regenError}
+            </div>
+          )}
         </div>
       </div>
 
