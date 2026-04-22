@@ -129,20 +129,52 @@ export async function createCollection(input: CreateCollectionInput) {
 /**
  * Archive a collection — hides it from default Bridge view.
  * Doesn't delete; candidates/signals stay attached so history is preserved.
+ *
+ * Eligibility: the client gates the Archive button behind `canRegenerate
+ * && !isActive`, but that's bypassable (direct action invocation, stale
+ * client render, race between render and submit). CodeRabbit flagged:
+ * the server action itself must enforce the invariant that we don't
+ * archive a collection whose BUNKER run is queued or running — otherwise
+ * the runner fires against an archived collection and we end up with
+ * orphaned candidates on a row hidden from Bridge.
+ *
+ * We push the status guard into the UPDATE's WHERE so the transition is
+ * atomic: if the status flipped to 'queued' between render and submit,
+ * the UPDATE touches zero rows and we surface a clean error rather than
+ * letting an archive slip through.
  */
 export async function archiveCollection(collectionId: string) {
   const user = await getCurrentUserWithOrg();
   if (!user) throw new Error("Unauthenticated");
 
-  await db
+  const result = await db
     .update(collections)
     .set({ status: "archived", updatedAt: new Date() })
     .where(
       and(
         eq(collections.id, collectionId),
         eq(collections.orgId, user.orgId),
+        // Only archive when the collection isn't actively working. Excludes
+        // 'queued' (event fired, awaiting pickup) and 'running' (runner in
+        // flight). 'idle', 'done', 'error' are all fine to archive.
+        // 'archived' itself is excluded implicitly — NOT IN catches the
+        // active states, and re-archiving an archived row is a no-op anyway.
+        ne(collections.status, "queued"),
+        ne(collections.status, "running"),
       ),
+    )
+    .returning({ id: collections.id });
+
+  if (result.length === 0) {
+    // Either the collection doesn't exist, isn't in user's org, or is
+    // in an active status (queued/running). We don't differentiate —
+    // unified "can't archive right now" keeps the error surface clean
+    // and doesn't leak cross-org existence. Client already carries the
+    // retry affordance via the error banner under the Archive button.
+    throw new Error(
+      "Can't archive this collection right now — it may be running or already gone.",
     );
+  }
 
   revalidatePath("/engine-room");
 }

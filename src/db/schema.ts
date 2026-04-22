@@ -379,7 +379,18 @@ export const agentConversations = pgTable(
       .notNull()
       .defaultNow(),
   },
-  (t) => [index("agent_conversations_signal_idx").on(t.signalId)],
+  (t) => [
+    index("agent_conversations_signal_idx").on(t.signalId),
+    // Phase 7 hardening (CodeRabbit): one thread per (signal, agent). Without
+    // this, two concurrent first-opens can both miss the select and both
+    // insert, leaving duplicate ORC rows and nondeterministic thread lookup
+    // via .limit(1). Enforced as DB-level invariant; the server action also
+    // uses INSERT ... ON CONFLICT to round-trip cleanly when the race hits.
+    uniqueIndex("agent_conversations_signal_agent_uidx").on(
+      t.signalId,
+      t.agentName,
+    ),
+  ],
 );
 
 export const agentOutputs = pgTable(

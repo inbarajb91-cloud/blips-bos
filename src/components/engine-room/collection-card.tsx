@@ -6,7 +6,10 @@ import {
   approveCandidate,
   dismissCandidate,
 } from "@/lib/actions/candidates";
-import { runCollectionNow } from "@/lib/actions/collections";
+import {
+  archiveCollection,
+  runCollectionNow,
+} from "@/lib/actions/collections";
 import { StagePips, type SignalStatus } from "./stage-pips";
 
 /**
@@ -92,6 +95,8 @@ export function CollectionCard({
   const [pickerOpen, setPickerOpen] = useState(false);
   const [regenCount, setRegenCount] = useState<number>(c.targetCount);
   const [regenError, setRegenError] = useState<string | null>(null);
+  const [archivePending, startArchiveTransition] = useTransition();
+  const [archiveError, setArchiveError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Auto-focus + select the count on open so users can overwrite with a
@@ -489,6 +494,53 @@ export function CollectionCard({
               <p className="font-editorial italic text-[14px] text-t4 py-6">
                 nothing here yet. {isRunning ? "collecting…" : "re-run to refresh."}
               </p>
+            )}
+
+            {/* Archive affordance — only on non-singleton collections that
+                aren't actively running. Archive is soft: the row hides from
+                Bridge but stays in the DB (collections.status='archived')
+                so recovery via SQL is always possible. Direct submissions
+                + Legacy are system buckets and never archivable. */}
+            {canRegenerate && !isActive && (
+              <div className="mt-8 pt-5 border-t border-rule-1 flex items-center justify-between gap-3">
+                <div className="flex flex-col">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setArchiveError(null);
+                      startArchiveTransition(async () => {
+                        try {
+                          await archiveCollection(c.id);
+                        } catch (e) {
+                          console.error("Archive failed:", e);
+                          setArchiveError(
+                            e instanceof Error
+                              ? e.message
+                              : "Could not archive this collection.",
+                          );
+                        }
+                      });
+                    }}
+                    disabled={archivePending}
+                    className="font-mono text-[10px] tracking-[0.22em] uppercase text-t5 hover:text-t3 transition-colors self-start disabled:opacity-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2 rounded-sm"
+                    aria-label={`Archive collection ${c.name}`}
+                  >
+                    {archivePending ? "Archiving…" : "Archive"}
+                  </button>
+                  {archiveError && (
+                    <span
+                      role="alert"
+                      className="font-mono text-[10px] tracking-[0.14em] text-[#d4908a] mt-2"
+                    >
+                      {archiveError}
+                    </span>
+                  )}
+                </div>
+                <span className="font-editorial italic text-[12.5px] text-t5 max-w-[340px] text-right leading-[1.5]">
+                  Hides this collection from Bridge. Signals stay in the
+                  pipeline; triage candidates retained.
+                </span>
+              </div>
             )}
           </div>
         </div>
