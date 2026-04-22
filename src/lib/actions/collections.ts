@@ -20,6 +20,8 @@ import { inngest } from "@/lib/inngest/client";
 
 export type CollectionType = "instant" | "batch" | "scheduled";
 export type Cadence = "daily" | "weekly" | "monthly" | "custom";
+export type SearchMode = "trend" | "reference";
+export type DecadeHint = "any" | "RCK" | "RCL" | "RCD";
 
 export interface CreateCollectionInput {
   name: string;
@@ -28,6 +30,12 @@ export interface CreateCollectionInput {
   targetCount: number;
   cadence?: Cadence;
   cadenceCron?: string;
+  /** Phase 6.6 — trend (default) uses standing 5 sources + filter.
+   *  reference uses Gemini grounded-search with outline as the query. */
+  searchMode?: SearchMode;
+  /** Phase 6.6 — optional audience bias on sourcing. Does NOT replace
+   *  STOKER's decade-manifestation fan-out downstream. */
+  decadeHint?: DecadeHint;
 }
 
 /**
@@ -61,20 +69,46 @@ export async function createCollection(input: CreateCollectionInput) {
     }
   }
 
+  // Phase 6.6 — reference mode requires a meaningful outline as the query
+  const searchMode: SearchMode = input.searchMode ?? "trend";
+  const decadeHint: DecadeHint = input.decadeHint ?? "any";
+  const trimmedOutline = input.outline?.trim() || null;
+  if (searchMode === "reference") {
+    if (!trimmedOutline || trimmedOutline.length < 10) {
+      throw new Error(
+        "Reference mode needs an outline of at least 10 characters — it becomes the actual search query.",
+      );
+    }
+  }
+
   const nextRunAt =
     input.type === "scheduled" ? computeNextRunAt(input.cadence!) : null;
+
+  // Status semantics:
+  //   Instant/Batch — created as 'queued' because we immediately fire an
+  //     Inngest event; queued means "event sent, awaiting pickup" for a
+  //     short window before the runner flips it to 'running'.
+  //   Scheduled   — created as 'idle' with a nextRunAt. Queued doesn't fit:
+  //     no event is sent on creation. The hourly cron (bunkerScheduledCheck)
+  //     filters status='idle' + nextRunAt<=now — so a scheduled collection
+  //     must start idle to ever be picked up. Also unblocks the Run Now
+  //     button on the spine, which hides while isActive (queued|running).
+  const initialStatus: "queued" | "idle" =
+    input.type === "scheduled" ? "idle" : "queued";
 
   const [collection] = await db
     .insert(collections)
     .values({
       orgId: user.orgId,
       name,
-      outline: input.outline?.trim() || null,
+      outline: trimmedOutline,
       type: input.type,
       targetCount: input.targetCount,
       cadence: input.cadence ?? null,
       cadenceCron: input.cadenceCron ?? null,
-      status: "queued",
+      searchMode,
+      decadeHint,
+      status: initialStatus,
       createdBy: user.authId,
       nextRunAt,
     })
@@ -114,11 +148,28 @@ export async function archiveCollection(collectionId: string) {
 }
 
 /**
- * Re-fire a Batch or Scheduled collection immediately — useful for "run now"
- * button on the collection spine. Instant collections can't re-run (they're
- * one-shot by definition).
+ * Regenerate — fire BUNKER against an existing collection to add more
+ * candidates to its triage pool. Works on all types: Instant, Batch, and
+ * Scheduled. Direct submissions / Legacy buckets are excluded at the UI
+ * layer (they're not BUNKER runs).
+ *
+ * The count parameter is a per-run override. It does NOT mutate the
+ * collection's original `targetCount` — that stays as the original intent
+ * of "how many signals this collection was created to hold." Regenerate is
+ * ad-hoc: "add N more fresh candidates, same prompt." If omitted, defaults
+ * to the collection's own targetCount.
+ *
+ * Optimistic status flip: we set status='queued' before returning so the
+ * Bridge UI hides the Regenerate button immediately and shows the "QUEUED
+ * · starting…" label + progress pulse. Without this, there's a 1–3s gap
+ * between the server action returning and Inngest picking up the event,
+ * during which the button would stay clickable (double-fire risk) and the
+ * spine would misleadingly show "idle" while work is actually in flight.
  */
-export async function runCollectionNow(collectionId: string) {
+export async function runCollectionNow(
+  collectionId: string,
+  opts?: { count?: number },
+) {
   const user = await getCurrentUserWithOrg();
   if (!user) throw new Error("Unauthenticated");
 
@@ -134,14 +185,80 @@ export async function runCollectionNow(collectionId: string) {
     .limit(1);
   if (!c) throw new Error("Collection not found.");
   if (c.status === "running") throw new Error("Collection is already running.");
-  if (c.type === "instant") {
-    throw new Error("Instant collections can't re-run. Create a new one.");
+  // Catching 'queued' here too prevents double-queueing when a second click
+  // slips through before Realtime propagates the first flip to the client,
+  // or when the hourly cron fires the same collection at the same moment
+  // the user manually hits Regenerate.
+  if (c.status === "queued") throw new Error("Collection is already queued.");
+  if (c.status === "archived") throw new Error("Collection is archived.");
+
+  // Validate count override when present. 1–100 is the allowed window —
+  // matches Batch bounds and keeps the single LLM run predictable.
+  let count: number | undefined;
+  if (opts?.count !== undefined) {
+    const n = Math.floor(opts.count);
+    if (!Number.isFinite(n) || n < 1 || n > 100) {
+      throw new Error("Regenerate count must be between 1 and 100.");
+    }
+    count = n;
   }
 
-  await inngest.send({
-    name: "bunker.collection.run",
-    data: { orgId: user.orgId, collectionId: c.id },
-  });
+  // Optimistic status flip — button hides + progress pulse appears instantly.
+  // Inngest's runner will flip to 'running' when it actually picks up.
+  //
+  // Compensating revert: if inngest.send fails (network blip, outage, auth
+  // drift), we'd leave the collection stranded in 'queued' with no event
+  // in flight — the UI hides the Regenerate button on isActive so the user
+  // can't retry, and onFailure only runs if a runner actually picks up. We
+  // snapshot the prior state, wrap send in try/catch, and revert on error.
+  const previousStatus = c.status;
+  const previousUpdatedAt = c.updatedAt;
+
+  await db
+    .update(collections)
+    .set({ status: "queued", updatedAt: new Date() })
+    .where(
+      and(
+        eq(collections.id, collectionId),
+        eq(collections.orgId, user.orgId),
+      ),
+    );
+
+  try {
+    await inngest.send({
+      name: "bunker.collection.run",
+      data: {
+        orgId: user.orgId,
+        collectionId: c.id,
+        ...(count !== undefined ? { count } : {}),
+      },
+    });
+  } catch (sendErr) {
+    // Best-effort revert. If this itself fails, log loudly — the collection
+    // is still recoverable via manual SQL, and the #2 status gate will at
+    // least fail cleanly on next attempt.
+    try {
+      await db
+        .update(collections)
+        .set({ status: previousStatus, updatedAt: previousUpdatedAt })
+        .where(
+          and(
+            eq(collections.id, collectionId),
+            eq(collections.orgId, user.orgId),
+          ),
+        );
+    } catch (revertErr) {
+      console.error(
+        "[runCollectionNow] revert after inngest.send failure also failed",
+        { collectionId: c.id, sendErr, revertErr },
+      );
+    }
+    console.error("[runCollectionNow] inngest.send failed", {
+      collectionId: c.id,
+      err: sendErr,
+    });
+    throw new Error("Could not queue collection run. Please try again.");
+  }
 
   revalidatePath("/engine-room");
 }

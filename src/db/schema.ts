@@ -90,6 +90,7 @@ export const signalSource = pgEnum("signal_source", [
   "newsapi",
   "upload",
   "llm_synthesis",
+  "grounded_search", // Phase 6.6 — Gemini useSearchGrounding results
 ]);
 
 // Phase 6.5 — Collections replace the original `batches` concept.
@@ -108,6 +109,25 @@ export const collectionStatus = pgEnum("collection_status", [
   "idle", // finished (one-shot) or waiting for next run (scheduled)
   "archived", // user archived
   "failed",
+]);
+
+// Phase 6.6 — search_mode governs how BUNKER actually sources content.
+// Trend: pull from the standing 5 sources, filter by brand DNA. Outline
+// is descriptive only.
+// Reference: outline IS the query. Gemini grounded-search pulls web
+// content matching the theme; BUNKER extracts from that. Outline required.
+export const collectionSearchMode = pgEnum("collection_search_mode", [
+  "trend",
+  "reference",
+]);
+
+// Phase 6.6 — optional decade picker on Collect-now modal. Sourcing bias
+// only; does NOT replace STOKER's decade-manifestation fan-out downstream.
+export const collectionDecadeHint = pgEnum("collection_decade_hint", [
+  "any",
+  "RCK", // 28-38
+  "RCL", // 38-48
+  "RCD", // 48-58
 ]);
 
 export const collectionCadence = pgEnum("collection_cadence", [
@@ -271,11 +291,18 @@ export const collections = pgTable(
       .notNull()
       .references(() => orgs.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
-    outline: text("outline"), // user-facing description; future BUNKER prompt hint
+    outline: text("outline"), // descriptive label in trend mode; actual search query in reference mode
     type: collectionType("type").notNull(),
     targetCount: integer("target_count").notNull(), // 5 for instant; 6-100 batch; 1-100 per-run scheduled
     cadence: collectionCadence("cadence"), // only set for scheduled
     cadenceCron: text("cadence_cron"), // only set when cadence='custom'
+    // Phase 6.6 — search_mode governs sourcing strategy.
+    // trend: existing 5 sources + outline is label. reference: outline is the
+    // query, Gemini grounded-search pulls theme-matching web content.
+    searchMode: collectionSearchMode("search_mode").notNull().default("trend"),
+    // Phase 6.6 — optional audience bias hint. "any" = no bias (default).
+    // Doesn't replace STOKER's decade fan-out; just biases what BUNKER surfaces.
+    decadeHint: collectionDecadeHint("decade_hint").notNull().default("any"),
     status: collectionStatus("status").notNull().default("queued"),
     // Aggregate counters for display; kept in sync on candidate/signal state changes.
     candidateCount: integer("candidate_count").notNull().default(0),
