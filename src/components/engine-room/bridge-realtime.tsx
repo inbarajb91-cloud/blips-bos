@@ -4,21 +4,36 @@ import { useCallback, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useRealtimeChannel } from "@/lib/realtime/use-realtime";
 
+interface BridgeRealtimeProps {
+  /**
+   * Server-side signal that at least one collection is queued or running.
+   * When true, we additionally poll every 2s as a belt-and-suspenders
+   * fallback against Realtime quirks (cold subscribe race, token drift,
+   * RLS mis-fire). When false, Realtime alone handles the occasional
+   * create / archive event.
+   */
+  hasActiveWork: boolean;
+}
+
 /**
- * Silent client component that keeps Bridge live against Supabase Realtime.
- * Subscribes to:
- *   - bunker_candidates  (new candidates arriving during a run)
- *   - collections        (status flips: queued → running → idle)
- *   - collection_runs    (run progress updates)
- *   - signals            (status transitions as stages advance)
+ * Silent client component that keeps Bridge live.
  *
- * THROTTLED: a single BUNKER run fires dozens of postgres_changes events
- * within a few seconds (each source fetch → each extracted candidate →
- * each counter update). Refreshing the server component per event stacks
- * loading skeletons visibly for the user. Debouncing to one refresh every
- * ~800ms collapses the burst into a single smooth re-render.
+ * Two paths drive `router.refresh()`:
+ *
+ * (1) **Supabase Realtime** on 4 tables — primary. Subscribes to
+ *     bunker_candidates, collections, collection_runs, signals. Uses the
+ *     JWT-attached channel from `useRealtimeChannel` (Phase 6.6 setAuth
+ *     fix) so RLS-scoped events actually reach the browser.
+ *     Throttled at 800ms so a burst of events (a running collection
+ *     fires dozens per second) collapses into one smooth re-render.
+ *
+ * (2) **Interval poll (2s)** — fallback, only while `hasActiveWork` is
+ *     true. Guarantees the UI moves even if Realtime has a bad minute.
+ *     Stops when all collections settle (idle/failed/archived).
+ *
+ * Noop UI — renders nothing.
  */
-export function BridgeRealtime() {
+export function BridgeRealtime({ hasActiveWork }: BridgeRealtimeProps) {
   const router = useRouter();
   const pendingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -35,6 +50,14 @@ export function BridgeRealtime() {
       if (pendingRef.current) clearTimeout(pendingRef.current);
     };
   }, []);
+
+  // Poll fallback — only while there's active work. Routes through the
+  // same throttle so poll + realtime can't double-refresh in the same tick.
+  useEffect(() => {
+    if (!hasActiveWork) return;
+    const id = setInterval(() => schedule(), 2000);
+    return () => clearInterval(id);
+  }, [hasActiveWork, schedule]);
 
   useRealtimeChannel("bunker_candidates", schedule);
   useRealtimeChannel("collections", schedule);

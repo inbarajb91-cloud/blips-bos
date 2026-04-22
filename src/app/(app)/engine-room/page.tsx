@@ -117,10 +117,15 @@ export default async function BridgePage() {
         (a.nextRunAt?.getTime() ?? Infinity) -
         (b.nextRunAt?.getTime() ?? Infinity),
     )[0];
+  // Drives the 2s poll fallback in BridgeRealtime — only polls while
+  // something is actually moving. Idle Bridges don't burn refreshes.
+  const hasActiveWork = colRows.some(
+    (c) => c.status === "queued" || c.status === "running",
+  );
 
   return (
     <div className="w-full max-w-[1600px] mx-auto px-6 md:px-10 lg:px-14 pt-12 pb-40">
-      <BridgeRealtime />
+      <BridgeRealtime hasActiveWork={hasActiveWork} />
 
       {/* Heading + aggregate + actions */}
       <header className="mb-10 flex items-baseline justify-between gap-8 flex-wrap">

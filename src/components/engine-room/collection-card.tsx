@@ -188,8 +188,15 @@ export function CollectionCard({
                 <span>{cadenceMeta}</span>
               </>
             )}
-            <span className="text-t5">·</span>
-            <span>{timeMeta}</span>
+            {/* Skip the generic timeMeta ("live") when we'll render an
+                explicit LIVE/QUEUED label below — otherwise the meta row
+                reads "LIVE · LIVE · collecting" which is silly. */}
+            {!isActive && (
+              <>
+                <span className="text-t5">·</span>
+                <span>{timeMeta}</span>
+              </>
+            )}
             {isRunning && (
               <>
                 <span className="text-t5">·</span>
