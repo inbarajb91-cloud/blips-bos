@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { signals, collections } from "@/db/schema";
 import { AgentTabStrip } from "./agent-tab-strip";
-import { LeftRail } from "./left-rail";
+import { ContextStrip } from "./context-strip";
 import { OrcPanel } from "./orc-panel";
 import { RENDERERS } from "./renderers/registry";
 import { computeStageStates, pickInitialTab, type AgentKey } from "./types";
@@ -18,23 +18,30 @@ import {
 /**
  * WorkspaceFrame — Phase 7 signal workspace.
  *
- * Three-region grid: left rail · canvas · ORC panel. The canvas swaps
- * per selected agent tab via the renderer registry. Parent collection's
- * decade color bleeds into accent surfaces (tab underline, breathing
- * dots, mini-collection border) via the `t-{type}` class on the root.
+ * Two-panel grid: canvas · ORC panel, with a horizontal context strip
+ * riding above both. The canvas swaps per selected agent tab via the
+ * renderer registry. Parent collection's decade color bleeds into
+ * accent surfaces (tab underline, breathing dots, mini-collection
+ * border) via the `t-{type}` class on the root.
+ *
+ * Architecture shift (Phase 7 post-walkthrough):
+ *   Previously had a 3-column grid with a vertical LeftRail carrying
+ *   collection context + lock + signal meta. That rail stole ~300px
+ *   of viewport full-time for information the user glances at once.
+ *   Replaced with a horizontal ContextStrip that defaults collapsed
+ *   (~44px, surfacing the two things users reach for mid-session:
+ *   collection identity + lock state) and expands on click. Net: more
+ *   canvas width, less chrome noise, same info available.
  *
  * Responsibilities:
- *   - Host the 3-region layout (grid-template-columns CSS variables)
+ *   - Host the 2-region layout (canvas + ORC) with the ContextStrip
+ *     riding above as a full-width header row
  *   - Own active tab state → route to the right renderer
- *   - Rail collapse toggle (wide-canvas reading mode)
+ *   - Own the signal lock lifecycle (acquire/renew/release + voluntary
+ *     release via user-gate ref)
  *   - Resize handle between canvas and ORC panel, clamped 300-620px,
  *     persisted to localStorage so the user's preferred chat width
  *     survives reloads
- *
- * Phase 7 does NOT yet:
- *   - Wire signal_locks (7E)
- *   - Wire agent_conversations persistence (7D inside OrcPanel)
- *   - Render real content for STOKER/FURNACE/etc. (future phases)
  */
 
 const STORAGE_KEY = "ws.railRight";
@@ -64,9 +71,6 @@ export function WorkspaceFrame({
   useEffect(() => {
     setActiveTab(pickInitialTab(states));
   }, [states]);
-
-  // Rail collapse state
-  const [railCollapsed, setRailCollapsed] = useState(false);
 
   // Right-panel width — restore from localStorage, clamp, default 380.
   const [railRight, setRailRight] = useState<number>(DEFAULT_RIGHT);
@@ -102,12 +106,13 @@ export function WorkspaceFrame({
   // On mount: acquire the lock. Every 5 min: renew. On unmount + window
   // beforeunload: release. If we can't acquire (someone else holds a
   // fresh lock), we still render the workspace — just read-only, with
-  // the OrcPanel input disabled and a lock chip in the rail explaining
-  // who holds it.
+  // the OrcPanel input disabled and a lock chip in the ContextStrip
+  // explaining who holds it.
   //
   // Voluntary release (Phase 7 post-feedback):
-  //   The lock row in LeftRail exposes a [Release] button. When the
-  //   user clicks it, we flip `userReleasedRef` so:
+  //   The ContextStrip exposes a [Release] button in its lock row
+  //   (visible in both collapsed and expanded states). When the user
+  //   clicks it, we flip `userReleasedRef` so:
   //     - the 5-min renew skips (doesn't silently re-acquire)
   //     - unmount + beforeunload skip the auto-release (nothing to release)
   //   Re-acquire via the [Lock] button clears the flag and starts the
@@ -179,13 +184,13 @@ export function WorkspaceFrame({
     };
   }, [signal.id]);
 
-  // Handlers for the LeftRail lock toggle.
+  // Handlers for the ContextStrip lock toggle.
   async function handleReleaseLock() {
     try {
       await releaseSignalLock(signal.id);
       userReleasedRef.current = true;
       // Reflect "no lock" immediately — OrcPanel will disable send,
-      // LeftRail will swap to the [Lock] button.
+      // ContextStrip will swap to the [Lock] button.
       setLockStatus({
         heldByMe: false,
         lockedByAuthId: null,
@@ -268,7 +273,6 @@ export function WorkspaceFrame({
 
   const Renderer = RENDERERS[activeTab];
   const typeClass = collection ? `t-${collection.type}` : "";
-  const railLeftWidth = railCollapsed ? 36 : 300;
 
   // Layout model: document-scroll, not internal-scroll.
   //
@@ -279,24 +283,20 @@ export function WorkspaceFrame({
   // the whole workspace flow naturally and scroll as a document in the
   // engine-room layout's existing overflow container.
   //
-  // Tab strip is `sticky top: 0` so it stays visible as the user scrolls
-  // through long stage content. Signal header above it scrolls away on
-  // purpose — it's hero context, not navigation.
+  // Order from top:
+  //   1. Signal identity header (shortcode + working title, hero weight)
+  //   2. ContextStrip (collapsed row riding above tab strip; expands on
+  //      click to reveal collection mini-card + concept + signal meta)
+  //   3. AgentTabStrip (sticky — stays visible as user scrolls canvas)
+  //   4. Two-column grid: canvas + ORC panel
   //
-  // Rails use `align-self: start` so they're their natural content
-  // height instead of stretching to match the canvas. The resize handle
-  // between canvas and right rail stretches to row height (max of cell
-  // heights) so you can still grab it anywhere vertically along the
-  // canvas extent.
+  // The canvas + ORC row uses `align-self: start` so panels don't
+  // stretch vertically to match each other; natural content height
+  // everywhere. The resize handle stretches to row height (the max of
+  // its siblings) so drag is grabbable along either cell's full extent.
   return (
     <div className={`${typeClass} flex flex-col bg-ink`}>
-      {/* Header — identity only: shortcode + working title. The previous
-          "Back to Bridge" link was redundant with the BRIDGE item in the
-          top-nav SectionTabs (one row above the workspace), so it
-          shouted navigation at the user while actual navigation already
-          sat right there. Removed to clean the header's visual weight
-          and give the title a quieter landing. Context (concept, source,
-          lock) stays in the left rail. */}
+      {/* Header — identity only: shortcode + working title. */}
       <section className="px-11 pt-5 pb-6">
         <div className="flex items-baseline gap-8">
           <span className="font-display font-bold text-[13px] tracking-[0.16em] text-t1">
@@ -307,6 +307,19 @@ export function WorkspaceFrame({
           </h1>
         </div>
       </section>
+
+      {/* Context strip — horizontal, collapsed by default. Shows
+          collection identity + lock state in the collapsed row; full
+          context (mini-card, concept pull-quote, meta grid, read-only
+          banner) via the expand chevron. Replaces the old vertical
+          LeftRail. */}
+      <ContextStrip
+        signal={signal}
+        collection={collection}
+        lockStatus={lockStatus}
+        onReleaseLock={handleReleaseLock}
+        onAcquireLock={handleAcquireLock}
+      />
 
       {/* Tab strip — sticky to top of the scroll container (engine-room
           layout's overflow-auto). As the user scrolls through stage
@@ -323,71 +336,17 @@ export function WorkspaceFrame({
         />
       </div>
 
-      {/* Three-region grid — natural height, flows with document. Rails
-          use align-self: start so they don't stretch to match the canvas
-          height. The resize handle stretches (default behavior) so it's
-          grabbable along the canvas's full vertical extent. */}
+      {/* Two-region grid — canvas + ORC panel. Natural height, flows
+          with document. Panels use align-self: start so they don't
+          stretch to match each other. The resize handle stretches
+          (default behavior) so it's grabbable along the canvas's full
+          vertical extent. */}
       <div
         className="grid transition-[grid-template-columns] duration-300 ease-out"
         style={{
-          gridTemplateColumns: `${railLeftWidth}px 1fr 6px ${railRight}px`,
+          gridTemplateColumns: `1fr 6px ${railRight}px`,
         }}
       >
-        {/* Left rail — align-self: start so it doesn't stretch to match
-            the canvas height; it's its natural content height and sits
-            at the top of the grid row. Content flows with the document
-            scroll; no internal overflow. */}
-        <aside
-          className="border-r border-rule-1 bg-wash-1 relative self-start"
-          aria-label="Collection context"
-        >
-          {/* Collapse toggle sits on the rail's right edge, always visible */}
-          <button
-            type="button"
-            onClick={() => setRailCollapsed((v) => !v)}
-            aria-label={railCollapsed ? "Expand rail" : "Collapse rail"}
-            aria-expanded={!railCollapsed}
-            className="absolute top-[30px] -right-3 w-6 h-6 rounded-full border border-rule-2 bg-ink flex items-center justify-center text-t3 text-[10px] z-[5] hover:text-t1 hover:border-rule-3 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2"
-          >
-            <span
-              style={{
-                transition: "transform 0.3s",
-                transform: railCollapsed ? "rotate(180deg)" : "none",
-              }}
-            >
-              ‹
-            </span>
-          </button>
-
-          {/* Collapsed-state tint strip on inner edge */}
-          {railCollapsed && (
-            <div
-              aria-hidden
-              className="absolute top-0 bottom-0 right-0"
-              style={{
-                width: 2,
-                background: "rgba(var(--d), 0.45)",
-              }}
-            />
-          )}
-
-          <div
-            style={{
-              opacity: railCollapsed ? 0 : 1,
-              pointerEvents: railCollapsed ? "none" : "auto",
-              transition: "opacity 0.2s",
-            }}
-          >
-            <LeftRail
-              signal={signal}
-              collection={collection}
-              lockStatus={lockStatus}
-              onReleaseLock={handleReleaseLock}
-              onAcquireLock={handleAcquireLock}
-            />
-          </div>
-        </aside>
-
         {/* Canvas — natural content height. Flows with document scroll.
             min-w-0 prevents text/grid overflow pushing the canvas cell
             wider than its grid track. */}
@@ -398,7 +357,11 @@ export function WorkspaceFrame({
           className="min-w-0"
         >
           <div className="max-w-[880px] w-full px-12 py-10">
-            <Renderer signal={signal} collection={collection} state={states[activeTab]} />
+            <Renderer
+              signal={signal}
+              collection={collection}
+              state={states[activeTab]}
+            />
           </div>
         </main>
 
