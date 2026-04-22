@@ -9,6 +9,12 @@ import { OrcPanel } from "./orc-panel";
 import { RENDERERS } from "./renderers/registry";
 import { computeStageStates, pickInitialTab, type AgentKey } from "./types";
 import type { SignalStatus } from "@/components/engine-room/stage-pips";
+import {
+  acquireSignalLock,
+  renewSignalLock,
+  releaseSignalLock,
+  type LockStatus,
+} from "@/lib/actions/signal-locks";
 
 /**
  * WorkspaceFrame — Phase 7 signal workspace.
@@ -91,6 +97,71 @@ export function WorkspaceFrame({
       /* ignore */
     }
   }, [signal.shortcode]);
+
+  // ─── Signal lock lifecycle (Phase 7E) ─────────────────────────────
+  //
+  // On mount: acquire the lock. Every 5 min: renew. On unmount + window
+  // beforeunload: release. If we can't acquire (someone else holds a
+  // fresh lock), we still render the workspace — just read-only, with
+  // the OrcPanel input disabled and a lock chip in the rail explaining
+  // who holds it.
+  const [lockStatus, setLockStatus] = useState<LockStatus | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    // Initial acquire
+    acquireSignalLock(signal.id)
+      .then((status) => {
+        if (!cancelled) setLockStatus(status);
+      })
+      .catch((e: Error) => {
+        if (!cancelled) {
+          console.error("Failed to acquire signal lock:", e);
+          // Fail-soft: assume not-held so UI falls back to read-only
+          setLockStatus({
+            heldByMe: false,
+            lockedByAuthId: null,
+            lockedByEmail: null,
+            expiresAt: null,
+          });
+        }
+      });
+
+    // Renew every 5 minutes so the lock doesn't expire on an active tab
+    const renewInterval = setInterval(
+      () => {
+        renewSignalLock(signal.id)
+          .then((status) => {
+            if (!cancelled) setLockStatus(status);
+          })
+          .catch((e: Error) => {
+            console.error("Failed to renew signal lock:", e);
+          });
+      },
+      5 * 60 * 1000,
+    );
+
+    // Best-effort release on window close. beforeunload can't wait for
+    // async, so this is fire-and-forget; the lock's 30-min expiry covers
+    // the case where release doesn't complete before tab close.
+    const handleBeforeUnload = () => {
+      releaseSignalLock(signal.id).catch(() => {
+        /* ignore — expiry will clean up */
+      });
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+
+    return () => {
+      cancelled = true;
+      clearInterval(renewInterval);
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+      // Explicit release on navigation away within the app
+      releaseSignalLock(signal.id).catch(() => {
+        /* ignore */
+      });
+    };
+  }, [signal.id]);
 
   // Resize handle drag
   const resizingRef = useRef(false);
@@ -269,7 +340,11 @@ export function WorkspaceFrame({
               transition: "opacity 0.2s",
             }}
           >
-            <LeftRail signal={signal} collection={collection} />
+            <LeftRail
+              signal={signal}
+              collection={collection}
+              lockStatus={lockStatus}
+            />
           </div>
         </aside>
 
@@ -317,7 +392,11 @@ export function WorkspaceFrame({
           className="border-l border-rule-1 bg-wash-1 flex flex-col self-start"
           aria-label="ORC conversation"
         >
-          <OrcPanel signal={signal} activeStage={activeTab} />
+          <OrcPanel
+            signal={signal}
+            activeStage={activeTab}
+            lockStatus={lockStatus}
+          />
         </aside>
       </div>
     </div>

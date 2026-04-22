@@ -9,6 +9,7 @@ import {
   type Message,
   type StageKey,
 } from "@/lib/actions/conversations";
+import type { LockStatus } from "@/lib/actions/signal-locks";
 
 /**
  * ORC conversation panel — Phase 7D.
@@ -37,10 +38,16 @@ import {
 export function OrcPanel({
   signal,
   activeStage,
+  lockStatus,
 }: {
   signal: typeof signals.$inferSelect;
   activeStage: AgentKey;
+  /** Lock state from signal_locks. When not held by current user, the
+   *  input is disabled so a read-only viewer can't send messages. Null
+   *  while the acquire is in flight — treat as still-loading. */
+  lockStatus: LockStatus | null;
 }) {
+  const canSend = lockStatus !== null && lockStatus.heldByMe;
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -164,14 +171,18 @@ export function OrcPanel({
             value={inputValue}
             onChange={setInputValue}
             onSend={handleSend}
-            disabled={conversationId === null || pending}
+            disabled={conversationId === null || pending || !canSend}
             signalShortcode={signal.shortcode}
+            readOnly={!canSend}
           />
           <button
             type="button"
             onClick={handleSend}
             disabled={
-              conversationId === null || pending || inputValue.trim().length === 0
+              conversationId === null ||
+              pending ||
+              !canSend ||
+              inputValue.trim().length === 0
             }
             className="font-mono text-[10px] tracking-[0.22em] uppercase text-t4 hover:text-t1 transition-colors px-1 py-[6px] disabled:opacity-40 disabled:cursor-not-allowed"
             aria-label="Send message to ORC"
@@ -188,6 +199,15 @@ export function OrcPanel({
             className="font-mono text-[10px] tracking-[0.14em] text-[#d4908a] leading-[1.4]"
           >
             {sendError}
+          </div>
+        )}
+        {/* Read-only notice — only when lock is held by someone else.
+            Keeps the input visible (for viewing) but makes disability
+            explanatory, not just a dead field. */}
+        {lockStatus !== null && !lockStatus.heldByMe && lockStatus.lockedByEmail && (
+          <div className="font-mono text-[10px] tracking-[0.18em] uppercase text-t5">
+            Read-only while {lockStatus.lockedByEmail.split("@")[0]} is
+            editing
           </div>
         )}
       </div>
@@ -228,12 +248,16 @@ function OrcInput({
   onSend,
   disabled,
   signalShortcode,
+  readOnly,
 }: {
   value: string;
   onChange: (v: string) => void;
   onSend: () => void;
   disabled: boolean;
   signalShortcode: string;
+  /** When true, placeholder text shifts to "read-only" messaging so
+   *  the user knows why the input won't accept. */
+  readOnly?: boolean;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -263,7 +287,7 @@ function OrcInput({
           onSend();
         }
       }}
-      placeholder="ask, nudge, or steer…"
+      placeholder={readOnly ? "read-only — another user is editing" : "ask, nudge, or steer…"}
       aria-label={`Message ORC about signal ${signalShortcode}`}
       disabled={disabled}
       maxLength={2000}

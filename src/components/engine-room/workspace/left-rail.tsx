@@ -3,6 +3,7 @@
 import Link from "next/link";
 import type { signals, collections } from "@/db/schema";
 import { StagePips, type SignalStatus } from "@/components/engine-room/stage-pips";
+import type { LockStatus } from "@/lib/actions/signal-locks";
 
 /**
  * Left rail — collection context + pipeline pips + signal meta.
@@ -20,9 +21,11 @@ import { StagePips, type SignalStatus } from "@/components/engine-room/stage-pip
 export function LeftRail({
   signal,
   collection,
+  lockStatus,
 }: {
   signal: typeof signals.$inferSelect;
   collection: typeof collections.$inferSelect | null;
+  lockStatus: LockStatus | null;
 }) {
   return (
     <div className="p-[32px_28px] space-y-7">
@@ -94,19 +97,81 @@ export function LeftRail({
         <MetaRow k="Source" v={signal.source} />
         <MetaRow k="Created" v={formatDate(signal.createdAt)} />
         <MetaRow k="Updated" v={formatDate(signal.updatedAt)} />
-        {/* Lock indicator — self-lock is demoted to a small row in the
-            rail. Phase 7E wires the real lock with expiry; for now this
-            reserves the row so the layout doesn't shift when 7E lands. */}
-        <MetaRow
-          k="Lock"
-          v={<span className="text-t4">you · phase 7e</span>}
-        />
+        {/* Lock row — live status from signal_locks.
+            - Still loading (lockStatus null) → small "…" placeholder
+            - Held by current user → muted timer ("you · 28m left")
+            - Held by someone else → prominent warning ("Sarah · 22m left")
+            - No lock (shouldn't happen while mounted but defensive) → em dash */}
+        <MetaRow k="Lock" v={<LockValue status={lockStatus} />} />
       </div>
+
+      {/* Read-only banner — appears when the lock is held by someone
+          else. Phase 7 + 8 will wire editable affordances (ORC send,
+          stage-approve); the banner preempts them with a visible
+          explanation so the user knows why things are disabled. */}
+      {lockStatus && !lockStatus.heldByMe && lockStatus.lockedByEmail && (
+        <div className="mt-6 p-[12px_14px] border border-[#d4908a]/30 bg-[#a04040]/10 rounded-sm">
+          <div className="font-mono text-[9.5px] tracking-[0.22em] uppercase text-[#d4908a] mb-1">
+            Read-only
+          </div>
+          <p className="font-editorial italic text-[13.5px] leading-[1.5] text-t3">
+            {lockStatus.lockedByEmail} is currently editing this signal.
+            You can view — edits unlock when their session ends or the
+            lock expires.
+          </p>
+        </div>
+      )}
     </div>
   );
 }
 
 // ─── Presentational helpers ────────────────────────────────────────
+
+/**
+ * Lock row value — renders differently based on who holds the lock.
+ * Self-lock is quiet (your own name + timer), other-lock is louder
+ * (warning color on holder's name + timer).
+ */
+function LockValue({ status }: { status: LockStatus | null }) {
+  if (status === null) {
+    return <span className="text-t5">…</span>;
+  }
+  if (!status.lockedByAuthId || !status.expiresAt) {
+    // Shouldn't happen in mounted workspace (we acquire on mount) but
+    // covers the fail-soft branch where acquire threw.
+    return <span className="text-t5">—</span>;
+  }
+
+  const timeLeft = formatTimeLeft(status.expiresAt);
+
+  if (status.heldByMe) {
+    return (
+      <span className="text-t4">
+        you · <span className="text-t2">{timeLeft}</span>
+      </span>
+    );
+  }
+
+  // Someone else — lean warning color
+  const holder = status.lockedByEmail ?? "someone";
+  const shortHolder = holder.includes("@") ? holder.split("@")[0] : holder;
+  return (
+    <span className="text-[#d4908a]">
+      {shortHolder} · {timeLeft}
+    </span>
+  );
+}
+
+function formatTimeLeft(expiresAt: Date): string {
+  const ms = new Date(expiresAt).getTime() - Date.now();
+  if (ms <= 0) return "expired";
+  const sec = Math.floor(ms / 1000);
+  if (sec < 60) return `${sec}s left`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m left`;
+  const hr = Math.floor(min / 60);
+  return `${hr}h left`;
+}
 
 function Label({ children }: { children: React.ReactNode }) {
   return (
