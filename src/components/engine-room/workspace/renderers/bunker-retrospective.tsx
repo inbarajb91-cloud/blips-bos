@@ -157,7 +157,16 @@ export function BunkerRetrospective({ signal, state }: RendererProps) {
           - Explicit "approved by X at T" record: `approveCandidate`
             doesn't write to decision_history yet. Adding that write in a
             later pass gives us real audit trail; until then we use
-            signal.createdAt as a proxy. */}
+            signal.createdAt as a proxy.
+          Event copy:
+          - Event 1 is ALWAYS "Approved at BUNKER" — approval always
+            happens at BUNKER regardless of where the signal is now.
+            Older copy said "signal created at {currentStage}" which read
+            wrong when the signal had advanced past BUNKER (e.g. showing
+            "created at STOKER" while describing a BUNKER approval).
+          - Event 2 appears only when the signal has actually advanced
+            past BUNKER and updatedAt is meaningfully later than createdAt.
+            This preserves the "no fake events" rule. */}
       <section className="mb-9">
         <SectionLabel>Review · What we know</SectionLabel>
         <div className="flex flex-col px-[22px] py-[14px] bg-wash-1 border border-rule-1 rounded-sm">
@@ -165,26 +174,32 @@ export function BunkerRetrospective({ signal, state }: RendererProps) {
             you
             what={
               <>
-                Candidate approved · signal created at{" "}
-                <b className="text-t1 font-medium">
-                  {stageFromStatus(signal.status)}
-                </b>
+                <b className="text-t1 font-medium">Approved at BUNKER</b>
+                <span className="text-t3"> · candidate became signal</span>
               </>
             }
             when={formatAge(signal.createdAt)}
           />
-          {/* Only render the "last update" event when updatedAt materially
-              differs from createdAt (>5 min) — otherwise it's just the
-              same moment as the approval and we'd show two identical-age
-              events. */}
-          {new Date(signal.updatedAt).getTime() -
-            new Date(signal.createdAt).getTime() >
-            5 * 60 * 1000 && (
-            <TimelineEvent
-              what={<>Last updated</>}
-              when={formatAge(signal.updatedAt)}
-            />
-          )}
+          {/* Advancement event — only render when the signal has moved
+              past BUNKER and the updatedAt actually reflects that move
+              (>5 min gap from approval). Avoids showing a redundant event
+              for signals that are still sitting at BUNKER. */}
+          {signal.status !== "IN_BUNKER" &&
+            new Date(signal.updatedAt).getTime() -
+              new Date(signal.createdAt).getTime() >
+              5 * 60 * 1000 && (
+              <TimelineEvent
+                what={
+                  <>
+                    Advanced to{" "}
+                    <b className="text-t1 font-medium">
+                      {stageFromStatus(signal.status)}
+                    </b>
+                  </>
+                }
+                when={formatAge(signal.updatedAt)}
+              />
+            )}
         </div>
       </section>
     </div>
