@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useTransition, useRef, useEffect } from "react";
 import Link from "next/link";
 import {
   approveCandidate,
@@ -86,6 +86,24 @@ export function CollectionCard({
 }: CollectionCardProps) {
   const [open, setOpen] = useState(defaultOpen);
   const [runPending, startRunTransition] = useTransition();
+  // Inline count picker state. Closed by default; click Regenerate → opens
+  // with the original targetCount pre-filled so the default path stays
+  // 2 clicks (Regenerate → Go).
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [regenCount, setRegenCount] = useState<number>(c.targetCount);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Auto-focus + select the count on open so users can overwrite with a
+  // single keystroke. Reset count when closed so the next open starts
+  // clean.
+  useEffect(() => {
+    if (pickerOpen) {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    } else {
+      setRegenCount(c.targetCount);
+    }
+  }, [pickerOpen, c.targetCount]);
 
   const typeLabel = c.type.charAt(0).toUpperCase() + c.type.slice(1);
   const isRunning = c.status === "running";
@@ -93,16 +111,25 @@ export function CollectionCard({
   const isFailed = c.status === "failed";
   const isActive = isRunning || isQueued; // "something is happening"
   const totalCount = c.candidateCount + c.signalCount;
-  // Run now only belongs on scheduled collections. Instant/Batch are
-  // one-shot; Direct submissions / Legacy are buckets, not runnable.
-  // The server action gates on status already, so we don't gate on
-  // nextRunAt here — otherwise the button vanishes in the window between
-  // nextRunAt passing and the hourly cron firing.
-  const canRunNow =
+  // Regenerate applies to every collection type: Instant/Batch for "add
+  // more to triage," Scheduled for "don't wait for the next cron, top up
+  // now." Excluded: Direct submissions + Legacy (buckets, not BUNKER runs).
+  // Status gate is handled here + re-verified by the server action.
+  const canRegenerate =
     !isActive &&
-    c.type === "scheduled" &&
     c.name !== "Direct submissions" &&
     c.name !== "Legacy — pre-6.5";
+
+  const fireRegenerate = () => {
+    startRunTransition(async () => {
+      try {
+        await runCollectionNow(c.id, { count: regenCount });
+        setPickerOpen(false);
+      } catch (e) {
+        console.error("Regenerate failed:", e);
+      }
+    });
+  };
 
   // Decide what to surface from the latest run. Only show when the run
   // actually ran (completed or failed) AND the result is informative —
@@ -236,27 +263,73 @@ export function CollectionCard({
           )}
         </button>
 
-        {canRunNow ? (
-          <button
-            type="button"
-            onClick={() => {
-              startRunTransition(async () => {
-                try {
-                  await runCollectionNow(c.id);
-                } catch (e) {
-                  console.error("Run now failed:", e);
-                }
-              });
-            }}
-            disabled={runPending}
-            className="font-mono text-[10px] tracking-[0.22em] uppercase px-3 py-1.5 rounded-sm border border-rule-2 text-t3 hover:text-t1 transition-all disabled:opacity-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2"
-            style={{
-              borderColor: runPending ? "rgba(var(--d), 0.85)" : undefined,
-            }}
-            aria-label={`Run ${c.name} now`}
-          >
-            {runPending ? "Firing…" : "Run now"}
-          </button>
+        {canRegenerate ? (
+          pickerOpen ? (
+            <div className="flex items-center gap-1.5">
+              <input
+                ref={inputRef}
+                type="number"
+                min={1}
+                max={100}
+                value={regenCount}
+                onChange={(e) => {
+                  // Clamp to 1-100 server-side too; here we just keep a
+                  // reasonable number in the input. Empty string → 1.
+                  const raw = e.target.value;
+                  if (raw === "") {
+                    setRegenCount(1);
+                    return;
+                  }
+                  const n = Math.max(1, Math.min(100, Number(raw) || 1));
+                  setRegenCount(n);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    fireRegenerate();
+                  } else if (e.key === "Escape") {
+                    e.preventDefault();
+                    setPickerOpen(false);
+                  }
+                }}
+                disabled={runPending}
+                aria-label="Number of signals to regenerate"
+                className="w-[52px] font-mono text-[12px] text-center bg-transparent border border-rule-2 rounded-sm py-1.5 text-t1 focus-visible:outline-none focus-visible:border-t2 disabled:opacity-50"
+              />
+              <button
+                type="button"
+                onClick={fireRegenerate}
+                disabled={runPending}
+                className="font-mono text-[10px] tracking-[0.22em] uppercase px-3 py-1.5 rounded-sm border text-t1 transition-all disabled:opacity-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2"
+                style={{
+                  borderColor: "rgba(var(--d), 0.72)",
+                  background: runPending
+                    ? "rgba(var(--d), 0.12)"
+                    : "transparent",
+                }}
+                aria-label={`Regenerate ${regenCount} signal${regenCount === 1 ? "" : "s"} for ${c.name}`}
+              >
+                {runPending ? "Firing…" : "Go"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setPickerOpen(false)}
+                disabled={runPending}
+                className="font-mono text-[10px] tracking-[0.22em] uppercase px-2 py-1.5 rounded-sm text-t5 hover:text-t3 transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2"
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setPickerOpen(true)}
+              className="font-mono text-[10px] tracking-[0.22em] uppercase px-3 py-1.5 rounded-sm border border-rule-2 text-t3 hover:text-t1 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2"
+              aria-label={`Regenerate ${c.name}`}
+            >
+              Regenerate
+            </button>
+          )
         ) : (
           <span />
         )}

@@ -348,9 +348,13 @@ export const bunkerCollectionRun = inngest.createFunction(
     },
   },
   async ({ event, step }) => {
-    const { orgId, collectionId } = event.data as {
+    const { orgId, collectionId, count } = event.data as {
       orgId: string;
       collectionId: string;
+      /** Optional per-run override from Regenerate. Bypasses
+       *  collection.targetCount so the user can top up the triage pool
+       *  without mutating the collection's original intent. */
+      count?: number;
     };
 
     // Load collection + create run row, mark running.
@@ -392,7 +396,9 @@ export const bunkerCollectionRun = inngest.createFunction(
     const stats: CollectStats = await step.run("collect", async () => {
       return await runBunkerCollection({
         orgId,
-        limit: collection.targetCount,
+        // Regenerate override wins when present; else use the collection's
+        // original targetCount. Don't mutate collection.targetCount.
+        limit: count ?? collection.targetCount,
         collectionId,
         searchMode: collection.searchMode,
         outline: collection.outline,

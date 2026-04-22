@@ -148,11 +148,28 @@ export async function archiveCollection(collectionId: string) {
 }
 
 /**
- * Re-fire a Batch or Scheduled collection immediately — useful for "run now"
- * button on the collection spine. Instant collections can't re-run (they're
- * one-shot by definition).
+ * Regenerate — fire BUNKER against an existing collection to add more
+ * candidates to its triage pool. Works on all types: Instant, Batch, and
+ * Scheduled. Direct submissions / Legacy buckets are excluded at the UI
+ * layer (they're not BUNKER runs).
+ *
+ * The count parameter is a per-run override. It does NOT mutate the
+ * collection's original `targetCount` — that stays as the original intent
+ * of "how many signals this collection was created to hold." Regenerate is
+ * ad-hoc: "add N more fresh candidates, same prompt." If omitted, defaults
+ * to the collection's own targetCount.
+ *
+ * Optimistic status flip: we set status='queued' before returning so the
+ * Bridge UI hides the Regenerate button immediately and shows the "QUEUED
+ * · starting…" label + progress pulse. Without this, there's a 1–3s gap
+ * between the server action returning and Inngest picking up the event,
+ * during which the button would stay clickable (double-fire risk) and the
+ * spine would misleadingly show "idle" while work is actually in flight.
  */
-export async function runCollectionNow(collectionId: string) {
+export async function runCollectionNow(
+  collectionId: string,
+  opts?: { count?: number },
+) {
   const user = await getCurrentUserWithOrg();
   if (!user) throw new Error("Unauthenticated");
 
@@ -168,13 +185,38 @@ export async function runCollectionNow(collectionId: string) {
     .limit(1);
   if (!c) throw new Error("Collection not found.");
   if (c.status === "running") throw new Error("Collection is already running.");
-  if (c.type === "instant") {
-    throw new Error("Instant collections can't re-run. Create a new one.");
+  if (c.status === "archived") throw new Error("Collection is archived.");
+
+  // Validate count override when present. 1–100 is the allowed window —
+  // matches Batch bounds and keeps the single LLM run predictable.
+  let count: number | undefined;
+  if (opts?.count !== undefined) {
+    const n = Math.floor(opts.count);
+    if (!Number.isFinite(n) || n < 1 || n > 100) {
+      throw new Error("Regenerate count must be between 1 and 100.");
+    }
+    count = n;
   }
+
+  // Optimistic status flip — button hides + progress pulse appears instantly.
+  // Inngest's runner will flip to 'running' when it actually picks up.
+  await db
+    .update(collections)
+    .set({ status: "queued", updatedAt: new Date() })
+    .where(
+      and(
+        eq(collections.id, collectionId),
+        eq(collections.orgId, user.orgId),
+      ),
+    );
 
   await inngest.send({
     name: "bunker.collection.run",
-    data: { orgId: user.orgId, collectionId: c.id },
+    data: {
+      orgId: user.orgId,
+      collectionId: c.id,
+      ...(count !== undefined ? { count } : {}),
+    },
   });
 
   revalidatePath("/engine-room");
