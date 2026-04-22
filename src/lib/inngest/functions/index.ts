@@ -2,6 +2,8 @@ import { testRun } from "./pipeline";
 import {
   bunkerCollectionScheduled,
   bunkerCollectionOnDemand,
+  bunkerCollectionRun,
+  bunkerScheduledCheck,
 } from "./bunker";
 
 /**
@@ -14,4 +16,6 @@ export const functions = [
   testRun,
   bunkerCollectionScheduled,
   bunkerCollectionOnDemand,
+  bunkerCollectionRun,
+  bunkerScheduledCheck,
 ];

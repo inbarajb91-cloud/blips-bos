@@ -26,6 +26,23 @@ export type BlipsEvents = {
     data: { orgId: string; candidateId: string; signalId: string };
   };
 
+  // ─── Collections (Phase 6.5) ─────────────────────────────────
+  /**
+   * Run BUNKER against a specific collection. Fires when a user creates
+   * an Instant/Batch via the Collect-now modal, or when the scheduled-
+   * collection cron ticks a scheduled collection's next_run_at.
+   */
+  "bunker.collection.run": {
+    data: { orgId: string; collectionId: string };
+  };
+  /**
+   * Scheduled cron — wakes hourly, finds scheduled collections whose
+   * next_run_at has passed, fans out to `bunker.collection.run`.
+   */
+  "bunker.collection.scheduled_check": {
+    data: Record<string, never>;
+  };
+
   // ─── STOKER — season/decade tagging (Phase 9) ────────────────
   "stoker.ready": {
     data: { orgId: string; signalId: string };

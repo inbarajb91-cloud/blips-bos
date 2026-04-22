@@ -1,8 +1,8 @@
 "use server";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
-import { db, bunkerCandidates, signals } from "@/db";
+import { db, bunkerCandidates, collections, signals } from "@/db";
 import { getCurrentUserWithOrg } from "@/lib/auth/current-user";
 import { inngest } from "@/lib/inngest/client";
 import { generateStructured } from "@/lib/ai/generate";
@@ -40,6 +40,8 @@ export async function approveCandidate(candidateId: string) {
 
   // Create signal row. If shortcode collision, append digit suffix.
   // TODO(phase-6-polish): proper shortcode collision resolution
+  // Phase 6.5: carry the originating collection forward — Bridge needs this
+  // to render the signal inside its collection's pipeline section.
   const [signal] = await db
     .insert(signals)
     .values({
@@ -50,6 +52,7 @@ export async function approveCandidate(candidateId: string) {
       source: candidate.source,
       rawText: candidate.rawText,
       rawMetadata: candidate.rawMetadata,
+      collectionId: candidate.collectionId ?? null,
       status: "IN_BUNKER",
     })
     .returning({ id: signals.id });
@@ -58,6 +61,18 @@ export async function approveCandidate(candidateId: string) {
     .update(bunkerCandidates)
     .set({ status: "APPROVED" })
     .where(eq(bunkerCandidates.id, candidateId));
+
+  // Update aggregate counters on the collection.
+  if (candidate.collectionId) {
+    await db
+      .update(collections)
+      .set({
+        candidateCount: sql`(SELECT count(*) FROM bunker_candidates WHERE collection_id = ${candidate.collectionId} AND status = 'PENDING_REVIEW')`,
+        signalCount: sql`(SELECT count(*) FROM signals WHERE collection_id = ${candidate.collectionId})`,
+        updatedAt: new Date(),
+      })
+      .where(eq(collections.id, candidate.collectionId));
+  }
 
   // Fire event — STOKER handler will pick it up in Phase 9
   await inngest.send({
@@ -75,10 +90,22 @@ export async function approveCandidate(candidateId: string) {
 
 /**
  * Dismiss a candidate. Status set to DISMISSED (kept, not deleted).
+ * Also refreshes parent collection's pending count.
  */
 export async function dismissCandidate(candidateId: string) {
   const user = await getCurrentUserWithOrg();
   if (!user) throw new Error("Unauthenticated");
+
+  const [candidate] = await db
+    .select({ collectionId: bunkerCandidates.collectionId })
+    .from(bunkerCandidates)
+    .where(
+      and(
+        eq(bunkerCandidates.id, candidateId),
+        eq(bunkerCandidates.orgId, user.orgId),
+      ),
+    )
+    .limit(1);
 
   await db
     .update(bunkerCandidates)
@@ -90,12 +117,23 @@ export async function dismissCandidate(candidateId: string) {
       ),
     );
 
+  if (candidate?.collectionId) {
+    await db
+      .update(collections)
+      .set({
+        candidateCount: sql`(SELECT count(*) FROM bunker_candidates WHERE collection_id = ${candidate.collectionId} AND status = 'PENDING_REVIEW')`,
+        updatedAt: new Date(),
+      })
+      .where(eq(collections.id, candidate.collectionId));
+  }
+
   revalidatePath("/engine-room");
 }
 
 /**
- * Trigger on-demand BUNKER collection from the Bridge "Collect now" button.
- * Returns fast — actual collection runs in the background via Inngest.
+ * Legacy on-demand BUNKER fire. Phase 6.5 replaces this with the full
+ * createCollection flow (see @/lib/actions/collections.ts). Kept for
+ * backward-compat — any old callers still fire the generic event.
  */
 export async function triggerCollect() {
   const user = await getCurrentUserWithOrg();
@@ -106,8 +144,6 @@ export async function triggerCollect() {
     data: { orgId: user.orgId },
   });
 
-  // Revalidate so the UI eventually picks up new candidates (realtime
-  // subscription will also invalidate, but this is the belt-and-suspenders).
   revalidatePath("/engine-room");
 }
 
@@ -183,11 +219,44 @@ export async function submitDirectInput(rawText: string) {
     schema: bunkerSkill.outputSchema,
   });
 
-  // Persist
+  // Phase 6.5: direct inputs flow into a singleton "Direct submissions"
+  // collection — find-or-create so all a founder's directly-submitted
+  // signals accumulate in one place on Bridge.
+  let [directCol] = await db
+    .select({ id: collections.id })
+    .from(collections)
+    .where(
+      and(
+        eq(collections.orgId, user.orgId),
+        eq(collections.name, "Direct submissions"),
+      ),
+    )
+    .limit(1);
+
+  if (!directCol) {
+    const [created] = await db
+      .insert(collections)
+      .values({
+        orgId: user.orgId,
+        name: "Direct submissions",
+        outline:
+          "Signals you pasted in directly. One ongoing bucket so nothing lives homeless.",
+        type: "scheduled", // "scheduled" conceptually — it's a long-running accumulator
+        targetCount: 100,
+        cadence: "custom",
+        cadenceCron: "never", // never auto-fires; grows only via direct input
+        status: "idle",
+        createdBy: user.authId,
+      })
+      .returning({ id: collections.id });
+    directCol = created;
+  }
+
   const [row] = await db
     .insert(bunkerCandidates)
     .values({
       orgId: user.orgId,
+      collectionId: directCol.id,
       shortcode: result.object.shortcode,
       workingTitle: result.object.working_title,
       concept: result.object.concept,
@@ -206,6 +275,15 @@ export async function submitDirectInput(rawText: string) {
       shortcode: bunkerCandidates.shortcode,
       workingTitle: bunkerCandidates.workingTitle,
     });
+
+  // Refresh the Direct-submissions collection's pending count.
+  await db
+    .update(collections)
+    .set({
+      candidateCount: sql`(SELECT count(*) FROM bunker_candidates WHERE collection_id = ${directCol.id} AND status = 'PENDING_REVIEW')`,
+      updatedAt: new Date(),
+    })
+    .where(eq(collections.id, directCol.id));
 
   revalidatePath("/engine-room");
   return {
