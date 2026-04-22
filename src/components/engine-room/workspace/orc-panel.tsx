@@ -45,8 +45,11 @@ export function OrcPanel({
         </div>
       </div>
 
-      {/* Thread — fills remaining height */}
-      <div className="flex-1 overflow-y-auto p-[18px_24px] flex flex-col gap-[22px]">
+      {/* Thread — fills remaining height. min-h-0 on the flex child is
+          required for overflow-y-auto to actually scroll inside a flex
+          column, otherwise flex-1 expands to content height and the
+          panel grows. */}
+      <div className="flex-1 min-h-0 overflow-y-auto p-[18px_24px] flex flex-col gap-[22px]">
         {stubMessages.map((msg, i) => (
           <div key={i} className="flex flex-col gap-[6px]">
             <div

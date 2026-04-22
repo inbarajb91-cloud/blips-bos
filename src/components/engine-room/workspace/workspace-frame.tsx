@@ -216,9 +216,12 @@ export function WorkspaceFrame({
           gridTemplateColumns: `${railLeftWidth}px 1fr 6px ${railRight}px`,
         }}
       >
-        {/* Left rail */}
+        {/* Left rail — min-h-0 so the grid cell can shrink below content
+            height and let overflow-y-auto on the inner content handle
+            scrolling. Without min-h-0, the cell grows with content and
+            the whole workspace locks up. */}
         <aside
-          className="border-r border-rule-1 bg-wash-1 relative overflow-hidden"
+          className="border-r border-rule-1 bg-wash-1 relative overflow-hidden min-h-0"
           aria-label="Collection context"
         >
           {/* Collapse toggle sits on the rail's right edge, always visible */}
@@ -252,6 +255,7 @@ export function WorkspaceFrame({
           )}
 
           <div
+            className="h-full overflow-y-auto"
             style={{
               opacity: railCollapsed ? 0 : 1,
               pointerEvents: railCollapsed ? "none" : "auto",
@@ -262,12 +266,15 @@ export function WorkspaceFrame({
           </div>
         </aside>
 
-        {/* Canvas */}
+        {/* Canvas — min-h-0 + overflow-y-auto so tall retrospective content
+            scrolls within the canvas region while left rail / ORC panel
+            stay fixed. Otherwise the grid cell grew to content height
+            and the whole page couldn't scroll. */}
         <main
           id="workspace-canvas"
           role="tabpanel"
           aria-labelledby={`tab-${activeTab}`}
-          className="overflow-y-auto"
+          className="overflow-y-auto min-h-0"
         >
           <div className="max-w-[880px] w-full px-12 py-10">
             <Renderer signal={signal} collection={collection} state={states[activeTab]} />
@@ -296,9 +303,12 @@ export function WorkspaceFrame({
           />
         </div>
 
-        {/* Right panel — ORC conversation */}
+        {/* Right panel — ORC conversation. min-h-0 on the grid cell itself
+            and on every descendant up to the thread div ensures the
+            thread's overflow-y-auto actually scrolls instead of the
+            panel growing to content height. */}
         <aside
-          className="border-l border-rule-1 bg-wash-1 flex flex-col min-h-0"
+          className="border-l border-rule-1 bg-wash-1 flex flex-col min-h-0 overflow-hidden"
           aria-label="ORC conversation"
         >
           <OrcPanel signal={signal} activeStage={activeTab} />
