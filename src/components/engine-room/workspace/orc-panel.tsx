@@ -5,7 +5,6 @@ import type { signals } from "@/db/schema";
 import type { AgentKey } from "./types";
 import {
   getOrCreateOrcConversation,
-  appendUserMessage,
   type Message,
   type StageKey,
 } from "@/lib/actions/conversations";
@@ -85,36 +84,116 @@ export function OrcPanel({
     if (text.length === 0) return;
 
     setSendError(null);
-    // Optimistic append — message appears instantly; server call
-    // reconciles when it returns. If the server throws, we roll back
-    // the optimistic append so the user sees the right state.
-    const optimistic: Message = {
+
+    // Optimistic: append the user message locally so it renders
+    // instantly. The server also persists it (route handler calls
+    // appendUserMessage early in the flow) — if the stream errors,
+    // the user's message is still saved server-side, so a page
+    // reload recovers the state. That's why the client-side rollback
+    // on failure (that Phase 7D had) is GONE — we no longer want to
+    // roll back, because the server commits before the stream runs.
+    const optimisticUser: Message = {
       role: "user",
       content: text,
       ts: new Date().toISOString(),
       stage: activeStage as StageKey,
     };
+
+    // Placeholder ORC "typing" message — starts empty, grows as
+    // tokens stream in. The `streaming` flag lives in a client-only
+    // intersection type; the stored `Message` schema stays clean.
+    // We cast back to the base Message for the array push, and the
+    // renderer reads the flag via `msg as Message & { streaming? }`.
+    const streamingOrc = {
+      role: "orc",
+      content: "",
+      ts: new Date().toISOString(),
+      streaming: true,
+    } as Message & { streaming: boolean };
+
     const prevMessages = messages ?? [];
-    setMessages([...prevMessages, optimistic]);
+    const withPlaceholder = [...prevMessages, optimisticUser, streamingOrc];
+    setMessages(withPlaceholder);
     setInputValue("");
+
+    // Index of the streaming ORC message — we'll mutate this slot
+    // in the messages array as tokens arrive.
+    const orcIdx = withPlaceholder.length - 1;
 
     startTransition(async () => {
       try {
-        const updated = await appendUserMessage(
-          conversationId,
-          text,
-          activeStage as StageKey,
-        );
-        setMessages(updated);
+        const response = await fetch("/api/orc/reply", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            signalId: signal.id,
+            userMessage: text,
+            stage: activeStage,
+          }),
+        });
+
+        if (!response.ok) {
+          // Structured error from the route (413, 429, etc.) — body
+          // is JSON with a detail field.
+          const err = (await response.json().catch(() => null)) as {
+            detail?: string;
+            error?: string;
+          } | null;
+          throw new Error(
+            err?.detail ?? err?.error ?? `Request failed (${response.status})`,
+          );
+        }
+
+        if (!response.body) {
+          throw new Error("No stream returned from server.");
+        }
+
+        await consumeStream(response.body, (chunk) => {
+          // For each text-delta chunk, append to the streaming ORC
+          // message. We clone the array so React picks up the change.
+          setMessages((curr) => {
+            if (!curr) return curr;
+            const next = curr.slice();
+            const cur = next[orcIdx] as Message & { streaming?: boolean };
+            if (!cur) return curr;
+            next[orcIdx] = {
+              ...cur,
+              content: cur.content + chunk,
+            };
+            return next;
+          });
+        });
+
+        // Stream closed cleanly — mark as no longer streaming
+        setMessages((curr) => {
+          if (!curr) return curr;
+          const next = curr.slice();
+          const cur = next[orcIdx] as Message & { streaming?: boolean };
+          if (!cur) return curr;
+          next[orcIdx] = {
+            ...cur,
+            streaming: false,
+          } as Message & { streaming: boolean };
+          return next;
+        });
       } catch (e) {
-        console.error("Failed to send ORC message:", e);
+        console.error("ORC reply failed:", e);
         setSendError(
-          e instanceof Error ? e.message : "Couldn't send your message.",
+          e instanceof Error ? e.message : "Something went wrong.",
         );
-        // Roll back the optimistic append
-        setMessages(prevMessages);
-        // Restore the input so the user can retry without re-typing
-        setInputValue(text);
+        // Remove the streaming ORC placeholder (keep the user message
+        // — it's already persisted server-side).
+        setMessages((curr) => {
+          if (!curr) return curr;
+          // Drop the last message if it's the streaming placeholder.
+          const last = curr[curr.length - 1] as Message & {
+            streaming?: boolean;
+          } | undefined;
+          if (last && last.role === "orc" && last.streaming) {
+            return curr.slice(0, -1);
+          }
+          return curr;
+        });
       }
     });
   }
@@ -247,7 +326,86 @@ export function OrcPanel({
   );
 }
 
-function MessageRow({ msg }: { msg: Message }) {
+/**
+ * Consume a `toUIMessageStreamResponse()` body stream and call
+ * `onTextDelta` with each fragment of ORC's reply text.
+ *
+ * AI SDK v6 streams a Server-Sent Events format — each event line
+ * starts with `data: ` followed by a JSON chunk. Chunk types include
+ * `text-delta` (the tokens we care about), `tool-call-*`, `data`,
+ * `finish`, `error`. For Phase 8H MVP we only extract text deltas;
+ * tool calls still fire server-side (chips generated, concerns
+ * flagged) but aren't rendered client-side yet — Phase 8.5 can add
+ * chip UI when we want to surface them visually.
+ *
+ * The function resolves when the stream closes cleanly. If an
+ * `error` chunk arrives, we throw so the caller's try/catch handles
+ * the rollback.
+ */
+async function consumeStream(
+  body: ReadableStream<Uint8Array>,
+  onTextDelta: (fragment: string) => void,
+): Promise<void> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      // SSE events are separated by a blank line ("\n\n"). Process
+      // each complete event, keep any trailing partial in the
+      // buffer for the next read.
+      let eventBoundary = buffer.indexOf("\n\n");
+      while (eventBoundary !== -1) {
+        const eventRaw = buffer.slice(0, eventBoundary);
+        buffer = buffer.slice(eventBoundary + 2);
+        eventBoundary = buffer.indexOf("\n\n");
+
+        // Each event has `data: <json>` lines. Concatenate them if
+        // multi-line, then parse.
+        const dataLines: string[] = [];
+        for (const line of eventRaw.split("\n")) {
+          if (line.startsWith("data: ")) {
+            dataLines.push(line.slice(6));
+          }
+        }
+        if (dataLines.length === 0) continue;
+        const raw = dataLines.join("\n");
+        // The AI SDK sends a plain "[DONE]" line at the end of some
+        // streams — ignore it.
+        if (raw === "[DONE]") continue;
+
+        let chunk: { type?: string; delta?: string; errorText?: string };
+        try {
+          chunk = JSON.parse(raw);
+        } catch {
+          continue;
+        }
+
+        if (chunk.type === "text-delta" && typeof chunk.delta === "string") {
+          onTextDelta(chunk.delta);
+        } else if (chunk.type === "error") {
+          throw new Error(chunk.errorText ?? "Stream error");
+        }
+        // Other types (tool-call-*, data, finish, start) — ignored
+        // client-side for now. They still execute server-side via
+        // the tools' execute functions, with observability in
+        // agent_logs.
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+function MessageRow({ msg }: { msg: Message & { streaming?: boolean } }) {
+  const isStreaming = msg.streaming === true;
+  const isEmptyStreaming = isStreaming && msg.content.length === 0;
+
   return (
     <div className="flex flex-col gap-[6px]">
       <div
@@ -256,7 +414,8 @@ function MessageRow({ msg }: { msg: Message }) {
         }`}
       >
         {msg.role === "orc" ? "ORC" : "You"}
-        {msg.ts && <span> · {formatTime(msg.ts)}</span>}
+        {msg.ts && !isStreaming && <span> · {formatTime(msg.ts)}</span>}
+        {isStreaming && <span className="text-t5"> · thinking…</span>}
         {msg.stage && msg.role === "user" && (
           <span className="text-t5"> · at {msg.stage}</span>
         )}
@@ -268,7 +427,37 @@ function MessageRow({ msg }: { msg: Message }) {
             : "font-display font-normal text-[14.5px] -tracking-[0.002em] text-t1"
         }
       >
-        {msg.content}
+        {/* When an ORC reply is streaming, show an animated breathing
+            dot as a caret so the user sees the reply is still coming.
+            The dot picks up the parent collection's decade color via
+            the existing `breathe` CSS class + rgba(var(--d)). */}
+        {isEmptyStreaming ? (
+          <span
+            className="breathe inline-block rounded-full align-middle"
+            style={{
+              width: 8,
+              height: 8,
+              background: "rgba(var(--d), 0.75)",
+            }}
+            aria-label="ORC is thinking"
+          />
+        ) : (
+          <>
+            {msg.content}
+            {isStreaming && (
+              <span
+                className="breathe inline-block ml-[3px] align-middle"
+                style={{
+                  width: 8,
+                  height: 14,
+                  background: "rgba(var(--d), 0.6)",
+                  verticalAlign: "text-bottom",
+                }}
+                aria-hidden
+              />
+            )}
+          </>
+        )}
       </div>
     </div>
   );

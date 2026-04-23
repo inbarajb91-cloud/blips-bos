@@ -4,6 +4,7 @@ import { z } from "zod";
 import { db, signals, agentConversations } from "@/db";
 import type { signals as signalsTable } from "@/db/schema";
 import { requireSession } from "@/lib/api/auth-helpers";
+import { checkOrcReplyRateLimit } from "@/lib/api/rate-limit";
 import { getCurrentUserWithOrg } from "@/lib/auth/current-user";
 import { getActiveJourney } from "@/lib/orc/journey";
 import {
@@ -20,6 +21,7 @@ import { buildOrcTools } from "@/lib/orc/tools";
 import { buildCachedMessages, providerFor } from "@/lib/ai/cache";
 import { streamOrcReply } from "@/lib/ai/stream";
 import { getAgentConfig } from "@/lib/ai/config-reader";
+import { summarizeConversation } from "@/lib/orc/summarize";
 
 /**
  * POST /api/orc/reply — ORC's conversational reply endpoint.
@@ -72,6 +74,27 @@ const BodySchema = z.object({
 export async function POST(req: Request) {
   const auth = await requireSession();
   if (auth instanceof NextResponse) return auth;
+
+  // Rate limit — 30 reply requests per minute per user. Protects
+  // against frontend loops (abort-retry cycles), rapid-click Send,
+  // and future multi-user abuse. See lib/api/rate-limit.ts for
+  // config + the single-instance caveat.
+  const rl = checkOrcReplyRateLimit(auth.id);
+  if (!rl.allowed) {
+    return NextResponse.json(
+      {
+        error: "Too many requests",
+        detail: "ORC is rate-limited to 30 replies per minute. Please wait and try again.",
+        retryAfterSeconds: Math.ceil(rl.retryAfterMs / 1000),
+      },
+      {
+        status: 429,
+        headers: {
+          "Retry-After": String(Math.ceil(rl.retryAfterMs / 1000)),
+        },
+      },
+    );
+  }
 
   // Org scope resolution — requireSession gives us the Supabase user;
   // getCurrentUserWithOrg joins it with public.users to get org_id.
@@ -142,7 +165,7 @@ export async function POST(req: Request) {
   const metadata = (fresh.metadata as ConversationMetadata | null) ?? {};
 
   // Build the prompt context
-  const context = buildOrcPromptContext({
+  let context = buildOrcPromptContext({
     signal: signal as typeof signalsTable.$inferSelect,
     messages,
     metadata,
@@ -150,7 +173,9 @@ export async function POST(req: Request) {
     activeStage: stage as StageKey,
   });
 
-  // Budget decisions
+  // Budget decisions. overBudgetAfterSummarization is the hard cap —
+  // no recovery possible, fail cleanly. needsSummarization is the
+  // soft signal — run an inline summarization pass, then re-check.
   if (context.overBudgetAfterSummarization) {
     return NextResponse.json(
       {
@@ -163,14 +188,44 @@ export async function POST(req: Request) {
     );
   }
   if (context.needsSummarization) {
-    // Phase 8F will trigger rolling summarization here, inline,
-    // before we send. For 8E we log + proceed — at current usage
-    // we've never come close to busting, so the budget check is
-    // an early-warning signal, not a blocker.
-    console.warn(
-      `[ORC reply] needsSummarization triggered for conversation ${conversation.id}; summarization will be wired in Phase 8F.`,
-      context.tokenEstimate,
-    );
+    // Phase 8F — inline summarization. Folds the six oldest
+    // unsummarized messages into the rolling summary, advances
+    // summary_through_index, writes back to agent_conversations.
+    // We then rebuild the context with the new metadata so the
+    // current turn ships with the compressed prefix.
+    const summaryResult = await summarizeConversation({
+      conversationId: conversation.id,
+      orgId: user.orgId,
+      signalId,
+      journeyId: activeJourney.id,
+      messages,
+      metadata,
+    });
+
+    // Rebuild context with the updated metadata (summary +
+    // summary_through_index changed; messages list unchanged).
+    context = buildOrcPromptContext({
+      signal: signal as typeof signalsTable.$inferSelect,
+      messages,
+      metadata: summaryResult.metadata,
+      currentUserMessage: userMessage,
+      activeStage: stage as StageKey,
+    });
+
+    // If still over budget after summarization, surface as 413.
+    // Rare case: user's current message itself is huge, or the
+    // summary grew beyond its cap.
+    if (context.overBudgetAfterSummarization || !context.budget.ok) {
+      return NextResponse.json(
+        {
+          error: "Conversation too long even after summarization",
+          detail:
+            "Your current message or the compressed history still exceeds the per-turn budget. Try a shorter message, or start a fresh signal workspace.",
+          tokenEstimate: context.tokenEstimate,
+        },
+        { status: 413 },
+      );
+    }
   }
 
   // Assemble the stable prefix (cached portion) from the three parts
