@@ -8,6 +8,7 @@ import { inngest } from "@/lib/inngest/client";
 import { generateStructured } from "@/lib/ai/generate";
 import { computeContentHash } from "@/lib/sources/dedup";
 import { bunkerSkill } from "@/skills/bunker";
+import { createInitialJourney } from "@/lib/orc/journey";
 
 /**
  * Approve a BUNKER candidate.
@@ -38,24 +39,38 @@ export async function approveCandidate(candidateId: string) {
     throw new Error(`Candidate is ${candidate.status}, cannot approve`);
   }
 
-  // Create signal row. If shortcode collision, append digit suffix.
+  // Create signal row + Journey 1 atomically. Phase 8: every signal
+  // is born with an active Journey 1 — all downstream writes
+  // (agent_outputs, agent_conversations, signal_decades,
+  // decision_history) FK to a journey, so creating the signal without
+  // its initial journey would leave the signal unwritable. Wrapping
+  // both inserts in a transaction ensures we never leave that orphan.
   // TODO(phase-6-polish): proper shortcode collision resolution
   // Phase 6.5: carry the originating collection forward — Bridge needs this
   // to render the signal inside its collection's pipeline section.
-  const [signal] = await db
-    .insert(signals)
-    .values({
-      orgId: user.orgId,
-      shortcode: candidate.shortcode,
-      workingTitle: candidate.workingTitle,
-      concept: candidate.concept,
-      source: candidate.source,
-      rawText: candidate.rawText,
-      rawMetadata: candidate.rawMetadata,
-      collectionId: candidate.collectionId ?? null,
-      status: "IN_BUNKER",
-    })
-    .returning({ id: signals.id });
+  const signal = await db.transaction(async (tx) => {
+    const [createdSignal] = await tx
+      .insert(signals)
+      .values({
+        orgId: user.orgId,
+        shortcode: candidate.shortcode,
+        workingTitle: candidate.workingTitle,
+        concept: candidate.concept,
+        source: candidate.source,
+        rawText: candidate.rawText,
+        rawMetadata: candidate.rawMetadata,
+        collectionId: candidate.collectionId ?? null,
+        status: "IN_BUNKER",
+      })
+      .returning({ id: signals.id });
+
+    await createInitialJourney(
+      { signalId: createdSignal.id, createdBy: user.authId },
+      tx,
+    );
+
+    return createdSignal;
+  });
 
   await db
     .update(bunkerCandidates)

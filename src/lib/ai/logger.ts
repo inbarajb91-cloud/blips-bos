@@ -28,6 +28,10 @@ export async function logAgentCall(
     await db.insert(agentLogs).values({
       orgId: m.orgId,
       signalId: m.signalId ?? null,
+      // Phase 8 — nullable journey_id on agent_logs. Callers that
+      // operate within a journey (orchestrator runSkill, ORC replies)
+      // pass it through; cron/pre-signal callers leave it unset.
+      journeyId: m.journeyId ?? null,
       agentName: m.agentName,
       action: m.action,
       model: m.model ?? null,

@@ -23,6 +23,7 @@ import {
   numeric,
   uniqueIndex,
   index,
+  type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
@@ -137,6 +138,18 @@ export const collectionCadence = pgEnum("collection_cadence", [
   "custom",
 ]);
 
+// Phase 8 — Journeys. Every signal has one or more journeys over its
+// lifetime. A journey is the narrative of one attempt through the
+// pipeline; resetting from stage X archives the current journey and
+// starts a new one with upstream stages inherited. See MEMORY.md for
+// the locked decision and agents/ORC.md for how journeys interact
+// with ORC's context.
+export const journeyStatus = pgEnum("journey_status", [
+  "active", // the one journey currently driving the pipeline
+  "archived", // a prior attempt, read-only
+  "dismissed", // signal reset was a mistake and the user abandoned the attempt
+]);
+
 // ══════════════════════════════════════════════════════════════════
 // CORE — orgs + users (profile linked to auth.users)
 // ══════════════════════════════════════════════════════════════════
@@ -235,6 +248,12 @@ export const signalDecades = pgTable(
     signalId: uuid("signal_id")
       .notNull()
       .references(() => signals.id, { onDelete: "cascade" }),
+    // Phase 8 — scoped to a journey. Resetting STOKER archives the
+    // old journey's decade rows (still readable via the archived
+    // journey view) and creates new ones on the new journey.
+    journeyId: uuid("journey_id")
+      .notNull()
+      .references(() => journeys.id, { onDelete: "cascade" }),
     decadeLens: decadeLens("decade_lens").notNull(),
     manifestation: text("manifestation"),
     evolutionOrder: integer("evolution_order"),
@@ -243,7 +262,14 @@ export const signalDecades = pgTable(
       .defaultNow(),
   },
   (t) => [
-    uniqueIndex("signal_decades_signal_lens_uq").on(t.signalId, t.decadeLens),
+    // Unique scoped to (signal, journey, decade) — each journey
+    // gets its own set of decade manifestations for the signal.
+    uniqueIndex("signal_decades_signal_journey_lens_uq").on(
+      t.signalId,
+      t.journeyId,
+      t.decadeLens,
+    ),
+    index("signal_decades_journey_idx").on(t.journeyId),
   ],
 );
 
@@ -360,6 +386,59 @@ export const collectionRuns = pgTable(
 );
 
 // ══════════════════════════════════════════════════════════════════
+// JOURNEYS — Phase 8. One or more per signal; each journey is an
+// attempt at driving the signal through the pipeline. Resetting from
+// a stage archives the current journey and starts a new one with
+// upstream stages inherited. Every per-signal execution artifact
+// (agent_outputs, agent_conversations, signal_decades, agent_logs,
+// decision_history) tags to the journey it belongs to via journey_id.
+// ══════════════════════════════════════════════════════════════════
+
+export const journeys = pgTable(
+  "journeys",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    signalId: uuid("signal_id")
+      .notNull()
+      .references(() => signals.id, { onDelete: "cascade" }),
+    // Per-signal monotonic counter: 1, 2, 3... Easier to reference in
+    // UI ("Journey 2") than a UUID.
+    sequenceNumber: integer("sequence_number").notNull(),
+    status: journeyStatus("status").notNull().default("active"),
+    // When a reset happens, the new journey's previous_journey_id
+    // points at the archived one. Builds a chain; usually linear in
+    // practice (J1 → J2 → J3) rather than a tree.
+    previousJourneyId: uuid("previous_journey_id").references(
+      (): AnyPgColumn => journeys.id,
+      { onDelete: "set null" },
+    ),
+    // Which stage the user reset from. Null on the initial journey
+    // (Journey 1) — no reset happened; it's the first attempt.
+    resetFromStage: agentName("reset_from_stage"),
+    resetReason: text("reset_reason"),
+    startedAt: timestamp("started_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    endedAt: timestamp("ended_at", { withTimezone: true }),
+    endedReason: text("ended_reason"),
+    createdBy: uuid("created_by").references(() => users.id, {
+      onDelete: "set null",
+    }),
+  },
+  (t) => [
+    // Sequence numbers are per-signal monotonic
+    uniqueIndex("journeys_signal_sequence_uq").on(t.signalId, t.sequenceNumber),
+    // At most one active journey per signal at any time. Partial
+    // index — archived/dismissed journeys don't compete for the slot.
+    uniqueIndex("journeys_signal_active_uidx")
+      .on(t.signalId)
+      .where(sql`${t.status} = 'active'`),
+    index("journeys_signal_idx").on(t.signalId),
+    index("journeys_previous_idx").on(t.previousJourneyId),
+  ],
+);
+
+// ══════════════════════════════════════════════════════════════════
 // AGENT EXECUTION — conversations, outputs, logs, decisions, locks
 // ══════════════════════════════════════════════════════════════════
 
@@ -370,8 +449,20 @@ export const agentConversations = pgTable(
     signalId: uuid("signal_id")
       .notNull()
       .references(() => signals.id, { onDelete: "cascade" }),
+    // Phase 8 — each journey gets its own conversation per agent.
+    // Resetting starts a fresh ORC thread for the new journey; the
+    // archived journey's thread stays readable via the history view.
+    journeyId: uuid("journey_id")
+      .notNull()
+      .references(() => journeys.id, { onDelete: "cascade" }),
     agentName: agentName("agent_name").notNull(),
-    messages: jsonb("messages").notNull().default(sql`'[]'::jsonb`), // array of {role, content, ts}
+    messages: jsonb("messages").notNull().default(sql`'[]'::jsonb`), // array of {role, content, ts, stage}
+    // Phase 8 — per-conversation state for the context economy:
+    // { summary, summary_through_index, summary_updated_at,
+    //   gemini_cache_name, gemini_cache_expires_at }
+    // Default '{}' so pre-Phase-8 rows don't need a data backfill;
+    // populated lazily on first ORC reply turn.
+    metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -381,15 +472,14 @@ export const agentConversations = pgTable(
   },
   (t) => [
     index("agent_conversations_signal_idx").on(t.signalId),
-    // Phase 7 hardening (CodeRabbit): one thread per (signal, agent). Without
-    // this, two concurrent first-opens can both miss the select and both
-    // insert, leaving duplicate ORC rows and nondeterministic thread lookup
-    // via .limit(1). Enforced as DB-level invariant; the server action also
-    // uses INSERT ... ON CONFLICT to round-trip cleanly when the race hits.
-    uniqueIndex("agent_conversations_signal_agent_uidx").on(
-      t.signalId,
+    // Phase 8 — one thread per (journey, agent). Replaces Phase 7's
+    // (signal, agent) constraint. Each journey owns its ORC thread;
+    // archived journeys retain their threads for audit/readback.
+    uniqueIndex("agent_conversations_journey_agent_uidx").on(
+      t.journeyId,
       t.agentName,
     ),
+    index("agent_conversations_journey_idx").on(t.journeyId),
   ],
 );
 
@@ -400,6 +490,11 @@ export const agentOutputs = pgTable(
     signalId: uuid("signal_id")
       .notNull()
       .references(() => signals.id, { onDelete: "cascade" }),
+    // Phase 8 — outputs scoped to a journey. Queries for "current
+    // state of the signal" filter by the active journey's id.
+    journeyId: uuid("journey_id")
+      .notNull()
+      .references(() => journeys.id, { onDelete: "cascade" }),
     agentName: agentName("agent_name").notNull(),
     outputType: text("output_type").notNull(), // candidate / decades / brief / gallery / mockup / techpack / bundle
     content: jsonb("content").notNull(), // structured output per stage
@@ -415,6 +510,8 @@ export const agentOutputs = pgTable(
   (t) => [
     index("agent_outputs_signal_idx").on(t.signalId),
     index("agent_outputs_signal_agent_idx").on(t.signalId, t.agentName),
+    index("agent_outputs_journey_idx").on(t.journeyId),
+    index("agent_outputs_journey_agent_idx").on(t.journeyId, t.agentName),
   ],
 );
 
@@ -432,6 +529,13 @@ export const agentLogs = pgTable(
     signalId: uuid("signal_id").references(() => signals.id, {
       onDelete: "set null",
     }), // nullable — cron runs have no signal
+    // Phase 8 — nullable. Pre-signal BUNKER extraction logs and
+    // cron-triggered source fetches have no journey to tag to.
+    // Post-signal agent calls populate it so observability queries
+    // can scope by "this journey's costs."
+    journeyId: uuid("journey_id").references(() => journeys.id, {
+      onDelete: "set null",
+    }),
     agentName: agentName("agent_name").notNull(),
     action: text("action").notNull(), // skill_loaded / llm_call / output_written / error / etc.
     model: text("model"), // which LLM (claude-haiku / gemini-2.5-flash / etc.)
@@ -450,6 +554,7 @@ export const agentLogs = pgTable(
     index("agent_logs_org_created_idx").on(t.orgId, t.createdAt),
     index("agent_logs_signal_idx").on(t.signalId),
     index("agent_logs_agent_idx").on(t.agentName),
+    index("agent_logs_journey_idx").on(t.journeyId),
   ],
 );
 
@@ -463,8 +568,15 @@ export const decisionHistory = pgTable(
     signalId: uuid("signal_id")
       .notNull()
       .references(() => signals.id, { onDelete: "cascade" }),
+    // Phase 8 — every decision (approve / reject / reset / etc.) is
+    // bound to the journey it happened within. Non-null because
+    // decisions never occur outside a journey — you approve in the
+    // context of an attempt.
+    journeyId: uuid("journey_id")
+      .notNull()
+      .references(() => journeys.id, { onDelete: "cascade" }),
     agentName: agentName("agent_name").notNull(),
-    decision: text("decision").notNull(), // approved / rejected / revision_requested / parked
+    decision: text("decision").notNull(), // approved / rejected / revision_requested / parked / reset_from / dismissed
     reason: text("reason"),
     decidedBy: uuid("decided_by").references(() => users.id, {
       onDelete: "set null",
@@ -476,6 +588,7 @@ export const decisionHistory = pgTable(
   (t) => [
     index("decision_history_org_idx").on(t.orgId),
     index("decision_history_signal_idx").on(t.signalId),
+    index("decision_history_journey_idx").on(t.journeyId),
   ],
 );
 
@@ -570,6 +683,7 @@ export const allTables = {
   signals,
   signalDecades,
   bunkerCandidates,
+  journeys,
   agentConversations,
   agentOutputs,
   agentLogs,
