@@ -53,6 +53,12 @@ export function OrcPanel({
   const [inputValue, setInputValue] = useState("");
   const [sendError, setSendError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  // Chips per message index (ephemeral — cleared on refresh since
+  // they live only in the streaming session's memory; Phase 8.5+ can
+  // persist to agent_logs and reconstruct on conversation load).
+  const [chipsByIndex, setChipsByIndex] = useState<Record<number, OrcChip[]>>(
+    {},
+  );
 
   // Load conversation on mount + when the signal changes (user navigates
   // to a different signal, the panel reloads with that signal's thread).
@@ -148,21 +154,32 @@ export function OrcPanel({
           throw new Error("No stream returned from server.");
         }
 
-        await consumeStream(response.body, (chunk) => {
-          // For each text-delta chunk, append to the streaming ORC
-          // message. We clone the array so React picks up the change.
-          setMessages((curr) => {
-            if (!curr) return curr;
-            const next = curr.slice();
-            const cur = next[orcIdx] as Message & { streaming?: boolean };
-            if (!cur) return curr;
-            next[orcIdx] = {
-              ...cur,
-              content: cur.content + chunk,
-            };
-            return next;
-          });
-        });
+        await consumeStream(
+          response.body,
+          (chunk) => {
+            // Text-delta: append to the streaming ORC message.
+            setMessages((curr) => {
+              if (!curr) return curr;
+              const next = curr.slice();
+              const cur = next[orcIdx] as Message & { streaming?: boolean };
+              if (!cur) return curr;
+              next[orcIdx] = {
+                ...cur,
+                content: cur.content + chunk,
+              };
+              return next;
+            });
+          },
+          (chip) => {
+            // Chip from flag_concern / request_re_run. Attach to the
+            // current streaming ORC message so it renders below the
+            // reply text.
+            setChipsByIndex((curr) => ({
+              ...curr,
+              [orcIdx]: [...(curr[orcIdx] ?? []), chip],
+            }));
+          },
+        );
 
         // Stream closed cleanly — mark as no longer streaming
         setMessages((curr) => {
@@ -238,7 +255,11 @@ export function OrcPanel({
           </div>
         ) : (
           messages.map((msg, i) => (
-            <MessageRow key={`${msg.ts}-${i}`} msg={msg} />
+            <MessageRow
+              key={`${msg.ts}-${i}`}
+              msg={msg}
+              chips={chipsByIndex[i]}
+            />
           ))
         )}
       </div>
@@ -326,25 +347,33 @@ export function OrcPanel({
   );
 }
 
+/** Chip payload — emitted by ORC's flag_concern / request_re_run tools. */
+export interface OrcChip {
+  type: "flag_concern" | "request_re_run";
+  reason: string;
+  /** Only set for request_re_run chips. */
+  stage?: string;
+}
+
 /**
- * Consume a `toUIMessageStreamResponse()` body stream and call
- * `onTextDelta` with each fragment of ORC's reply text.
+ * Consume a `toUIMessageStreamResponse()` body stream.
  *
  * AI SDK v6 streams a Server-Sent Events format — each event line
- * starts with `data: ` followed by a JSON chunk. Chunk types include
- * `text-delta` (the tokens we care about), `tool-call-*`, `data`,
- * `finish`, `error`. For Phase 8H MVP we only extract text deltas;
- * tool calls still fire server-side (chips generated, concerns
- * flagged) but aren't rendered client-side yet — Phase 8.5 can add
- * chip UI when we want to surface them visually.
+ * starts with `data: ` followed by a JSON chunk. Chunk types we care
+ * about:
+ *   - `text-delta` → append fragment to the streaming reply
+ *   - `tool-output-available` → if the tool was flag_concern or
+ *     request_re_run, the output is a chip payload to surface in UI
+ *   - `error` → throw so caller handles rollback
  *
- * The function resolves when the stream closes cleanly. If an
- * `error` chunk arrives, we throw so the caller's try/catch handles
- * the rollback.
+ * Other types (start, finish, tool-input-*, data-*) flow past. Tool
+ * executions still log to agent_logs server-side; we just don't need
+ * those events client-side.
  */
 async function consumeStream(
   body: ReadableStream<Uint8Array>,
   onTextDelta: (fragment: string) => void,
+  onChip?: (chip: OrcChip) => void,
 ): Promise<void> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
@@ -379,7 +408,12 @@ async function consumeStream(
         // streams — ignore it.
         if (raw === "[DONE]") continue;
 
-        let chunk: { type?: string; delta?: string; errorText?: string };
+        let chunk: {
+          type?: string;
+          delta?: string;
+          errorText?: string;
+          output?: unknown;
+        };
         try {
           chunk = JSON.parse(raw);
         } catch {
@@ -388,13 +422,33 @@ async function consumeStream(
 
         if (chunk.type === "text-delta" && typeof chunk.delta === "string") {
           onTextDelta(chunk.delta);
+        } else if (
+          chunk.type === "tool-output-available" &&
+          chunk.output &&
+          typeof chunk.output === "object"
+        ) {
+          // Our chip tools return { type: "flag_concern", reason }
+          // or { type: "request_re_run", stage, reason }. Anything
+          // else (data tool output, side-effect confirmation) we
+          // ignore — text-delta carries the reply copy for those.
+          const out = chunk.output as {
+            type?: string;
+            reason?: string;
+            stage?: string;
+          };
+          if (
+            (out.type === "flag_concern" || out.type === "request_re_run") &&
+            typeof out.reason === "string"
+          ) {
+            onChip?.({
+              type: out.type,
+              reason: out.reason,
+              stage: out.stage,
+            });
+          }
         } else if (chunk.type === "error") {
           throw new Error(chunk.errorText ?? "Stream error");
         }
-        // Other types (tool-call-*, data, finish, start) — ignored
-        // client-side for now. They still execute server-side via
-        // the tools' execute functions, with observability in
-        // agent_logs.
       }
     }
   } finally {
@@ -402,7 +456,13 @@ async function consumeStream(
   }
 }
 
-function MessageRow({ msg }: { msg: Message & { streaming?: boolean } }) {
+function MessageRow({
+  msg,
+  chips,
+}: {
+  msg: Message & { streaming?: boolean };
+  chips?: OrcChip[];
+}) {
   const isStreaming = msg.streaming === true;
   const isEmptyStreaming = isStreaming && msg.content.length === 0;
 
@@ -458,6 +518,48 @@ function MessageRow({ msg }: { msg: Message & { streaming?: boolean } }) {
             )}
           </>
         )}
+      </div>
+
+      {/* Chips — flag_concern / request_re_run payloads from tool
+          calls. Rendered as decade-tinted cards under the reply text.
+          Not clickable yet (Phase 9 wires reset action for re-run
+          chips; flag_concern is informational until we add a "keep
+          in journal" side panel). Ephemeral — chip state clears on
+          reload since it lives in component memory, not persisted. */}
+      {chips && chips.length > 0 && (
+        <div className="mt-[10px] flex flex-col gap-[8px]">
+          {chips.map((chip, i) => (
+            <ChipCard key={i} chip={chip} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ChipCard({ chip }: { chip: OrcChip }) {
+  const label =
+    chip.type === "flag_concern"
+      ? "ORC flags"
+      : `ORC suggests re-run · ${chip.stage ?? "stage"}`;
+  return (
+    <div
+      className="p-[10px_12px] border rounded-sm"
+      style={{
+        borderColor: "rgba(var(--d), 0.35)",
+        background: "rgba(var(--d), 0.05)",
+        borderLeftWidth: 2,
+        borderLeftColor: "rgba(var(--d), 0.7)",
+      }}
+    >
+      <div
+        className="font-mono text-[9px] tracking-[0.22em] uppercase mb-[4px]"
+        style={{ color: "rgba(var(--d), 0.92)" }}
+      >
+        {label}
+      </div>
+      <div className="font-editorial text-[13px] leading-[1.45] text-t2">
+        {chip.reason}
       </div>
     </div>
   );
