@@ -1,6 +1,6 @@
 "use server";
 
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, like, or, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db, bunkerCandidates, collections, signals } from "@/db";
 import { getCurrentUserWithOrg } from "@/lib/auth/current-user";
@@ -9,6 +9,54 @@ import { generateStructured } from "@/lib/ai/generate";
 import { computeContentHash } from "@/lib/sources/dedup";
 import { bunkerSkill } from "@/skills/bunker";
 import { createInitialJourney } from "@/lib/orc/journey";
+
+/**
+ * Resolve a unique shortcode within an org. BUNKER assigns shortcodes
+ * algorithmically and can produce duplicates (esp. on shared themes
+ * like ROOTS, CLOCK, LEGACY). The signals table has a UNIQUE
+ * constraint on (org_id, shortcode), so a duplicate insert crashes
+ * the approve flow.
+ *
+ * Strategy: query existing shortcodes in this org that match base or
+ * base-N, find the smallest unused suffix, return base or base-N.
+ *
+ * 2026-04-25 fix: replaced the long-standing TODO(phase-6-polish)
+ * after Inba hit a server error trying to approve "Golden Handcuffs
+ * Of Home" (shortcode ROOTS) when ROOTS was already an active signal.
+ */
+async function resolveAvailableShortcode(
+  base: string,
+  orgId: string,
+): Promise<string> {
+  const rows = await db
+    .select({ shortcode: signals.shortcode })
+    .from(signals)
+    .where(
+      and(
+        eq(signals.orgId, orgId),
+        or(
+          eq(signals.shortcode, base),
+          like(signals.shortcode, `${base}-%`),
+        ),
+      ),
+    );
+
+  if (rows.length === 0) return base;
+
+  const taken = new Set(rows.map((r) => r.shortcode));
+  if (!taken.has(base)) return base;
+
+  // Try -2, -3, … up to -99. In practice we'll find an opening in the
+  // first few attempts; 99 is a paranoia ceiling.
+  for (let i = 2; i < 100; i++) {
+    const candidate = `${base}-${i}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+
+  // Pathological: 99 same-base shortcodes already exist. Append a
+  // random suffix so we never return undefined or throw.
+  return `${base}-${Math.random().toString(36).slice(2, 6)}`;
+}
 
 /**
  * Approve a BUNKER candidate.
@@ -39,38 +87,90 @@ export async function approveCandidate(candidateId: string) {
     throw new Error(`Candidate is ${candidate.status}, cannot approve`);
   }
 
+  // Resolve a unique shortcode for the new signal. BUNKER may have
+  // produced a shortcode that's already taken (e.g. multiple themed
+  // candidates in different runs converging on ROOTS / CLOCK / LEGACY).
+  // resolveAvailableShortcode queries existing signals in this org and
+  // returns the base if free, or base-2/-3/... otherwise.
+  const finalShortcode = await resolveAvailableShortcode(
+    candidate.shortcode,
+    user.orgId,
+  );
+
   // Create signal row + Journey 1 atomically. Phase 8: every signal
   // is born with an active Journey 1 — all downstream writes
   // (agent_outputs, agent_conversations, signal_decades,
   // decision_history) FK to a journey, so creating the signal without
   // its initial journey would leave the signal unwritable. Wrapping
   // both inserts in a transaction ensures we never leave that orphan.
-  // TODO(phase-6-polish): proper shortcode collision resolution
   // Phase 6.5: carry the originating collection forward — Bridge needs this
   // to render the signal inside its collection's pipeline section.
-  const signal = await db.transaction(async (tx) => {
-    const [createdSignal] = await tx
-      .insert(signals)
-      .values({
-        orgId: user.orgId,
-        shortcode: candidate.shortcode,
-        workingTitle: candidate.workingTitle,
-        concept: candidate.concept,
-        source: candidate.source,
-        rawText: candidate.rawText,
-        rawMetadata: candidate.rawMetadata,
-        collectionId: candidate.collectionId ?? null,
-        status: "IN_BUNKER",
-      })
-      .returning({ id: signals.id });
+  let signal: { id: string };
+  try {
+    signal = await db.transaction(async (tx) => {
+      const [createdSignal] = await tx
+        .insert(signals)
+        .values({
+          orgId: user.orgId,
+          shortcode: finalShortcode,
+          workingTitle: candidate.workingTitle,
+          concept: candidate.concept,
+          source: candidate.source,
+          rawText: candidate.rawText,
+          rawMetadata: candidate.rawMetadata,
+          collectionId: candidate.collectionId ?? null,
+          status: "IN_BUNKER",
+        })
+        .returning({ id: signals.id });
 
-    await createInitialJourney(
-      { signalId: createdSignal.id, createdBy: user.authId },
-      tx,
-    );
+      await createInitialJourney(
+        { signalId: createdSignal.id, createdBy: user.authId },
+        tx,
+      );
 
-    return createdSignal;
-  });
+      return createdSignal;
+    });
+  } catch (e) {
+    // Race case: two approves picked the same finalShortcode between
+    // resolveAvailableShortcode() and the INSERT. Postgres unique
+    // violation = error code 23505. Retry once with a fresh resolve;
+    // if it still fails, surface a clean error rather than a 500.
+    if (
+      e instanceof Error &&
+      "code" in e &&
+      (e as { code: string }).code === "23505"
+    ) {
+      const retryShortcode = await resolveAvailableShortcode(
+        candidate.shortcode,
+        user.orgId,
+      );
+      signal = await db.transaction(async (tx) => {
+        const [createdSignal] = await tx
+          .insert(signals)
+          .values({
+            orgId: user.orgId,
+            shortcode: retryShortcode,
+            workingTitle: candidate.workingTitle,
+            concept: candidate.concept,
+            source: candidate.source,
+            rawText: candidate.rawText,
+            rawMetadata: candidate.rawMetadata,
+            collectionId: candidate.collectionId ?? null,
+            status: "IN_BUNKER",
+          })
+          .returning({ id: signals.id });
+
+        await createInitialJourney(
+          { signalId: createdSignal.id, createdBy: user.authId },
+          tx,
+        );
+
+        return createdSignal;
+      });
+    } else {
+      throw e;
+    }
+  }
 
   await db
     .update(bunkerCandidates)

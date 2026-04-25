@@ -80,21 +80,29 @@ export function estimatePromptTokens(
  * Phase 8 section. Split into structural allocations so the context
  * builder can enforce each independently:
  *
- *   System prompt + brand DNA + signal core  ≤ 2 000  (cached prefix)
+ *   System prompt + brand DNA + signal core  ≤ 2 500  (cached prefix)
  *   Rolling summary (when present)           ≤   800
  *   Verbatim window (last N turns)           ≤ 2 000
  *   Current user message                     ≤   500
  *                                            ───────
- *   TOTAL INPUT                              ≤ 5 300  (soft cap 5 000)
+ *   TOTAL INPUT                              ≤ 5 800  (soft cap 5 000)
  *   TOTAL OUTPUT TARGET                       ~1 000
  *
  * Caps are soft — exceeding any single cap triggers summarization or
  * truncation rather than a hard error. The overall per-turn target
  * is ≤ 5k input so even at Claude Sonnet pricing the steady-state
  * cost stays well under $0.02 per reply.
+ *
+ * 2026-04-25: bumped system_brand_signal 2000 → 2500. Diagnostic
+ * showed the static prefix (system prompt + brand DNA) at 1867 tokens
+ * leaving only 133 for signal core, while normal signal cores need
+ * ~250 tokens. Result: every signal hit a 413 from
+ * overBudgetAfterSummarization. Per-bucket caps are soft and don't
+ * have to sum to ≤ total_input — only the actual per-turn total does,
+ * and steady-state usage is well under 3k.
  */
 export const ORC_BUDGET = {
-  system_brand_signal: 2_000,
+  system_brand_signal: 2_500,
   summary: 800,
   verbatim: 2_000,
   current_message: 500,
