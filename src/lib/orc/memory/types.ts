@@ -37,6 +37,27 @@ export type MemoryKind =
   | "note"; // Catch-all for explicit "remember this" cases
 
 /**
+ * Which storage container this memory belongs in. Three buckets,
+ * cleanly separated at the supermemory containerTag level so recall
+ * can scope correctly and test data NEVER leaks into production:
+ *
+ *   - 'events'    → auto-written by hooks (decisions, summaries,
+ *                   stage completions). The lived experience of the
+ *                   brand. Grows organically as Inba uses BLIPS.
+ *   - 'knowledge' → human-curated reference docs (brand strategy,
+ *                   decade playbooks, voice guidelines). Written via
+ *                   the Settings → Knowledge UI (Phase 8L).
+ *   - 'test'      → smoke-test data only. Lives in a SEPARATE
+ *                   supermemory containerTag (`org-test-{orgId}`) so
+ *                   it's invisible to production recall.
+ *
+ * Default for production code: 'events'. Default for production
+ * recall (when scope.container is undefined): searches BOTH events +
+ * knowledge, but never test.
+ */
+export type MemoryContainer = "events" | "knowledge" | "test";
+
+/**
  * What gets written. orgId is required so multi-tenant scoping is
  * enforced inside the backend (supermemory uses containerTags;
  * pg_vector would use a column filter — same intent, different
@@ -44,6 +65,9 @@ export type MemoryKind =
  */
 export interface MemoryItem {
   orgId: string;
+  /** Which container to write to. Default: 'events'. Use 'knowledge'
+   *  for curated reference uploads, 'test' for smoke tests. */
+  container?: MemoryContainer;
   kind: MemoryKind;
   /** The text of the memory. Keep under ~600 tokens — supermemory
    *  charges by stored token, and short memories retrieve sharper. */
@@ -72,6 +96,10 @@ export interface RecallScope {
   collectionId?: string;
   /** Restrict to one or more memory kinds. */
   kind?: MemoryKind | MemoryKind[];
+  /** Restrict to one or more containers. Default: searches 'events' +
+   *  'knowledge' (production data only). Pass 'test' explicitly to
+   *  search the isolated test container. */
+  container?: MemoryContainer | MemoryContainer[];
   /** Default 5. Cap is up to the backend (supermemory: 50). */
   limit?: number;
 }

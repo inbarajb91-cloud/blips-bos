@@ -106,11 +106,14 @@ export function approveAndAdvance(ctx: OrcToolContext) {
       // Memory write — Phase 8K hook. Runs AFTER the transaction so a
       // memory backend hiccup never rolls back the approval. The
       // wrapper swallows errors internally (returns {id:''}) so this
-      // call is best-effort by design.
+      // call is best-effort by design. Explicit container='events'
+      // so it's clear this is auto-written event data, not curated
+      // knowledge or test data.
       if (signalRow) {
         const memory = await getMemoryBackend();
         await memory.remember({
           orgId: ctx.orgId,
+          container: "events",
           kind: "decision",
           content:
             `Approved ${pending.agentName} output on signal ${signalRow.shortcode} "${signalRow.workingTitle}". ` +

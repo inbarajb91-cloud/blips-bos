@@ -80,10 +80,12 @@ export function dismissSignal(ctx: OrcToolContext) {
       // Memory write — Phase 8K hook. Runs AFTER the transaction so a
       // memory backend hiccup never rolls back the dismissal. The
       // wrapper swallows errors so this call is best-effort by design.
+      // Explicit container='events' (auto-written, not curated).
       if (signalRow) {
         const memory = await getMemoryBackend();
         await memory.remember({
           orgId: ctx.orgId,
+          container: "events",
           kind: "decision",
           content:
             `Dismissed signal ${signalRow.shortcode} "${signalRow.workingTitle}". ` +

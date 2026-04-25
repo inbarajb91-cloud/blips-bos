@@ -51,6 +51,7 @@ export function __resetMemoryBackendForTests(
 
 export type {
   MemoryBackend,
+  MemoryContainer,
   MemoryItem,
   MemoryKind,
   RecallScope,

@@ -1,6 +1,10 @@
 import { tool } from "ai";
 import { z } from "zod";
-import { getMemoryBackend, type MemoryKind } from "@/lib/orc/memory";
+import {
+  getMemoryBackend,
+  type MemoryContainer,
+  type MemoryKind,
+} from "@/lib/orc/memory";
 import type { OrcToolContext } from "./types";
 
 /**
@@ -33,10 +37,15 @@ const KIND_VALUES = [
   "note",
 ] as const satisfies readonly MemoryKind[];
 
+const CONTAINER_VALUES = [
+  "events",
+  "knowledge",
+] as const satisfies readonly MemoryContainer[];
+
 export function recall(ctx: OrcToolContext) {
   return tool({
     description:
-      "Search BLIPS's long-term memory across ALL signals (not just this one). Use for 'have we seen this before?', 'what did Inba decide on similar signals?', 'remind me what we agreed about X'. Returns up to 5 matches by semantic similarity, with content, kind (decision/summary/etc.), the signal it relates to, and recency. Quote the relevant content verbatim or summarise — never claim memory you didn't pull.",
+      "Search BLIPS's long-term memory across ALL signals (not just this one). Use for 'have we seen this before?', 'what did Inba decide on similar signals?', 'what does our brand strategy say about X?'. Two memory layers: 'events' (auto-written decisions, summaries, completions — what happened) and 'knowledge' (curated reference docs — what BLIPS believes). Default searches both. Quote the content verbatim or summarise — never claim memory you didn't pull.",
     inputSchema: z.object({
       query: z
         .string()
@@ -51,6 +60,12 @@ export function recall(ctx: OrcToolContext) {
         .describe(
           "Optional: restrict to one memory kind. Use 'decision' for past approvals/dismissals; 'conversation_summary' for what Inba and ORC discussed; 'signal_dossier' for cross-signal pattern recall. Omit to search everything.",
         ),
+      container: z
+        .enum(CONTAINER_VALUES)
+        .optional()
+        .describe(
+          "Optional: restrict to one memory layer. 'events' = lived experience (decisions, summaries, completions). 'knowledge' = curated reference docs (brand strategy, decade playbooks). Omit to search both.",
+        ),
       limit: z
         .number()
         .int()
@@ -59,11 +74,12 @@ export function recall(ctx: OrcToolContext) {
         .optional()
         .describe("How many hits to return. Default 5, max 10."),
     }),
-    execute: async ({ query, kind, limit }) => {
+    execute: async ({ query, kind, container, limit }) => {
       const backend = await getMemoryBackend();
       const hits = await backend.recall(query, {
         orgId: ctx.orgId,
         kind: kind as MemoryKind | undefined,
+        container: container as MemoryContainer | undefined,
         limit: limit ?? 5,
       });
 

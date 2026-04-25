@@ -63,6 +63,7 @@ async function main() {
   const writeStart = Date.now();
   const writeResult = await backend.remember({
     orgId: org.id,
+    container: "test", // ISOLATED test container — never visible to production recall
     kind: "note",
     content: `${marker}: This is a smoke-test memory for the BLIPS supermemory wrapper. The phrase "career vs biology tension" is a marker phrase the recall test will search for.`,
     metadata: {
@@ -83,6 +84,7 @@ async function main() {
   const recallStart = Date.now();
   const hits = await backend.recall("career vs biology tension", {
     orgId: org.id,
+    container: "test", // search the test container we just wrote to
     limit: 5,
   });
   const recallMs = Date.now() - recallStart;

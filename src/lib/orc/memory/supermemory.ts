@@ -1,11 +1,27 @@
 import Supermemory from "supermemory";
 import type {
   MemoryBackend,
+  MemoryContainer,
   MemoryHit,
   MemoryItem,
   MemoryKind,
   RecallScope,
 } from "./types";
+
+/**
+ * Map a (orgId, container) pair to a supermemory containerTag. The
+ * 'test' container gets its own supermemory tenant entirely — that's
+ * the wall that stops smoke-test pollution from ever leaking into
+ * production recall.
+ *
+ *   events    → 'org-{orgId}'         (production)
+ *   knowledge → 'org-{orgId}'         (production, distinguished by metadata.container)
+ *   test      → 'org-test-{orgId}'    (separate supermemory tenant)
+ */
+function containerTagFor(orgId: string, container: MemoryContainer): string {
+  if (container === "test") return `org-test-${orgId}`;
+  return `org-${orgId}`;
+}
 
 /**
  * Supermemory backend — Phase 8K.
@@ -54,18 +70,16 @@ export class SupermemoryBackend implements MemoryBackend {
 
   async remember(item: MemoryItem): Promise<{ id: string }> {
     try {
-      // containerTag is supermemory's tenant boundary. Single string,
-      // alphanumeric + hyphens/underscores/dots, max 100 chars.
-      // UUIDs fit cleanly with an `org-` prefix for human-readability
-      // in their dashboard.
-      const containerTag = `org-${item.orgId}`;
+      const container: MemoryContainer = item.container ?? "events";
+      const containerTag = containerTagFor(item.orgId, container);
 
       // Metadata values can only be primitives or string[]. We store
-      // kind + the various IDs as strings so we can post-filter on
-      // recall. Anything caller passed in extra metadata gets merged
-      // last but wins on key collision.
+      // kind + container + the various IDs as strings so we can
+      // post-filter on recall. Anything caller passed in extra
+      // metadata gets merged last but wins on key collision.
       const metadata: Record<string, string | number | boolean | string[]> = {
         kind: item.kind,
+        container,
       };
       if (item.signalId) metadata.signalId = item.signalId;
       if (item.journeyId) metadata.journeyId = item.journeyId;
@@ -107,15 +121,40 @@ export class SupermemoryBackend implements MemoryBackend {
     scope: RecallScope,
   ): Promise<MemoryHit[]> {
     try {
-      const containerTag = `org-${scope.orgId}`;
+      // Container scoping: if scope.container is undefined, default
+      // to the production tenant (events + knowledge, NOT test). If
+      // explicitly 'test' (or includes test), we hit the isolated
+      // test tenant. Mixing prod + test in one query isn't supported
+      // — they live in different supermemory containerTags.
+      const requestedContainers = scope.container
+        ? Array.isArray(scope.container)
+          ? scope.container
+          : [scope.container]
+        : (["events", "knowledge"] as MemoryContainer[]);
+
+      const isTestSearch = requestedContainers.includes("test");
+      if (isTestSearch && requestedContainers.length > 1) {
+        console.warn(
+          "[memory] recall: mixing 'test' with other containers is unsupported; using test only",
+        );
+      }
+      const containerTag = isTestSearch
+        ? `org-test-${scope.orgId}`
+        : `org-${scope.orgId}`;
+
       const limit = scope.limit ?? 5;
 
-      // Over-fetch when sub-org filters are present, so post-filter
-      // still leaves us with `limit` hits in most cases. Cap at 25
-      // to stay well within supermemory's per-call quotas.
+      // Over-fetch when ANY post-filter applies, so the final result
+      // still has `limit` hits in most cases. Cap at 25 to stay well
+      // within supermemory's per-call quotas.
       const wantPostFilter =
         Boolean(scope.signalId || scope.journeyId || scope.collectionId) ||
-        Boolean(scope.kind);
+        Boolean(scope.kind) ||
+        // For production tenant, we still post-filter by metadata.container
+        // when caller specified a subset (e.g. 'knowledge' only).
+        (!isTestSearch &&
+          requestedContainers.length === 1 &&
+          requestedContainers[0] !== "events");
       const fetchLimit = wantPostFilter ? Math.min(limit * 4, 25) : limit;
 
       const result = await this.client.search.memories({
@@ -137,6 +176,12 @@ export class SupermemoryBackend implements MemoryBackend {
             ? scope.kind
             : [scope.kind];
           if (!kinds.includes(m.kind as MemoryKind)) return false;
+        }
+        // Container filter (only relevant for production tenant where
+        // both events + knowledge live behind the same containerTag).
+        if (!isTestSearch) {
+          const c = (m.container ?? "events") as MemoryContainer;
+          if (!requestedContainers.includes(c)) return false;
         }
         if (scope.signalId && m.signalId !== scope.signalId) return false;
         if (scope.journeyId && m.journeyId !== scope.journeyId) return false;

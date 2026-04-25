@@ -250,11 +250,13 @@ export async function POST(req: Request) {
   // FINAL summary into long-term memory so it's recallable across
   // signals and sessions. We only write on the last pass (after the
   // loop) to avoid 2-3× memory writes per turn when multiple passes
-  // fire. Wrapper swallows errors so this is best-effort.
+  // fire. Wrapper swallows errors so this is best-effort. Explicit
+  // container='events' (auto-written, not curated knowledge).
   if (summaryPasses > 0 && workingMetadata.summary) {
     const memory = await getMemoryBackend();
     await memory.remember({
       orgId: user.orgId,
+      container: "events",
       kind: "conversation_summary",
       content: workingMetadata.summary,
       signalId,

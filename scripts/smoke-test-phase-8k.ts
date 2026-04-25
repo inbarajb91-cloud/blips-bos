@@ -206,6 +206,7 @@ async function main() {
     const start = Date.now();
     const result = await backend.remember({
       orgId: org.id,
+      container: "test", // ISOLATED test container — never visible to production recall
       kind: w.kind,
       content: w.content,
       metadata: w.metadata,
@@ -232,6 +233,7 @@ async function main() {
 
   const priorHits = await backend.recall("career vs biology tension", {
     orgId: org.id,
+    container: "test", // prior smoke test wrote to test container
     limit: 5,
   });
   if (priorHits.length > 0) {
@@ -262,11 +264,13 @@ async function main() {
 
   const decisionHits = await backend.recall("smoke test", {
     orgId: org.id,
+    container: "test",
     kind: "decision",
     limit: 10,
   });
   const allHits = await backend.recall("smoke test", {
     orgId: org.id,
+    container: "test",
     limit: 10,
   });
 
