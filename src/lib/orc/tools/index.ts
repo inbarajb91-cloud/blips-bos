@@ -2,6 +2,7 @@ import type { OrcToolContext } from "./types";
 import { getFullSignalField } from "./get-full-signal-field";
 import { getStageOutput } from "./get-stage-output";
 import { searchCollection } from "./search-collection";
+import { recall } from "./recall";
 import { flagConcern } from "./flag-concern";
 import { requestReRun } from "./request-re-run";
 import { dismissSignal } from "./dismiss";
@@ -26,6 +27,7 @@ export function buildOrcTools(ctx: OrcToolContext) {
     get_full_signal_field: getFullSignalField(ctx),
     get_stage_output: getStageOutput(ctx),
     search_collection: searchCollection(ctx),
+    recall: recall(ctx),
     flag_concern: flagConcern(ctx),
     request_re_run: requestReRun(ctx),
     approve_and_advance: approveAndAdvance(ctx),

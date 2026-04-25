@@ -1,7 +1,8 @@
 import { tool } from "ai";
 import { z } from "zod";
 import { and, desc, eq } from "drizzle-orm";
-import { db, agentOutputs, decisionHistory } from "@/db";
+import { db, agentOutputs, decisionHistory, signals } from "@/db";
+import { getMemoryBackend } from "@/lib/orc/memory";
 import type { OrcToolContext } from "./types";
 
 /**
@@ -66,6 +67,21 @@ export function approveAndAdvance(ctx: OrcToolContext) {
         };
       }
 
+      // Load signal context once — used by both decision_history (for
+      // the in-DB trail) and the memory write below (for cross-signal
+      // pattern recall later).
+      const [signalRow] = await db
+        .select({
+          shortcode: signals.shortcode,
+          workingTitle: signals.workingTitle,
+          concept: signals.concept,
+        })
+        .from(signals)
+        .where(
+          and(eq(signals.id, ctx.signalId), eq(signals.orgId, ctx.orgId)),
+        )
+        .limit(1);
+
       await db.transaction(async (tx) => {
         await tx
           .update(agentOutputs)
@@ -86,6 +102,29 @@ export function approveAndAdvance(ctx: OrcToolContext) {
           decidedBy: ctx.userId,
         });
       });
+
+      // Memory write — Phase 8K hook. Runs AFTER the transaction so a
+      // memory backend hiccup never rolls back the approval. The
+      // wrapper swallows errors internally (returns {id:''}) so this
+      // call is best-effort by design.
+      if (signalRow) {
+        const memory = await getMemoryBackend();
+        await memory.remember({
+          orgId: ctx.orgId,
+          kind: "decision",
+          content:
+            `Approved ${pending.agentName} output on signal ${signalRow.shortcode} "${signalRow.workingTitle}". ` +
+            `Concept: ${signalRow.concept ?? "(none yet)"}. ` +
+            `Reason: ${reason ?? "(no reason given)"}.`,
+          signalId: ctx.signalId,
+          journeyId: ctx.journeyId,
+          metadata: {
+            decision: "approved",
+            stage: pending.agentName,
+            shortcode: signalRow.shortcode,
+          },
+        });
+      }
 
       // Phase 9+ will fire the next-stage Inngest event here.
       // For Phase 8, marking the approval is enough — no downstream

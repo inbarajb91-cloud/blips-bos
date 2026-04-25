@@ -22,6 +22,7 @@ import { buildCachedMessages, providerFor } from "@/lib/ai/cache";
 import { streamOrcReply } from "@/lib/ai/stream";
 import { getAgentConfig } from "@/lib/ai/config-reader";
 import { summarizeConversation } from "@/lib/orc/summarize";
+import { getMemoryBackend } from "@/lib/orc/memory";
 
 /**
  * POST /api/orc/reply — ORC's conversational reply endpoint.
@@ -187,45 +188,83 @@ export async function POST(req: Request) {
       { status: 413 },
     );
   }
-  if (context.needsSummarization) {
-    // Phase 8F — inline summarization. Folds the six oldest
-    // unsummarized messages into the rolling summary, advances
-    // summary_through_index, writes back to agent_conversations.
-    // We then rebuild the context with the new metadata so the
-    // current turn ships with the compressed prefix.
+  // Phase 8F + bugfix 2026-04-25 — inline summarization with bounded
+  // loop. Each pass folds the six oldest unsummarized messages into
+  // the rolling summary and advances summary_through_index. We re-run
+  // until the context no longer needs summarization OR we hit the
+  // pass cap, whichever comes first.
+  //
+  // Why a loop, not a single pass: if a burst of 20+ messages arrived
+  // before the previous turn's summarization caught up, one pass only
+  // moves 6 → leaves 14+ unsummarized → the count trigger still fires
+  // → without a loop the second batch would silently drop on render.
+  //
+  // Cap of 3 passes folds up to 18 messages per turn. Each pass costs
+  // ~$0.00005 on Flash, so a worst-case loop is ~$0.00015 — bounded
+  // both in latency and dollars.
+  const MAX_SUMMARY_PASSES = 3;
+  let workingMetadata = metadata;
+  let summaryPasses = 0;
+  while (context.needsSummarization && summaryPasses < MAX_SUMMARY_PASSES) {
     const summaryResult = await summarizeConversation({
       conversationId: conversation.id,
       orgId: user.orgId,
       signalId,
       journeyId: activeJourney.id,
       messages,
-      metadata,
+      metadata: workingMetadata,
     });
+    workingMetadata = summaryResult.metadata;
 
     // Rebuild context with the updated metadata (summary +
     // summary_through_index changed; messages list unchanged).
     context = buildOrcPromptContext({
       signal: signal as typeof signalsTable.$inferSelect,
       messages,
-      metadata: summaryResult.metadata,
+      metadata: workingMetadata,
       currentUserMessage: userMessage,
       activeStage: stage as StageKey,
     });
 
-    // If still over budget after summarization, surface as 413.
-    // Rare case: user's current message itself is huge, or the
-    // summary grew beyond its cap.
-    if (context.overBudgetAfterSummarization || !context.budget.ok) {
-      return NextResponse.json(
-        {
-          error: "Conversation too long even after summarization",
-          detail:
-            "Your current message or the compressed history still exceeds the per-turn budget. Try a shorter message, or start a fresh signal workspace.",
-          tokenEstimate: context.tokenEstimate,
-        },
-        { status: 413 },
-      );
-    }
+    summaryPasses++;
+  }
+
+  // If still over budget after all summarization attempts, surface
+  // as 413. Rare cases: current message itself is huge, summary
+  // grew beyond its cap, or the user blew past 18 messages of burst
+  // in a single turn (which the cap deliberately doesn't fully
+  // handle — that's an "abuse" path, not a normal one).
+  if (context.overBudgetAfterSummarization || !context.budget.ok) {
+    return NextResponse.json(
+      {
+        error: "Conversation too long even after summarization",
+        detail:
+          "Your current message or the compressed history still exceeds the per-turn budget. Try a shorter message, or start a fresh signal workspace.",
+        tokenEstimate: context.tokenEstimate,
+      },
+      { status: 413 },
+    );
+  }
+
+  // Phase 8K hook — if we just summarised this turn, persist the
+  // FINAL summary into long-term memory so it's recallable across
+  // signals and sessions. We only write on the last pass (after the
+  // loop) to avoid 2-3× memory writes per turn when multiple passes
+  // fire. Wrapper swallows errors so this is best-effort.
+  if (summaryPasses > 0 && workingMetadata.summary) {
+    const memory = await getMemoryBackend();
+    await memory.remember({
+      orgId: user.orgId,
+      kind: "conversation_summary",
+      content: workingMetadata.summary,
+      signalId,
+      journeyId: activeJourney.id,
+      metadata: {
+        coversThroughIndex:
+          workingMetadata.summary_through_index ?? 0,
+        signalShortcode: signal.shortcode,
+      },
+    });
   }
 
   // Assemble the stable prefix (cached portion) from the three parts

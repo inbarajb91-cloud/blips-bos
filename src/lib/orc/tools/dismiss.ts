@@ -2,6 +2,7 @@ import { tool } from "ai";
 import { z } from "zod";
 import { and, eq } from "drizzle-orm";
 import { db, signals, decisionHistory } from "@/db";
+import { getMemoryBackend } from "@/lib/orc/memory";
 import type { OrcToolContext } from "./types";
 
 /**
@@ -32,6 +33,22 @@ export function dismissSignal(ctx: OrcToolContext) {
         ),
     }),
     execute: async ({ reason }) => {
+      // Load signal context BEFORE the transaction so we have it for
+      // both the decision_history trail and the memory write. Doing
+      // this outside the transaction is fine — the row is read-only
+      // here and the transaction below writes its own copy.
+      const [signalRow] = await db
+        .select({
+          shortcode: signals.shortcode,
+          workingTitle: signals.workingTitle,
+          concept: signals.concept,
+        })
+        .from(signals)
+        .where(
+          and(eq(signals.id, ctx.signalId), eq(signals.orgId, ctx.orgId)),
+        )
+        .limit(1);
+
       // Atomic: update signal status + write decision_history in one
       // transaction. Either both land or neither does.
       await db.transaction(async (tx) => {
@@ -59,6 +76,27 @@ export function dismissSignal(ctx: OrcToolContext) {
           decidedBy: ctx.userId,
         });
       });
+
+      // Memory write — Phase 8K hook. Runs AFTER the transaction so a
+      // memory backend hiccup never rolls back the dismissal. The
+      // wrapper swallows errors so this call is best-effort by design.
+      if (signalRow) {
+        const memory = await getMemoryBackend();
+        await memory.remember({
+          orgId: ctx.orgId,
+          kind: "decision",
+          content:
+            `Dismissed signal ${signalRow.shortcode} "${signalRow.workingTitle}". ` +
+            `Concept: ${signalRow.concept ?? "(none)"}. ` +
+            `Reason: ${reason}.`,
+          signalId: ctx.signalId,
+          journeyId: ctx.journeyId,
+          metadata: {
+            decision: "dismissed",
+            shortcode: signalRow.shortcode,
+          },
+        });
+      }
 
       return {
         success: true as const,

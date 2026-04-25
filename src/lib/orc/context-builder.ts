@@ -32,10 +32,28 @@ import {
  */
 
 /**
- * Per-turn verbatim target. Six messages = 3 user + 3 ORC or similar
- * mix. Older messages compress into the rolling summary.
+ * Soft target for how many recent messages live in the verbatim block.
+ * Ten messages ≈ five user + five ORC turns. When the unsummarized
+ * count exceeds this window, summarization fires (see
+ * needsSummarization below) and the six oldest get folded into the
+ * rolling summary.
+ *
+ * Bumped from 6 → 10 on 2026-04-25 alongside the compression-trigger
+ * fix. Six was tuned for token pressure that never actually
+ * materialized at normal chat scale, and it was leaving Inba with
+ * "ORC only remembers three messages" because count-based compression
+ * wasn't firing.
  */
-export const VERBATIM_WINDOW = 6;
+export const VERBATIM_WINDOW = 10;
+
+/**
+ * Hard cap on how many unsummarized messages are ever shipped
+ * verbatim. Safety valve for bursts that arrive faster than
+ * summarization can keep up. If we hit it, the token-budget check
+ * will trigger another summarization pass on the next turn (and
+ * /api/orc/reply runs up to 3 passes per turn anyway).
+ */
+export const VERBATIM_HARD_CAP = 16;
 
 /**
  * Per-message hard cap on verbatim content. If a user pasted a wall
@@ -148,8 +166,17 @@ export function trimMessageForVerbatim(msg: Message): Message {
 
 /**
  * Pick the verbatim window out of the full message list. Starts at
- * `summary_through_index` if a rolling summary exists; otherwise
- * takes the last VERBATIM_WINDOW messages.
+ * `summary_through_index` (the boundary the rolling summary covers
+ * up to) and takes everything after it, capped by VERBATIM_HARD_CAP
+ * for token safety.
+ *
+ * Note: we deliberately use VERBATIM_HARD_CAP here, not the soft
+ * VERBATIM_WINDOW. The window is the *trigger* for compression
+ * (see needsSummarization below); the cap is the *safety valve* in
+ * case a burst of messages arrives before compression has caught up.
+ * Using the soft window here was the bug that made ORC silently
+ * forget anything older than the last 6 messages even when the
+ * summary hadn't run.
  */
 export function pickVerbatimWindow(
   messages: readonly Message[],
@@ -157,7 +184,7 @@ export function pickVerbatimWindow(
 ): Message[] {
   const from = metadata.summary_through_index ?? 0;
   const pool = messages.slice(from);
-  return pool.slice(-VERBATIM_WINDOW).map(trimMessageForVerbatim);
+  return pool.slice(-VERBATIM_HARD_CAP).map(trimMessageForVerbatim);
 }
 
 export interface BuildOrcPromptContextParams {
@@ -207,16 +234,24 @@ export function buildOrcPromptContext(
 
   const budget = checkBudget(tokenEstimate);
 
-  // Summarization is the right response when:
-  //   - the verbatim window itself has busted its cap (we can compress
-  //     older verbatim messages into the summary and drop them from
-  //     the window)
-  //   - OR the total budget is busted AND we have enough verbatim
-  //     messages to move some into the summary
+  // Summarization fires when ANY of:
+  //   - verbatim tokens exceed their bucket (compress to free space)
+  //   - total budget exceeds its cap
+  //   - unsummarized message COUNT exceeds the soft VERBATIM_WINDOW
+  //     (this is the trigger that catches normal-scale chat where
+  //     individual messages are short so tokens stay low, but turns
+  //     accumulate. Without it, anything past VERBATIM_HARD_CAP would
+  //     silently drop. Bugfix 2026-04-25.)
+  // …and there are enough unsummarized messages to actually move some
+  // into the summary (at least 3, so we always leave 2+ in verbatim).
+  const unsummarizedCount =
+    messages.length - (metadata.summary_through_index ?? 0);
   const verbatimBreach = tokenEstimate.verbatim > ORC_BUDGET.verbatim;
   const totalBreach = budget.breaches.includes("total_input");
-  const canCompress = messages.length - (metadata.summary_through_index ?? 0) > 2;
-  const needsSummarization = (verbatimBreach || totalBreach) && canCompress;
+  const overCountCap = unsummarizedCount > VERBATIM_WINDOW;
+  const canCompress = unsummarizedCount > 2;
+  const needsSummarization =
+    (verbatimBreach || totalBreach || overCountCap) && canCompress;
 
   // If summarization wouldn't help (e.g. system+brand+signal alone
   // busts the cap, or a single message is huge after trim), surface
