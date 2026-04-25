@@ -269,7 +269,7 @@ async function main() {
       AND (shortcode = ${base} OR shortcode LIKE ${base + "-%"})
   `);
   const taken = new Set(
-    (rows as Array<{ shortcode: string }>).map((r) => r.shortcode),
+    (rows as unknown as Array<{ shortcode: string }>).map((r) => r.shortcode),
   );
   let resolved: string;
   if (!taken.has(base)) {
@@ -295,7 +295,9 @@ async function main() {
       AND (shortcode = ${uniqueBase} OR shortcode LIKE ${uniqueBase + "-%"})
   `);
   const uniqueTaken = new Set(
-    (uniqueRows as Array<{ shortcode: string }>).map((r) => r.shortcode),
+    (uniqueRows as unknown as Array<{ shortcode: string }>).map(
+      (r) => r.shortcode,
+    ),
   );
   record(
     "E10",
