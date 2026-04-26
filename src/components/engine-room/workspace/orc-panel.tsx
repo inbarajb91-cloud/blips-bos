@@ -53,26 +53,41 @@ export function OrcPanel({
   const [inputValue, setInputValue] = useState("");
   const [sendError, setSendError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
-  // Chips per ORC message, keyed by message timestamp (ts is unique
-  // per message in this conversation). Pre-CodeRabbit-pass-1, this
-  // was keyed by numeric index — unsafe because:
-  //   - the signal-change useEffect reloads a different conversation
-  //     and existing chips would render under the new conversation's
-  //     messages at the same index
-  //   - the failure-rollback below removes the streaming placeholder,
-  //     shifting the array and orphaning chips under the wrong row
-  // Ephemeral by design (cleared on refresh since they live only in
-  // the streaming session's memory; Phase 8.5+ can persist to
-  // agent_logs and reconstruct on conversation load).
-  const [chipsByTs, setChipsByTs] = useState<Record<string, OrcChip[]>>({});
+  // Chips per streaming ORC message, keyed by a per-call UUID
+  // generated client-side (see `orcClientId` in handleSend). Pre-
+  // CodeRabbit-pass-3 we keyed by message timestamp, but two
+  // `new Date().toISOString()` calls in the same handleSend can
+  // produce identical strings within one millisecond — so the
+  // optimistic user row and streaming ORC row could share a key
+  // and the chip cleanup could remove the wrong mapping. Per-call
+  // UUIDs sidestep that entirely.
+  //
+  // Persisted messages (loaded from agent_conversations on signal
+  // mount) don't carry a clientId, so lookups for them fall through
+  // to undefined → no chips rendered. That's correct: chips are
+  // ephemeral session-only state, persisted messages never had any.
+  //
+  // Phase 8.5+ can persist chips to agent_logs and reconstruct on
+  // conversation load; for now they live only in this React state.
+  const [chipsByClientId, setChipsByClientId] = useState<
+    Record<string, OrcChip[]>
+  >({});
   // AbortController for the in-flight /api/orc/reply request.
   // Pre-CodeRabbit-pass-2, switching signals mid-stream left the
   // previous fetch alive; its consumeStream callbacks would keep
-  // calling setMessages/setChipsByTs and write into the NEW
+  // calling setMessages/setChipsByClientId and write into the NEW
   // conversation at the old orcIdx. Now we abort on signal change
   // (and on subsequent send), which causes consumeStream to throw
   // AbortError — the catch ignores AbortError so no UI noise.
   const abortRef = useRef<AbortController | null>(null);
+  // Latest signal.id stored in a ref so async callbacks (the recovery
+  // reload after a pre-stream failure) can compare what the user is
+  // currently viewing against what they were viewing when the failure
+  // happened. Updated during render — refs are React-safe to write
+  // during render as long as the value is derived from props/state.
+  // CodeRabbit pass 3.
+  const currentSignalIdRef = useRef(signal.id);
+  currentSignalIdRef.current = signal.id;
 
   // Load conversation on mount + when the signal changes (user navigates
   // to a different signal, the panel reloads with that signal's thread).
@@ -86,9 +101,9 @@ export function OrcPanel({
     // thread while the swap is in flight.
     setConversationId(null);
     // Clear chip state — chips from the previous signal's conversation
-    // would otherwise live in memory and could collide with new
-    // messages that happen to share a timestamp.
-    setChipsByTs({});
+    // would otherwise live in memory; they're ephemeral session-state
+    // and don't apply across signals.
+    setChipsByClientId({});
     // Abort any in-flight /api/orc/reply for the previous signal so
     // its callbacks can't write into the new conversation.
     if (abortRef.current) {
@@ -134,17 +149,26 @@ export function OrcPanel({
       stage: activeStage as StageKey,
     };
 
+    // Per-call client ID for the streaming ORC message — used as the
+    // chip key. crypto.randomUUID is collision-safe (vs. ts which
+    // can repeat within a millisecond when the optimistic user row
+    // and streaming ORC row are minted back-to-back). The renderer
+    // reads this off the message via `msg as Message & { clientId? }`
+    // and falls back to undefined (no chips) for persisted messages.
+    const orcClientId = crypto.randomUUID();
+
     // Placeholder ORC "typing" message — starts empty, grows as
-    // tokens stream in. The `streaming` flag lives in a client-only
-    // intersection type; the stored `Message` schema stays clean.
-    // We cast back to the base Message for the array push, and the
-    // renderer reads the flag via `msg as Message & { streaming? }`.
+    // tokens stream in. The `streaming` flag and `clientId` live in
+    // a client-only intersection type; the stored `Message` schema
+    // stays clean. We cast back to the base Message for the array
+    // push, and the renderer reads them via the intersection cast.
     const streamingOrc = {
       role: "orc",
       content: "",
       ts: new Date().toISOString(),
       streaming: true,
-    } as Message & { streaming: boolean };
+      clientId: orcClientId,
+    } as Message & { streaming: boolean; clientId: string };
 
     const prevMessages = messages ?? [];
     const withPlaceholder = [...prevMessages, optimisticUser, streamingOrc];
@@ -154,11 +178,6 @@ export function OrcPanel({
     // Index of the streaming ORC message — we'll mutate this slot
     // in the messages array as tokens arrive.
     const orcIdx = withPlaceholder.length - 1;
-    // Stable key for chip association. Using the streaming message's
-    // ts (set above when streamingOrc was constructed) means chips
-    // stay attached to THIS specific message even if the array shifts
-    // around (e.g. failure removes the placeholder).
-    const orcTs = streamingOrc.ts;
 
     // Abort any prior in-flight request before starting this one.
     // Then create a fresh controller for THIS request and store it
@@ -226,12 +245,12 @@ export function OrcPanel({
           },
           (chip) => {
             // Chip from flag_concern / request_re_run. Attach to the
-            // current streaming ORC message by ts (stable key) so it
-            // renders below the reply text and stays correct even if
-            // the array shifts later.
-            setChipsByTs((curr) => ({
+            // current streaming ORC message by its per-call clientId
+            // (collision-safe key) so it renders below the reply text
+            // and stays correct even if the array shifts later.
+            setChipsByClientId((curr) => ({
               ...curr,
-              [orcTs]: [...(curr[orcTs] ?? []), chip],
+              [orcClientId]: [...(curr[orcClientId] ?? []), chip],
             }));
           },
         );
@@ -271,11 +290,11 @@ export function OrcPanel({
           return curr;
         });
         // Drop any chips that were attached to the failed placeholder
-        // — its ts won't be referenced anywhere now, so they'd just
-        // leak in memory.
-        setChipsByTs((curr) => {
-          if (!(orcTs in curr)) return curr;
-          const { [orcTs]: _dropped, ...rest } = curr;
+        // — its clientId won't be referenced anywhere now, so they'd
+        // just leak in memory.
+        setChipsByClientId((curr) => {
+          if (!(orcClientId in curr)) return curr;
+          const { [orcClientId]: _dropped, ...rest } = curr;
           void _dropped;
           return rest;
         });
@@ -284,13 +303,27 @@ export function OrcPanel({
         // Re-fetch the conversation so UI matches server reality
         // — drops the optimistic user row when the server didn't
         // commit it, keeps it when it did.
+        // CodeRabbit pass 3: capture signal.id at failure time and
+        // re-check against currentSignalIdRef before applying. If the
+        // user switches signals between failure and reload completion,
+        // applying the old conversation would clobber the new signal's
+        // thread (race window of ~50-200ms in practice).
         if (failedPreStream) {
-          getOrCreateOrcConversation(signal.id)
+          const signalIdAtFailure = signal.id;
+          getOrCreateOrcConversation(signalIdAtFailure)
             .then((convo) => {
+              if (currentSignalIdRef.current !== signalIdAtFailure) {
+                // User switched signals; the new signal's mount
+                // useEffect will load its own conversation. Drop ours.
+                return;
+              }
               setMessages(convo.messages);
             })
             .catch((reloadErr: Error) => {
-              console.error("Conversation reload after failure failed:", reloadErr);
+              console.error(
+                "Conversation reload after failure failed:",
+                reloadErr,
+              );
               // Best-effort: keep whatever local state is there. The
               // user can refresh manually if it really matters.
             });
@@ -345,13 +378,21 @@ export function OrcPanel({
             No messages yet. Say something to ORC below.
           </div>
         ) : (
-          messages.map((msg, i) => (
-            <MessageRow
-              key={`${msg.ts}-${i}`}
-              msg={msg}
-              chips={chipsByTs[msg.ts]}
-            />
-          ))
+          messages.map((msg, i) => {
+            // clientId only present on the streaming ORC placeholder
+            // (set in handleSend). Persisted messages don't have one,
+            // so the lookup falls through to undefined → no chips,
+            // which is correct since chips are ephemeral session state.
+            const clientId = (msg as Message & { clientId?: string })
+              .clientId;
+            return (
+              <MessageRow
+                key={`${msg.ts}-${i}`}
+                msg={msg}
+                chips={clientId ? chipsByClientId[clientId] : undefined}
+              />
+            );
+          })
         )}
       </div>
 
