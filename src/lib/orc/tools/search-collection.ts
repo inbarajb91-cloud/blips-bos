@@ -58,7 +58,17 @@ export function searchCollection(ctx: OrcToolContext) {
       // case-insensitive matching. The leading/trailing % wildcards
       // accept the query anywhere in the field. Not a performance
       // concern at BLIPS scale (hundreds of signals).
-      const pattern = `%${query}%`;
+      //
+      // Escape ILIKE wildcard chars in the user-provided query so
+      // inputs like "100% cotton" or "foo_bar" match literally instead
+      // of being interpreted as pattern syntax. Order matters: escape
+      // the backslash first so we don't double-escape the % and _ we
+      // add right after.
+      const escapedQuery = query
+        .replace(/\\/g, "\\\\")
+        .replace(/%/g, "\\%")
+        .replace(/_/g, "\\_");
+      const pattern = `%${escapedQuery}%`;
       const rows = await db
         .select({
           id: signals.id,

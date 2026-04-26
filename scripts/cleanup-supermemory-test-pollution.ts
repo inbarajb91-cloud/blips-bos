@@ -62,17 +62,54 @@ async function main() {
 
   console.log(`Listing documents in containerTag=${containerTag}…\n`);
 
-  // List docs with content included so we can pattern-match.
+  // Paginate through ALL documents — pre-CodeRabbit-pass-1 we only
+  // fetched page 1 (limit:100), which means once production grows past
+  // 100 docs the cleanup misses test artifacts on page 2+ and falsely
+  // reports "clean." documents.list returns { memories, pagination:
+  // { currentPage, totalPages, totalItems } }. Loop until we've
+  // visited every page.
   // Note: containerTags is the deprecated array param but it's what
   // documents.list still accepts at v4.21 — verified in node_modules.
-  const listResp = await client.documents.list({
-    containerTags: [containerTag],
-    includeContent: true,
-    limit: 100,
-  } as Parameters<typeof client.documents.list>[0]);
+  type ListResp = {
+    memories?: Array<{
+      id: string;
+      title?: string | null;
+      content?: string | null;
+      metadata?: unknown;
+    }>;
+    pagination?: {
+      currentPage?: number;
+      totalPages?: number;
+      totalItems?: number;
+    };
+  };
 
-  const docs = (listResp as { memories?: Array<{ id: string; title?: string | null; content?: string | null; metadata?: unknown }> }).memories ?? [];
-  console.log(`Found ${docs.length} document(s) in production tag.\n`);
+  type DocRow = {
+    id: string;
+    title?: string | null;
+    content?: string | null;
+    metadata?: unknown;
+  };
+
+  const docs: DocRow[] = [];
+  let page = 1;
+  while (true) {
+    const listResp = (await client.documents.list({
+      containerTags: [containerTag],
+      includeContent: true,
+      limit: 100,
+      page,
+    } as Parameters<typeof client.documents.list>[0])) as ListResp;
+    const pageDocs = listResp.memories ?? [];
+    docs.push(...pageDocs);
+    const totalPages = listResp.pagination?.totalPages ?? 1;
+    if (page >= totalPages || pageDocs.length === 0) break;
+    page++;
+  }
+
+  console.log(
+    `Found ${docs.length} document(s) in production tag (across ${page} page(s)).\n`,
+  );
 
   const toDelete: { id: string; title: string }[] = [];
   for (const d of docs) {
