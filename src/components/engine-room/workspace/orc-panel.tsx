@@ -104,6 +104,12 @@ export function OrcPanel({
     // would otherwise live in memory; they're ephemeral session-state
     // and don't apply across signals.
     setChipsByClientId({});
+    // Clear composer state — a draft typed on the previous signal
+    // shouldn't follow the user to the next signal (CodeRabbit pass 5).
+    // Same for sendError: an error from the previous thread is
+    // misleading on a fresh signal.
+    setInputValue("");
+    setSendError(null);
     // Abort any in-flight /api/orc/reply for the previous signal so
     // its callbacks can't write into the new conversation.
     if (abortRef.current) {
