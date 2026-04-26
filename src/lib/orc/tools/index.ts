@@ -21,6 +21,19 @@ import { approveAndAdvance } from "./approve-and-advance";
  * in tool calls. Keep them snake_case and match the names declared in
  * the ORC system prompt — the prompt lists them verbatim and the
  * model uses that list to know what's available.
+ *
+ * **Destructive tools (approve_and_advance, dismiss) are conditionally
+ * included only when `ctx.allowMutation` is true.** This is computed
+ * server-side by `/api/orc/reply` from regex intent detection on the
+ * user's current message — defense-in-depth against prompt injection
+ * (CodeRabbit pass 1, Critical 3). The system prompt is not a
+ * sufficient gate alone: adversarial text in a signal's raw_text or
+ * a recalled memory could in principle override ORC's instruction to
+ * "only call after Inba's explicit word." With this flag, those tools
+ * literally aren't in the LLM's tool set unless the user said an
+ * approve/dismiss word in this turn. The static system prompt still
+ * lists them so ORC understands they exist; the runtime binding is
+ * what determines what's actually callable.
  */
 export function buildOrcTools(ctx: OrcToolContext) {
   return {
@@ -30,8 +43,10 @@ export function buildOrcTools(ctx: OrcToolContext) {
     recall: recall(ctx),
     flag_concern: flagConcern(ctx),
     request_re_run: requestReRun(ctx),
-    approve_and_advance: approveAndAdvance(ctx),
-    dismiss: dismissSignal(ctx),
+    ...(ctx.allowMutation && {
+      approve_and_advance: approveAndAdvance(ctx),
+      dismiss: dismissSignal(ctx),
+    }),
   };
 }
 

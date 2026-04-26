@@ -16,6 +16,15 @@ export interface OrcToolContext {
   /** The signal's currently-active journey. Every tool call scopes to
    *  this journey so archived journeys stay read-only from ORC's side. */
   journeyId: string;
+  /** When true, destructive tools (approve_and_advance, dismiss) are
+   *  included in the tool set returned by buildOrcTools. Computed
+   *  server-side by /api/orc/reply based on regex intent detection in
+   *  the user's current message — defense-in-depth against prompt
+   *  injection routing through ORC's tool calls. The system prompt
+   *  alone isn't a sufficient gate for irreversible state changes;
+   *  this server-side flag is the second layer that prompt-injection
+   *  text in raw signals or recall content can't bypass. */
+  allowMutation: boolean;
 }
 
 /**
