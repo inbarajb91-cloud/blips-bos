@@ -26,8 +26,12 @@ export function searchCollection(ctx: OrcToolContext) {
     description:
       "Search signals in the same collection as the current signal for ones matching a query. Useful when Inba asks 'have we seen this before?' or 'how does this relate to the other signals in this collection?'. Returns up to 8 matching signals with shortcode, title, concept. Use short, specific queries (3-8 words).",
     inputSchema: z.object({
+      // .trim() runs before length validation so whitespace-only
+      // inputs like "   " are rejected by .min(3) instead of slipping
+      // through to build a noisy "%   %" pattern (CodeRabbit pass 2).
       query: z
         .string()
+        .trim()
         .min(3)
         .max(200)
         .describe("Keywords or short phrase to match against signals"),

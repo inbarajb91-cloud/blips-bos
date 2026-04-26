@@ -65,6 +65,14 @@ export function OrcPanel({
   // the streaming session's memory; Phase 8.5+ can persist to
   // agent_logs and reconstruct on conversation load).
   const [chipsByTs, setChipsByTs] = useState<Record<string, OrcChip[]>>({});
+  // AbortController for the in-flight /api/orc/reply request.
+  // Pre-CodeRabbit-pass-2, switching signals mid-stream left the
+  // previous fetch alive; its consumeStream callbacks would keep
+  // calling setMessages/setChipsByTs and write into the NEW
+  // conversation at the old orcIdx. Now we abort on signal change
+  // (and on subsequent send), which causes consumeStream to throw
+  // AbortError — the catch ignores AbortError so no UI noise.
+  const abortRef = useRef<AbortController | null>(null);
 
   // Load conversation on mount + when the signal changes (user navigates
   // to a different signal, the panel reloads with that signal's thread).
@@ -72,10 +80,21 @@ export function OrcPanel({
     let cancelled = false;
     setMessages(null);
     setLoadError(null);
+    // Reset conversationId to disable the Send button until the new
+    // signal's conversation has loaded — prevents the user (or the
+    // optimistic-UI path) from sending into the previous signal's
+    // thread while the swap is in flight.
+    setConversationId(null);
     // Clear chip state — chips from the previous signal's conversation
     // would otherwise live in memory and could collide with new
     // messages that happen to share a timestamp.
     setChipsByTs({});
+    // Abort any in-flight /api/orc/reply for the previous signal so
+    // its callbacks can't write into the new conversation.
+    if (abortRef.current) {
+      abortRef.current.abort();
+      abortRef.current = null;
+    }
     getOrCreateOrcConversation(signal.id)
       .then((convo) => {
         if (cancelled) return;
@@ -141,6 +160,23 @@ export function OrcPanel({
     // around (e.g. failure removes the placeholder).
     const orcTs = streamingOrc.ts;
 
+    // Abort any prior in-flight request before starting this one.
+    // Then create a fresh controller for THIS request and store it
+    // so the signal-change useEffect (or a subsequent send) can
+    // abort it.
+    if (abortRef.current) abortRef.current.abort();
+    const ac = new AbortController();
+    abortRef.current = ac;
+
+    // Track whether the failure happened BEFORE the stream started
+    // (response.ok=false) vs AFTER persistence began. Pre-stream
+    // failures may or may not have persisted the user message
+    // server-side (429 doesn't, 413 does), so on those we re-fetch
+    // the conversation to sync UI with server reality. Post-stream
+    // failures: the user message IS persisted, so we keep the
+    // optimistic row and just drop the streaming placeholder.
+    let failedPreStream = false;
+
     startTransition(async () => {
       try {
         const response = await fetch("/api/orc/reply", {
@@ -151,11 +187,13 @@ export function OrcPanel({
             userMessage: text,
             stage: activeStage,
           }),
+          signal: ac.signal,
         });
 
         if (!response.ok) {
           // Structured error from the route (413, 429, etc.) — body
           // is JSON with a detail field.
+          failedPreStream = true;
           const err = (await response.json().catch(() => null)) as {
             detail?: string;
             error?: string;
@@ -166,6 +204,7 @@ export function OrcPanel({
         }
 
         if (!response.body) {
+          failedPreStream = true;
           throw new Error("No stream returned from server.");
         }
 
@@ -210,15 +249,19 @@ export function OrcPanel({
           return next;
         });
       } catch (e) {
+        // AbortError = caller deliberately cancelled (signal change
+        // or a fresh send superseded this one). Don't show an error
+        // or rollback — the new context is already taking over.
+        if (e instanceof Error && e.name === "AbortError") {
+          return;
+        }
         console.error("ORC reply failed:", e);
         setSendError(
           e instanceof Error ? e.message : "Something went wrong.",
         );
-        // Remove the streaming ORC placeholder (keep the user message
-        // — it's already persisted server-side).
+        // Always drop the streaming ORC placeholder.
         setMessages((curr) => {
           if (!curr) return curr;
-          // Drop the last message if it's the streaming placeholder.
           const last = curr[curr.length - 1] as Message & {
             streaming?: boolean;
           } | undefined;
@@ -236,6 +279,29 @@ export function OrcPanel({
           void _dropped;
           return rest;
         });
+        // Pre-stream failure: server may or may not have persisted
+        // the user message (429 doesn't, 404 doesn't, 413 does, ...).
+        // Re-fetch the conversation so UI matches server reality
+        // — drops the optimistic user row when the server didn't
+        // commit it, keeps it when it did.
+        if (failedPreStream) {
+          getOrCreateOrcConversation(signal.id)
+            .then((convo) => {
+              setMessages(convo.messages);
+            })
+            .catch((reloadErr: Error) => {
+              console.error("Conversation reload after failure failed:", reloadErr);
+              // Best-effort: keep whatever local state is there. The
+              // user can refresh manually if it really matters.
+            });
+        }
+      } finally {
+        // Clear the abort ref only if it's still pointing at OUR
+        // controller — a concurrent send may have already replaced
+        // it with theirs.
+        if (abortRef.current === ac) {
+          abortRef.current = null;
+        }
       }
     });
   }
