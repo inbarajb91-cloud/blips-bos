@@ -87,18 +87,26 @@ async function main() {
   const [org] = await db.select().from(orgs).where(eq(orgs.slug, "blips"));
   if (!org) throw new Error("BLIPS org missing");
 
-  // Find a real signal to use as fixture (LEDGR if present, else first)
+  // E3 specifically validates against the LEDGR signal (real-world
+  // shape that tripped the production 413 bug). Pre-CodeRabbit-pass-2,
+  // we silently fell back to the first signal in the DB if LEDGR was
+  // missing — which let E3 pass/fail against unrelated data and
+  // weakened the gate. Now we fail fast: if LEDGR isn't there, the
+  // eval can't validate the contract it claims to and exits 1.
   const [ledgr] = await db
     .select()
     .from(signals)
     .where(and(eq(signals.shortcode, "LEDGR"), eq(signals.orgId, org.id)))
     .limit(1);
-  const [firstSignal] = ledgr
-    ? [ledgr]
-    : await db.select().from(signals).where(eq(signals.orgId, org.id)).limit(1);
-  if (!firstSignal) throw new Error("No signals in DB to test against");
+  if (!ledgr) {
+    throw new Error(
+      "LEDGR signal not found in DB. E3 ('LEDGR-shape signal fits inside 5k') needs this exact fixture; " +
+        "either restore LEDGR or update the eval to point at the new fixture and document the change.",
+    );
+  }
+  const fixtureSignal = ledgr;
 
-  console.log(`\nUsing org=blips, signal=${firstSignal.shortcode}\n`);
+  console.log(`\nUsing org=blips, signal=${fixtureSignal.shortcode}\n`);
 
   // ────────── E1, E2 — Compression triggers ──────────
   console.log("─── COMPRESSION ───");
@@ -110,7 +118,7 @@ async function main() {
     }));
 
   const ctx5 = buildOrcPromptContext({
-    signal: firstSignal,
+    signal: fixtureSignal,
     messages: mkMessages(5),
     metadata: {},
     currentUserMessage: "test",
@@ -125,22 +133,35 @@ async function main() {
   );
 
   const ctx11 = buildOrcPromptContext({
-    signal: firstSignal,
+    signal: fixtureSignal,
     messages: mkMessages(11),
     metadata: {},
     currentUserMessage: "test",
     activeStage: "BUNKER",
   });
+  // E1b proves the COUNT-based trigger specifically — not just that
+  // needsSummarization fired. needsSummarization is an OR of three
+  // triggers (verbatimBreach || totalBreach || overCountCap), so a
+  // naive boolean check could pass for the wrong reason and miss
+  // count-path regressions. Since mkMessages produces SHORT content,
+  // the verbatim and total token buckets stay well under their caps —
+  // so if needsSummarization is true here, the count trigger must be
+  // what fired. We assert: needsSummarization=true AND no token
+  // breaches present in budget.breaches.
+  const e1bCountTriggerOnly =
+    ctx11.needsSummarization === true &&
+    !ctx11.budget.breaches.includes("verbatim") &&
+    !ctx11.budget.breaches.includes("total_input");
   record(
     "E1b",
-    "11 msgs → compression triggered (count-based)",
+    "11 msgs → COUNT-based trigger fires (token buckets uncrossed)",
     true,
-    ctx11.needsSummarization === true,
-    `needsSummarization=${ctx11.needsSummarization}`,
+    e1bCountTriggerOnly,
+    `needsSummarization=${ctx11.needsSummarization} breaches=[${ctx11.budget.breaches.join(",")}]`,
   );
 
   const ctx20 = buildOrcPromptContext({
-    signal: firstSignal,
+    signal: fixtureSignal,
     messages: mkMessages(20),
     metadata: {},
     currentUserMessage: "test",
