@@ -18,6 +18,8 @@
  *   E6  Memory wrapper: remember() returns non-empty id on valid write (test container)
  *   E7  Memory wrapper: recall() returns [] (length=0, not just any array) when no matches
  *   E8  Container isolation: prod recall does NOT see test-container writes
+ *       (waits for supermemory extraction to complete before checking,
+ *       so "no hit" is conclusive — not inconclusive due to async indexing)
  *   E9  Shortcode resolver: returns unused suffix when base is taken
  *   E10 Shortcode resolver: returns base when free
  *
@@ -274,26 +276,85 @@ async function main() {
     `isArray=${Array.isArray(noMatchHits)} length=${noMatchHits.length}`,
   );
 
-  // ────────── E8 — Container isolation ──────────
-  // Write to test container above; recall from production (default scope)
-  // should NOT see those writes. Caveat: supermemory extraction is async,
-  // so the just-written memories may not be findable for ~30-60s. We
-  // search for the EVAL stamp specifically — if it appears in production
-  // recall, that's a leak (regardless of indexing latency).
-  const prodHits = await memory.recall(evalStamp, {
+  // ────────── E8 — Container isolation (with indexing wait) ──────────
+  // Pre-CodeRabbit-pass-6, this just checked production recall
+  // immediately after writing to test container. But supermemory's
+  // async extraction takes 30-60s — so "no hit in prod" was
+  // inconclusive: the test write might just not be searchable yet,
+  // regardless of whether containers actually leak. False-pass risk.
+  //
+  // Now: write a dedicated isolation doc to test container, poll
+  // test recall until it's findable (extraction complete), THEN
+  // check production recall doesn't see it. If indexing doesn't
+  // complete within the ceiling, we fail E8 honestly rather than
+  // pass on inconclusive data. forget() in finally so we don't
+  // leave the iso doc behind even on failure.
+  const isolationStamp = `ISOLATION-${Date.now()}`;
+  const isoWrite = await memory.remember({
     orgId: org.id,
-    limit: 10,
-    // container omitted → defaults to events + knowledge (production)
+    container: "test",
+    kind: "note",
+    content:
+      `${isolationStamp}: Container isolation eval — should be findable via test recall ` +
+      `but invisible to production recall. forget() called after the assertion.`,
+    metadata: { isolationStamp, source: "phase-8-evals" },
   });
-  record(
-    "E8",
-    "Production recall does NOT see test-container writes",
-    true,
-    !prodHits.some((h) =>
-      h.content.includes(evalStamp),
-    ),
-    `prod hits matching stamp: ${prodHits.filter((h) => h.content.includes(evalStamp)).length}`,
-  );
+
+  try {
+    // Poll test container until indexing completes (max 90s).
+    let indexed = false;
+    const maxWaitMs = 90_000;
+    const pollIntervalMs = 5_000;
+    const startWait = Date.now();
+    while (Date.now() - startWait < maxWaitMs) {
+      const testHits = await memory.recall(isolationStamp, {
+        orgId: org.id,
+        container: "test",
+        limit: 5,
+      });
+      if (testHits.some((h) => h.content.includes(isolationStamp))) {
+        indexed = true;
+        break;
+      }
+      await new Promise((r) => setTimeout(r, pollIntervalMs));
+    }
+    const waitedSec = Math.round((Date.now() - startWait) / 1000);
+
+    if (!indexed) {
+      // Indexing didn't complete — can't conclusively verify isolation.
+      // Fail E8 rather than false-pass: we'd rather know a Phase 8K
+      // regression slipped through than declare a clean run we
+      // didn't actually verify.
+      record(
+        "E8",
+        "Production recall does NOT see test-container writes (post-indexing)",
+        true,
+        false,
+        `INCONCLUSIVE — test doc not indexed after ${waitedSec}s; can't verify isolation. Re-run after supermemory catches up, or raise maxWaitMs.`,
+      );
+    } else {
+      // Indexing complete — now check production recall doesn't see it.
+      const prodHits = await memory.recall(isolationStamp, {
+        orgId: org.id,
+        limit: 10,
+        // container omitted → defaults to events + knowledge (production)
+      });
+      const leaked = prodHits.filter((h) =>
+        h.content.includes(isolationStamp),
+      );
+      record(
+        "E8",
+        "Production recall does NOT see test-container writes (post-indexing)",
+        true,
+        leaked.length === 0,
+        `indexed in ${waitedSec}s; prod leaks=${leaked.length}`,
+      );
+    }
+  } finally {
+    if (isoWrite.id) {
+      await memory.forget(isoWrite.id);
+    }
+  }
 
   // ────────── S1 — Soft semantic quality check ──────────
   // Earlier sessions wrote a "career vs biology tension" memory in the

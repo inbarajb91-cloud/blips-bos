@@ -118,8 +118,11 @@ export interface MemoryHit {
   journeyId?: string;
   collectionId?: string;
   metadata?: Record<string, unknown>;
-  /** ISO 8601. */
-  createdAt: string;
+  /** ISO 8601 from the backend, or null if the backend didn't
+   *  provide one. Don't synthesize `now()` in the wrapper —
+   *  consumers should handle null honestly rather than reason about
+   *  a fake timestamp. */
+  createdAt: string | null;
 }
 
 /**

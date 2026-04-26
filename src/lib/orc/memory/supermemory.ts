@@ -73,17 +73,15 @@ export class SupermemoryBackend implements MemoryBackend {
       const container: MemoryContainer = item.container ?? "events";
       const containerTag = containerTagFor(item.orgId, container);
 
-      // Metadata values can only be primitives or string[]. We store
-      // kind + container + the various IDs as strings so we can
-      // post-filter on recall. Anything caller passed in extra
-      // metadata gets merged last but wins on key collision.
-      const metadata: Record<string, string | number | boolean | string[]> = {
-        kind: item.kind,
-        container,
-      };
-      if (item.signalId) metadata.signalId = item.signalId;
-      if (item.journeyId) metadata.journeyId = item.journeyId;
-      if (item.collectionId) metadata.collectionId = item.collectionId;
+      // Metadata values can only be primitives or string[]. We
+      // serialize caller metadata FIRST (lowest priority), then
+      // overwrite with reserved wrapper keys (kind / container /
+      // signalId / journeyId / collectionId) LAST so caller can never
+      // shadow them. Pre-CodeRabbit-pass-6 the order was reversed —
+      // a caller passing {kind: "..."} or {container: "..."} in
+      // their metadata could break recall scoping. Now those fields
+      // are wrapper invariants.
+      const metadata: Record<string, string | number | boolean | string[]> = {};
       if (item.metadata) {
         for (const [k, v] of Object.entries(item.metadata)) {
           // Coerce only the supported primitive shapes through.
@@ -102,6 +100,12 @@ export class SupermemoryBackend implements MemoryBackend {
           // else: silently drop — supermemory metadata can't hold it
         }
       }
+      // Reserved wrapper keys assigned LAST so they win on collision.
+      metadata.kind = item.kind;
+      metadata.container = container;
+      if (item.signalId) metadata.signalId = item.signalId;
+      if (item.journeyId) metadata.journeyId = item.journeyId;
+      if (item.collectionId) metadata.collectionId = item.collectionId;
 
       const result = await this.client.documents.add({
         content: item.content,
@@ -142,7 +146,15 @@ export class SupermemoryBackend implements MemoryBackend {
         ? `org-test-${scope.orgId}`
         : `org-${scope.orgId}`;
 
-      const limit = scope.limit ?? 5;
+      // Clamp limit to sane range — pre-CodeRabbit-pass-6 a caller
+      // passing 0, NaN, or a negative would silently degrade to
+      // empty recalls or send invalid fetch limits to supermemory.
+      // Default 5, floor 1, ceiling 50 (supermemory's own per-call
+      // cap). Math.floor handles any non-integer that slips through.
+      const requestedLimit = scope.limit ?? 5;
+      const limit = Number.isFinite(requestedLimit)
+        ? Math.max(1, Math.min(50, Math.floor(requestedLimit)))
+        : 5;
 
       // Over-fetch when ANY post-filter applies, so the final result
       // still has `limit` hits in most cases. Cap at 25 to stay well
@@ -220,7 +232,15 @@ export class SupermemoryBackend implements MemoryBackend {
               ? m.collectionId
               : undefined,
           metadata: m,
-          createdAt: String(r.updatedAt ?? new Date().toISOString()),
+          // Pre-CodeRabbit-pass-6 we synthesized `now()` when the
+          // backend didn't return a timestamp — that misrepresents
+          // chronology in downstream prompts/UX. Now we surface
+          // null so consumers can treat "unknown" honestly. Type
+          // updated in MemoryHit accordingly.
+          createdAt:
+            typeof r.updatedAt === "string" && r.updatedAt.length > 0
+              ? r.updatedAt
+              : null,
         };
       });
     } catch (err) {
