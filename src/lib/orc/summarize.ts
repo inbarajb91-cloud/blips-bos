@@ -126,23 +126,59 @@ export async function summarizeConversation(
     temperature: 0.3,
   });
 
-  const newMetadata: ConversationMetadata = {
-    ...params.metadata,
-    summary: result.object.summary,
-    summary_through_index: newSummaryThroughIndex,
-    summary_updated_at: new Date().toISOString(),
-  };
+  const newSummary = result.object.summary;
+  const updatedAt = new Date().toISOString();
 
-  // Write the updated metadata to the row. Using jsonb_set would be
-  // slightly cleaner here but the whole metadata object fits in a
-  // single UPDATE cleanly.
+  // Partial JSONB update — only mutate the three summary fields we
+  // own. Pre-CodeRabbit-pass-1 we wrote the whole metadata object
+  // built from a stale `params.metadata` snapshot; if another request
+  // updated `gemini_cache_name` or any other metadata field while
+  // this summarization was in flight, this write clobbered it.
+  // jsonb_set leaves untouched fields alone, so concurrent updates
+  // to other metadata keys survive.
+  //
+  // The WHERE adds a CAS check on summary_through_index — if another
+  // summarization pass landed first and advanced the index, our
+  // UPDATE matches zero rows and we skip the write rather than
+  // overwriting their summary with ours. Caller sees the unchanged
+  // metadata returned; route.ts treats this as "summary done by
+  // someone else" and proceeds.
   await db
     .update(agentConversations)
     .set({
-      metadata: newMetadata,
+      metadata: sql`
+        jsonb_set(
+          jsonb_set(
+            jsonb_set(
+              COALESCE(${agentConversations.metadata}, '{}'::jsonb),
+              '{summary}',
+              to_jsonb(${newSummary}::text)
+            ),
+            '{summary_through_index}',
+            to_jsonb(${newSummaryThroughIndex}::int)
+          ),
+          '{summary_updated_at}',
+          to_jsonb(${updatedAt}::text)
+        )
+      `,
       updatedAt: new Date(),
     })
-    .where(sql`${agentConversations.id} = ${params.conversationId}::uuid`);
+    .where(sql`
+      ${agentConversations.id} = ${params.conversationId}::uuid
+      AND COALESCE((${agentConversations.metadata} ->> 'summary_through_index')::int, 0) = ${priorSummaryThrough}
+    `);
+
+  // Return the merged metadata that the caller would see if the write
+  // landed cleanly. If a concurrent pass advanced the index, the
+  // caller's downstream logic still uses these values (they're a
+  // monotonic step forward from priorSummaryThrough); the next turn
+  // will re-read the row and reconcile.
+  const newMetadata: ConversationMetadata = {
+    ...params.metadata,
+    summary: newSummary,
+    summary_through_index: newSummaryThroughIndex,
+    summary_updated_at: updatedAt,
+  };
 
   return {
     metadata: newMetadata,

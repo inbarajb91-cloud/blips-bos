@@ -53,12 +53,18 @@ export function OrcPanel({
   const [inputValue, setInputValue] = useState("");
   const [sendError, setSendError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
-  // Chips per message index (ephemeral — cleared on refresh since
-  // they live only in the streaming session's memory; Phase 8.5+ can
-  // persist to agent_logs and reconstruct on conversation load).
-  const [chipsByIndex, setChipsByIndex] = useState<Record<number, OrcChip[]>>(
-    {},
-  );
+  // Chips per ORC message, keyed by message timestamp (ts is unique
+  // per message in this conversation). Pre-CodeRabbit-pass-1, this
+  // was keyed by numeric index — unsafe because:
+  //   - the signal-change useEffect reloads a different conversation
+  //     and existing chips would render under the new conversation's
+  //     messages at the same index
+  //   - the failure-rollback below removes the streaming placeholder,
+  //     shifting the array and orphaning chips under the wrong row
+  // Ephemeral by design (cleared on refresh since they live only in
+  // the streaming session's memory; Phase 8.5+ can persist to
+  // agent_logs and reconstruct on conversation load).
+  const [chipsByTs, setChipsByTs] = useState<Record<string, OrcChip[]>>({});
 
   // Load conversation on mount + when the signal changes (user navigates
   // to a different signal, the panel reloads with that signal's thread).
@@ -66,6 +72,10 @@ export function OrcPanel({
     let cancelled = false;
     setMessages(null);
     setLoadError(null);
+    // Clear chip state — chips from the previous signal's conversation
+    // would otherwise live in memory and could collide with new
+    // messages that happen to share a timestamp.
+    setChipsByTs({});
     getOrCreateOrcConversation(signal.id)
       .then((convo) => {
         if (cancelled) return;
@@ -125,6 +135,11 @@ export function OrcPanel({
     // Index of the streaming ORC message — we'll mutate this slot
     // in the messages array as tokens arrive.
     const orcIdx = withPlaceholder.length - 1;
+    // Stable key for chip association. Using the streaming message's
+    // ts (set above when streamingOrc was constructed) means chips
+    // stay attached to THIS specific message even if the array shifts
+    // around (e.g. failure removes the placeholder).
+    const orcTs = streamingOrc.ts;
 
     startTransition(async () => {
       try {
@@ -172,11 +187,12 @@ export function OrcPanel({
           },
           (chip) => {
             // Chip from flag_concern / request_re_run. Attach to the
-            // current streaming ORC message so it renders below the
-            // reply text.
-            setChipsByIndex((curr) => ({
+            // current streaming ORC message by ts (stable key) so it
+            // renders below the reply text and stays correct even if
+            // the array shifts later.
+            setChipsByTs((curr) => ({
               ...curr,
-              [orcIdx]: [...(curr[orcIdx] ?? []), chip],
+              [orcTs]: [...(curr[orcTs] ?? []), chip],
             }));
           },
         );
@@ -210,6 +226,15 @@ export function OrcPanel({
             return curr.slice(0, -1);
           }
           return curr;
+        });
+        // Drop any chips that were attached to the failed placeholder
+        // — its ts won't be referenced anywhere now, so they'd just
+        // leak in memory.
+        setChipsByTs((curr) => {
+          if (!(orcTs in curr)) return curr;
+          const { [orcTs]: _dropped, ...rest } = curr;
+          void _dropped;
+          return rest;
         });
       }
     });
@@ -258,7 +283,7 @@ export function OrcPanel({
             <MessageRow
               key={`${msg.ts}-${i}`}
               msg={msg}
-              chips={chipsByIndex[i]}
+              chips={chipsByTs[msg.ts]}
             />
           ))
         )}
