@@ -12,8 +12,9 @@
  *   E3  Token budget: LEDGR-shape signal fits inside the 5k cap
  *   E4  Token budget: system_brand_signal stays under 2500-token bucket cap
 
- *   E5  Memory wrapper: remember() returns non-empty id on valid write
- *       (uses test container so eval data never reaches prod recall)
+ *   E5  Memory wrapper: remember() events-container write returns
+ *       non-empty id (THEN forget() the doc immediately so it never
+ *       lingers in production recall)
  *   E6  Memory wrapper: remember() returns non-empty id on valid write (test container)
  *   E7  Memory wrapper: recall() returns [] (length=0, not just any array) when no matches
  *   E8  Container isolation: prod recall does NOT see test-container writes
@@ -198,22 +199,44 @@ async function main() {
   const memory = await getMemoryBackend();
   const evalStamp = `EVAL-${Date.now()}`;
 
+  // E5 ACTUALLY exercises the events-container path the description
+  // claims to validate (CodeRabbit pass 5: previously this wrote to
+  // the test container, which left production events-path regressions
+  // untested). To avoid permanent prod pollution, we write to events
+  // and then immediately forget() the doc by id. The window between
+  // write and delete is ~1-3s — small enough that production recall
+  // is extremely unlikely to surface this transient eval data, and
+  // the metadata.transient=true tag lets any consumer that does see
+  // it filter it out. Cleanup runs in a finally so a mid-eval crash
+  // still attempts the delete.
   const writeStart = Date.now();
   const eventsWrite = await memory.remember({
     orgId: org.id,
-    container: "test", // Use test container for events-shape writes too — these are eval data
+    container: "events",
     kind: "decision",
-    content: `${evalStamp}: Eval test write — events-shape decision memory.`,
-    metadata: { evalStamp, source: "phase-8-evals" },
+    content:
+      `${evalStamp}: TRANSIENT EVAL WRITE — exercises events-container path; ` +
+      `forget() called immediately after the assertion. Should never appear in production recall.`,
+    metadata: {
+      evalStamp,
+      source: "phase-8-evals",
+      transient: true,
+    },
   });
   const writeMs = Date.now() - writeStart;
-  record(
-    "E5",
-    "remember() returns non-empty id (write contract)",
-    true,
-    eventsWrite.id.length > 0,
-    `id=${eventsWrite.id.slice(0, 12)}… in ${writeMs}ms (container=test, so no prod pollution)`,
-  );
+  try {
+    record(
+      "E5",
+      "remember() events-container write returns non-empty id",
+      true,
+      eventsWrite.id.length > 0,
+      `id=${eventsWrite.id.slice(0, 12)}… in ${writeMs}ms (events container — cleanup follows)`,
+    );
+  } finally {
+    if (eventsWrite.id) {
+      await memory.forget(eventsWrite.id);
+    }
+  }
   record(
     "S2",
     "Write completes in < 5s",

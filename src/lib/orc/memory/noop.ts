@@ -36,4 +36,8 @@ export class NoopMemoryBackend implements MemoryBackend {
   ): Promise<MemoryHit[]> {
     return [];
   }
+
+  async forget(_id: string): Promise<void> {
+    return;
+  }
 }

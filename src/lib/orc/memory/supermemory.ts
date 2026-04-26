@@ -171,6 +171,15 @@ export class SupermemoryBackend implements MemoryBackend {
 
       const filtered = raw.filter((r) => {
         const m = (r.metadata ?? {}) as Record<string, unknown>;
+        // Always exclude transient docs from recall — these are
+        // eval/test writes that exercised a real container path
+        // (e.g. phase-8-evals.ts E5) but should never surface in
+        // production reasoning. The eval attempts forget() right
+        // after the assertion, but supermemory's async extraction
+        // can race the delete; this filter is the belt to that
+        // belt-and-suspenders. Accept boolean true OR string "true"
+        // — supermemory may stringify metadata values on storage.
+        if (m.transient === true || m.transient === "true") return false;
         if (scope.kind) {
           const kinds = Array.isArray(scope.kind)
             ? scope.kind
@@ -217,6 +226,20 @@ export class SupermemoryBackend implements MemoryBackend {
     } catch (err) {
       console.error("[memory] supermemory.recall failed:", err);
       return [];
+    }
+  }
+
+  async forget(id: string): Promise<void> {
+    if (!id) return;
+    try {
+      await this.client.documents.delete(id);
+    } catch (err) {
+      // Same swallow-and-log philosophy as remember/recall: memory
+      // failures must never break the caller. A transient delete
+      // failure means the doc lingers; the cold-export job (Phase
+      // 8K+1) catches it on the next run, or it falls out via
+      // supermemory's own retention.
+      console.error("[memory] supermemory.forget failed:", err);
     }
   }
 }

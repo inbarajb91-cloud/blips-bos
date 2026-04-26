@@ -123,7 +123,7 @@ export interface MemoryHit {
 }
 
 /**
- * The contract. Two methods, no surprises.
+ * The contract. Three methods, no surprises.
  *
  * Backends should:
  *   - swallow transient network failures and return `{id: ''}` /
@@ -139,4 +139,10 @@ export interface MemoryBackend {
   /** Semantic search. Returns up to scope.limit hits (default 5),
    *  ordered by similarity descending. On failure, returns []. */
   recall(query: string, scope: RecallScope): Promise<MemoryHit[]>;
+
+  /** Hard-delete a memory by its backend id. Useful for transient
+   *  eval/test writes that need to exercise a real container path
+   *  but must not linger in production recall. Empty id is a no-op.
+   *  On failure, logs and returns silently. */
+  forget(id: string): Promise<void>;
 }
