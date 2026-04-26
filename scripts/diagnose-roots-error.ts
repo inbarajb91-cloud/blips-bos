@@ -7,17 +7,21 @@
  * causes the approve flow (or some related Bridge query) to crash.
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
-const envFile = readFileSync(".env.local", "utf-8");
-for (const line of envFile.split("\n")) {
-  const t = line.trim();
-  if (!t || t.startsWith("#")) continue;
-  const eq = t.indexOf("=");
-  if (eq === -1) continue;
-  const k = t.slice(0, eq).trim();
-  const v = t.slice(eq + 1).trim().replace(/^["']|["']$/g, "");
-  if (!process.env[k]) process.env[k] = v;
+// Optional .env.local — guarded so the script works in CI / preview
+// shells where env vars come from the environment rather than a file.
+if (existsSync(".env.local")) {
+  const envFile = readFileSync(".env.local", "utf-8");
+  for (const line of envFile.split("\n")) {
+    const t = line.trim();
+    if (!t || t.startsWith("#")) continue;
+    const eq = t.indexOf("=");
+    if (eq === -1) continue;
+    const k = t.slice(0, eq).trim();
+    const v = t.slice(eq + 1).trim().replace(/^["']|["']$/g, "");
+    if (!process.env[k]) process.env[k] = v;
+  }
 }
 
 async function main() {

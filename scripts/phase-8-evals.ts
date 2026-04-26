@@ -11,9 +11,11 @@
  *   E2  Compression bug: messages older than window survive (not silently dropped)
  *   E3  Token budget: LEDGR-shape signal fits inside the 5k cap
  *   E4  Token budget: system_brand_signal stays under 2500-token bucket cap
- *   E5  Memory wrapper: remember() returns non-empty id on valid write (events container)
+
+ *   E5  Memory wrapper: remember() returns non-empty id on valid write
+ *       (uses test container so eval data never reaches prod recall)
  *   E6  Memory wrapper: remember() returns non-empty id on valid write (test container)
- *   E7  Memory wrapper: recall() returns [] not error when no matches
+ *   E7  Memory wrapper: recall() returns [] (length=0, not just any array) when no matches
  *   E8  Container isolation: prod recall does NOT see test-container writes
  *   E9  Shortcode resolver: returns unused suffix when base is taken
  *   E10 Shortcode resolver: returns base when free
@@ -29,17 +31,24 @@
  *        Exit code 0 = all hard criteria passed; non-zero = at least one failed.
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
-const envFile = readFileSync(".env.local", "utf-8");
-for (const line of envFile.split("\n")) {
-  const t = line.trim();
-  if (!t || t.startsWith("#")) continue;
-  const eq = t.indexOf("=");
-  if (eq === -1) continue;
-  const k = t.slice(0, eq).trim();
-  const v = t.slice(eq + 1).trim().replace(/^["']|["']$/g, "");
-  if (!process.env[k]) process.env[k] = v;
+// Optional .env.local — same pattern across all Phase 8 scripts.
+// In CI / preview shells the env vars may already be exported, so a
+// missing file is fine. The downstream env-var checks (e.g.
+// SUPERMEMORY_API_KEY) catch the actual missing-config cases with
+// clearer error messages than a raw ENOENT.
+if (existsSync(".env.local")) {
+  const envFile = readFileSync(".env.local", "utf-8");
+  for (const line of envFile.split("\n")) {
+    const t = line.trim();
+    if (!t || t.startsWith("#")) continue;
+    const eq = t.indexOf("=");
+    if (eq === -1) continue;
+    const k = t.slice(0, eq).trim();
+    const v = t.slice(eq + 1).trim().replace(/^["']|["']$/g, "");
+    if (!process.env[k]) process.env[k] = v;
+  }
 }
 
 interface Result {
@@ -179,10 +188,10 @@ async function main() {
   const writeMs = Date.now() - writeStart;
   record(
     "E5",
-    "remember() events-shape returns non-empty id",
+    "remember() returns non-empty id (write contract)",
     true,
     eventsWrite.id.length > 0,
-    `id=${eventsWrite.id.slice(0, 12)}… in ${writeMs}ms`,
+    `id=${eventsWrite.id.slice(0, 12)}… in ${writeMs}ms (container=test, so no prod pollution)`,
   );
   record(
     "S2",
@@ -215,10 +224,10 @@ async function main() {
   );
   record(
     "E7",
-    "recall() returns [] (not throws) on no matches",
+    "recall() returns [] (length=0, not throws) on no matches",
     true,
-    Array.isArray(noMatchHits),
-    `array length=${noMatchHits.length}`,
+    Array.isArray(noMatchHits) && noMatchHits.length === 0,
+    `isArray=${Array.isArray(noMatchHits)} length=${noMatchHits.length}`,
   );
 
   // ────────── E8 — Container isolation ──────────
@@ -259,52 +268,40 @@ async function main() {
 
   // ────────── E9, E10 — Shortcode resolver ──────────
   console.log("\n─── SHORTCODE RESOLVER ───");
-  // We can't directly import the helper (it's not exported from the
-  // server action file). Instead, exercise the contract via raw SQL:
-  // pick a base, query existing, simulate the suffix resolution.
-  const base = "ROOTS";
-  const rows = await db.execute(sql`
-    SELECT shortcode FROM signals
-    WHERE org_id = ${org.id}
-      AND (shortcode = ${base} OR shortcode LIKE ${base + "-%"})
-  `);
-  const taken = new Set(
-    (rows as unknown as Array<{ shortcode: string }>).map((r) => r.shortcode),
+  // Use the REAL resolver from src/lib/signals/resolve-shortcode.ts —
+  // pre-CodeRabbit-pass-1 we reimplemented the logic locally here, so
+  // the eval would pass even if the runtime version diverged. Now we
+  // import the same pure function the runtime uses (candidates.ts
+  // calls it after building `taken` from a DB query), feed it a known
+  // taken set, and assert the return is correct.
+  const { resolveShortcode } = await import(
+    "../src/lib/signals/resolve-shortcode"
   );
-  let resolved: string;
-  if (!taken.has(base)) {
-    resolved = base;
-  } else {
-    let i = 2;
-    while (i < 100 && taken.has(`${base}-${i}`)) i++;
-    resolved = `${base}-${i}`;
-  }
+
+  // E9: base IS taken → resolver must return a DIFFERENT, unused
+  // suffix. We force-build the precondition so the test isn't
+  // dependent on what's currently in the DB.
+  const base = "ROOTS";
+  const e9Taken = new Set([base]); // base guaranteed taken
+  const e9Resolved = resolveShortcode(base, e9Taken);
   record(
     "E9",
     "Shortcode resolver picks unused suffix when base taken",
     true,
-    !taken.has(resolved),
-    `base=${base} taken=[${[...taken].join(",")}] resolved=${resolved}`,
+    e9Taken.has(base) && e9Resolved !== base && !e9Taken.has(e9Resolved),
+    `base=${base} taken=[${[...e9Taken].join(",")}] resolved=${e9Resolved}`,
   );
 
-  // E10: pick a guaranteed-unique base, resolver should return base unchanged
+  // E10: base is FREE → resolver must return base unchanged.
   const uniqueBase = `EVAL${Date.now().toString(36).toUpperCase().slice(-4)}`;
-  const uniqueRows = await db.execute(sql`
-    SELECT shortcode FROM signals
-    WHERE org_id = ${org.id}
-      AND (shortcode = ${uniqueBase} OR shortcode LIKE ${uniqueBase + "-%"})
-  `);
-  const uniqueTaken = new Set(
-    (uniqueRows as unknown as Array<{ shortcode: string }>).map(
-      (r) => r.shortcode,
-    ),
-  );
+  const e10Taken = new Set<string>(); // empty taken set → base is free
+  const e10Resolved = resolveShortcode(uniqueBase, e10Taken);
   record(
     "E10",
     "Shortcode resolver returns base when free",
     true,
-    uniqueTaken.size === 0,
-    `base=${uniqueBase} taken=${uniqueTaken.size}`,
+    !e10Taken.has(uniqueBase) && e10Resolved === uniqueBase,
+    `base=${uniqueBase} taken=0 resolved=${e10Resolved}`,
   );
 
   // ────────── REPORT ──────────

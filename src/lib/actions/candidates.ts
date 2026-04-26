@@ -9,16 +9,18 @@ import { generateStructured } from "@/lib/ai/generate";
 import { computeContentHash } from "@/lib/sources/dedup";
 import { bunkerSkill } from "@/skills/bunker";
 import { createInitialJourney } from "@/lib/orc/journey";
+import { resolveShortcode } from "@/lib/signals/resolve-shortcode";
 
 /**
- * Resolve a unique shortcode within an org. BUNKER assigns shortcodes
- * algorithmically and can produce duplicates (esp. on shared themes
- * like ROOTS, CLOCK, LEGACY). The signals table has a UNIQUE
- * constraint on (org_id, shortcode), so a duplicate insert crashes
- * the approve flow.
+ * DB-backed shortcode resolution. Queries existing shortcodes in this
+ * org that match `base` or `base-N`, hands the resulting set to the
+ * pure `resolveShortcode` helper.
  *
- * Strategy: query existing shortcodes in this org that match base or
- * base-N, find the smallest unused suffix, return base or base-N.
+ * Pre-CodeRabbit-pass-1, the resolver logic was inlined here AND
+ * reimplemented in scripts/phase-8-evals.ts. The eval could pass even
+ * if the runtime version diverged. Extracting the pure function to
+ * src/lib/signals/resolve-shortcode.ts gives both callers one source
+ * of truth.
  *
  * 2026-04-25 fix: replaced the long-standing TODO(phase-6-polish)
  * after Inba hit a server error trying to approve "Golden Handcuffs
@@ -41,21 +43,8 @@ async function resolveAvailableShortcode(
       ),
     );
 
-  if (rows.length === 0) return base;
-
   const taken = new Set(rows.map((r) => r.shortcode));
-  if (!taken.has(base)) return base;
-
-  // Try -2, -3, … up to -99. In practice we'll find an opening in the
-  // first few attempts; 99 is a paranoia ceiling.
-  for (let i = 2; i < 100; i++) {
-    const candidate = `${base}-${i}`;
-    if (!taken.has(candidate)) return candidate;
-  }
-
-  // Pathological: 99 same-base shortcodes already exist. Append a
-  // random suffix so we never return undefined or throw.
-  return `${base}-${Math.random().toString(36).slice(2, 6)}`;
+  return resolveShortcode(base, taken);
 }
 
 /**
