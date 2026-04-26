@@ -97,17 +97,44 @@ export async function approveCandidate(candidateId: string) {
     user.orgId,
   );
 
-  // Create signal row + Journey 1 atomically. Phase 8: every signal
-  // is born with an active Journey 1 — all downstream writes
-  // (agent_outputs, agent_conversations, signal_decades,
-  // decision_history) FK to a journey, so creating the signal without
-  // its initial journey would leave the signal unwritable. Wrapping
-  // both inserts in a transaction ensures we never leave that orphan.
-  // Phase 6.5: carry the originating collection forward — Bridge needs this
-  // to render the signal inside its collection's pipeline section.
+  // Atomic claim + signal creation in one transaction. Three things
+  // must succeed-or-fail together:
+  //   1. Claim the candidate (UPDATE PENDING_REVIEW → APPROVED) —
+  //      the WHERE includes status='PENDING_REVIEW' so a concurrent
+  //      approve loses the race; if RETURNING is empty we throw to
+  //      roll the txn back. Pre-CodeRabbit-pass-1, this UPDATE happened
+  //      AFTER the signal insert as a separate statement, which left a
+  //      window where two concurrent approves could each insert a
+  //      signal from the same candidate. Now the claim happens first
+  //      and atomically.
+  //   2. Insert the signal with the resolved unique shortcode.
+  //   3. Create Journey 1 (every signal is born with an active journey
+  //      so all downstream writes have a journeyId FK).
+  //
+  // If the shortcode still races at INSERT (resolveAvailableShortcode
+  // is outside the txn — two approves can pick the same suffix), the
+  // 23505 catch retries once with a fresh resolve.
   let signal: { id: string };
   try {
     signal = await db.transaction(async (tx) => {
+      const [claimed] = await tx
+        .update(bunkerCandidates)
+        .set({ status: "APPROVED" })
+        .where(
+          and(
+            eq(bunkerCandidates.id, candidateId),
+            eq(bunkerCandidates.orgId, user.orgId),
+            eq(bunkerCandidates.status, "PENDING_REVIEW"),
+          ),
+        )
+        .returning({ id: bunkerCandidates.id });
+
+      if (!claimed) {
+        throw new Error(
+          "Candidate is no longer pending review (already approved or dismissed by another request)",
+        );
+      }
+
       const [createdSignal] = await tx
         .insert(signals)
         .values({
@@ -135,6 +162,9 @@ export async function approveCandidate(candidateId: string) {
     // resolveAvailableShortcode() and the INSERT. Postgres unique
     // violation = error code 23505. Retry once with a fresh resolve;
     // if it still fails, surface a clean error rather than a 500.
+    // Note: if the candidate-claim race lost (someone else approved
+    // first), the thrown Error from inside the txn lands here too —
+    // we re-throw it because there's no shortcode collision to retry.
     if (
       e instanceof Error &&
       "code" in e &&
@@ -145,6 +175,30 @@ export async function approveCandidate(candidateId: string) {
         user.orgId,
       );
       signal = await db.transaction(async (tx) => {
+        // Re-claim defensively — if first txn's claim succeeded but
+        // the insert failed on shortcode collision, the candidate is
+        // already APPROVED. This second claim handles the "first
+        // attempt claimed; this is a clean retry" path.
+        const [claimed] = await tx
+          .update(bunkerCandidates)
+          .set({ status: "APPROVED" })
+          .where(
+            and(
+              eq(bunkerCandidates.id, candidateId),
+              eq(bunkerCandidates.orgId, user.orgId),
+              // Accept both PENDING_REVIEW (first claim was rolled
+              // back with the failed insert) and APPROVED (first
+              // claim committed before the insert failure).
+            ),
+          )
+          .returning({ id: bunkerCandidates.id });
+
+        if (!claimed) {
+          throw new Error(
+            "Candidate vanished during retry — manual investigation needed",
+          );
+        }
+
         const [createdSignal] = await tx
           .insert(signals)
           .values({
@@ -171,11 +225,6 @@ export async function approveCandidate(candidateId: string) {
       throw e;
     }
   }
-
-  await db
-    .update(bunkerCandidates)
-    .set({ status: "APPROVED" })
-    .where(eq(bunkerCandidates.id, candidateId));
 
   // Update aggregate counters on the collection.
   // Subqueries include org_id even though collection_id is UUID-unique

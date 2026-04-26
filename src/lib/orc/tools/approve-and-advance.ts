@@ -42,34 +42,10 @@ export function approveAndAdvance(ctx: OrcToolContext) {
         ),
     }),
     execute: async ({ reason }) => {
-      // Find the latest PENDING agent_output on the active journey
-      const [pending] = await db
-        .select({
-          id: agentOutputs.id,
-          agentName: agentOutputs.agentName,
-        })
-        .from(agentOutputs)
-        .where(
-          and(
-            eq(agentOutputs.signalId, ctx.signalId),
-            eq(agentOutputs.journeyId, ctx.journeyId),
-            eq(agentOutputs.status, "PENDING"),
-          ),
-        )
-        .orderBy(desc(agentOutputs.createdAt))
-        .limit(1);
-
-      if (!pending) {
-        return {
-          success: false as const,
-          message:
-            "No pending stage output to approve. This signal's current stage may approve through a different surface (e.g., BUNKER approval happens on the Bridge triage queue), or all stage outputs are already approved.",
-        };
-      }
-
       // Load signal context once — used by both decision_history (for
       // the in-DB trail) and the memory write below (for cross-signal
-      // pattern recall later).
+      // pattern recall later). Done outside the transaction since
+      // signal metadata is read-only here.
       const [signalRow] = await db
         .select({
           shortcode: signals.shortcode,
@@ -82,15 +58,49 @@ export function approveAndAdvance(ctx: OrcToolContext) {
         )
         .limit(1);
 
-      await db.transaction(async (tx) => {
-        await tx
+      // Atomic select-and-claim inside one transaction. Pre-CodeRabbit-
+      // pass-1, the SELECT and UPDATE were separate statements, leaving
+      // a window where two concurrent approve_and_advance calls could
+      // both find the same PENDING output and each fire decision_history
+      // + memory writes. Now the UPDATE includes status='PENDING' in
+      // its WHERE so only one approver wins; the loser sees RETURNING
+      // empty and the transaction returns null, which we surface as a
+      // clean "no pending output" message instead of double-committing.
+      const approval = await db.transaction(async (tx) => {
+        const [pending] = await tx
+          .select({
+            id: agentOutputs.id,
+            agentName: agentOutputs.agentName,
+          })
+          .from(agentOutputs)
+          .where(
+            and(
+              eq(agentOutputs.signalId, ctx.signalId),
+              eq(agentOutputs.journeyId, ctx.journeyId),
+              eq(agentOutputs.status, "PENDING"),
+            ),
+          )
+          .orderBy(desc(agentOutputs.createdAt))
+          .limit(1);
+
+        if (!pending) return null;
+
+        const [approved] = await tx
           .update(agentOutputs)
           .set({
             status: "APPROVED",
             approvedAt: new Date(),
             approvedBy: ctx.userId,
           })
-          .where(eq(agentOutputs.id, pending.id));
+          .where(
+            and(
+              eq(agentOutputs.id, pending.id),
+              eq(agentOutputs.status, "PENDING"),
+            ),
+          )
+          .returning({ id: agentOutputs.id });
+
+        if (!approved) return null; // someone else won the race
 
         await tx.insert(decisionHistory).values({
           orgId: ctx.orgId,
@@ -101,7 +111,17 @@ export function approveAndAdvance(ctx: OrcToolContext) {
           reason: reason ?? null,
           decidedBy: ctx.userId,
         });
+
+        return pending;
       });
+
+      if (!approval) {
+        return {
+          success: false as const,
+          message:
+            "No pending stage output to approve. It may have just been approved by another request, or this signal's current stage approves through a different surface (e.g., BUNKER approval happens on the Bridge triage queue).",
+        };
+      }
 
       // Memory write — Phase 8K hook. Runs AFTER the transaction so a
       // memory backend hiccup never rolls back the approval. The
@@ -116,14 +136,14 @@ export function approveAndAdvance(ctx: OrcToolContext) {
           container: "events",
           kind: "decision",
           content:
-            `Approved ${pending.agentName} output on signal ${signalRow.shortcode} "${signalRow.workingTitle}". ` +
+            `Approved ${approval.agentName} output on signal ${signalRow.shortcode} "${signalRow.workingTitle}". ` +
             `Concept: ${signalRow.concept ?? "(none yet)"}. ` +
             `Reason: ${reason ?? "(no reason given)"}.`,
           signalId: ctx.signalId,
           journeyId: ctx.journeyId,
           metadata: {
             decision: "approved",
-            stage: pending.agentName,
+            stage: approval.agentName,
             shortcode: signalRow.shortcode,
           },
         });
@@ -134,9 +154,9 @@ export function approveAndAdvance(ctx: OrcToolContext) {
       // stage exists yet to receive the event.
       return {
         success: true as const,
-        stage: pending.agentName,
-        outputId: pending.id,
-        message: `Approved the pending ${pending.agentName} output. Pipeline advance wires when the next stage ships.`,
+        stage: approval.agentName,
+        outputId: approval.id,
+        message: `Approved the pending ${approval.agentName} output. Pipeline advance wires when the next stage ships.`,
       };
     },
   });
