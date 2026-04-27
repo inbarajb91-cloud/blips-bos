@@ -1,6 +1,6 @@
 "use server";
 
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, like, or, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db, bunkerCandidates, collections, signals } from "@/db";
 import { getCurrentUserWithOrg } from "@/lib/auth/current-user";
@@ -8,6 +8,44 @@ import { inngest } from "@/lib/inngest/client";
 import { generateStructured } from "@/lib/ai/generate";
 import { computeContentHash } from "@/lib/sources/dedup";
 import { bunkerSkill } from "@/skills/bunker";
+import { createInitialJourney } from "@/lib/orc/journey";
+import { resolveShortcode } from "@/lib/signals/resolve-shortcode";
+
+/**
+ * DB-backed shortcode resolution. Queries existing shortcodes in this
+ * org that match `base` or `base-N`, hands the resulting set to the
+ * pure `resolveShortcode` helper.
+ *
+ * Pre-CodeRabbit-pass-1, the resolver logic was inlined here AND
+ * reimplemented in scripts/phase-8-evals.ts. The eval could pass even
+ * if the runtime version diverged. Extracting the pure function to
+ * src/lib/signals/resolve-shortcode.ts gives both callers one source
+ * of truth.
+ *
+ * 2026-04-25 fix: replaced the long-standing TODO(phase-6-polish)
+ * after Inba hit a server error trying to approve "Golden Handcuffs
+ * Of Home" (shortcode ROOTS) when ROOTS was already an active signal.
+ */
+async function resolveAvailableShortcode(
+  base: string,
+  orgId: string,
+): Promise<string> {
+  const rows = await db
+    .select({ shortcode: signals.shortcode })
+    .from(signals)
+    .where(
+      and(
+        eq(signals.orgId, orgId),
+        or(
+          eq(signals.shortcode, base),
+          like(signals.shortcode, `${base}-%`),
+        ),
+      ),
+    );
+
+  const taken = new Set(rows.map((r) => r.shortcode));
+  return resolveShortcode(base, taken);
+}
 
 /**
  * Approve a BUNKER candidate.
@@ -38,29 +76,144 @@ export async function approveCandidate(candidateId: string) {
     throw new Error(`Candidate is ${candidate.status}, cannot approve`);
   }
 
-  // Create signal row. If shortcode collision, append digit suffix.
-  // TODO(phase-6-polish): proper shortcode collision resolution
-  // Phase 6.5: carry the originating collection forward — Bridge needs this
-  // to render the signal inside its collection's pipeline section.
-  const [signal] = await db
-    .insert(signals)
-    .values({
-      orgId: user.orgId,
-      shortcode: candidate.shortcode,
-      workingTitle: candidate.workingTitle,
-      concept: candidate.concept,
-      source: candidate.source,
-      rawText: candidate.rawText,
-      rawMetadata: candidate.rawMetadata,
-      collectionId: candidate.collectionId ?? null,
-      status: "IN_BUNKER",
-    })
-    .returning({ id: signals.id });
+  // Resolve a unique shortcode for the new signal. BUNKER may have
+  // produced a shortcode that's already taken (e.g. multiple themed
+  // candidates in different runs converging on ROOTS / CLOCK / LEGACY).
+  // resolveAvailableShortcode queries existing signals in this org and
+  // returns the base if free, or base-2/-3/... otherwise.
+  const finalShortcode = await resolveAvailableShortcode(
+    candidate.shortcode,
+    user.orgId,
+  );
 
-  await db
-    .update(bunkerCandidates)
-    .set({ status: "APPROVED" })
-    .where(eq(bunkerCandidates.id, candidateId));
+  // Atomic claim + signal creation in one transaction. Three things
+  // must succeed-or-fail together:
+  //   1. Claim the candidate (UPDATE PENDING_REVIEW → APPROVED) —
+  //      the WHERE includes status='PENDING_REVIEW' so a concurrent
+  //      approve loses the race; if RETURNING is empty we throw to
+  //      roll the txn back. Pre-CodeRabbit-pass-1, this UPDATE happened
+  //      AFTER the signal insert as a separate statement, which left a
+  //      window where two concurrent approves could each insert a
+  //      signal from the same candidate. Now the claim happens first
+  //      and atomically.
+  //   2. Insert the signal with the resolved unique shortcode.
+  //   3. Create Journey 1 (every signal is born with an active journey
+  //      so all downstream writes have a journeyId FK).
+  //
+  // If the shortcode still races at INSERT (resolveAvailableShortcode
+  // is outside the txn — two approves can pick the same suffix), the
+  // 23505 catch retries once with a fresh resolve.
+  let signal: { id: string };
+  try {
+    signal = await db.transaction(async (tx) => {
+      const [claimed] = await tx
+        .update(bunkerCandidates)
+        .set({ status: "APPROVED" })
+        .where(
+          and(
+            eq(bunkerCandidates.id, candidateId),
+            eq(bunkerCandidates.orgId, user.orgId),
+            eq(bunkerCandidates.status, "PENDING_REVIEW"),
+          ),
+        )
+        .returning({ id: bunkerCandidates.id });
+
+      if (!claimed) {
+        throw new Error(
+          "Candidate is no longer pending review (already approved or dismissed by another request)",
+        );
+      }
+
+      const [createdSignal] = await tx
+        .insert(signals)
+        .values({
+          orgId: user.orgId,
+          shortcode: finalShortcode,
+          workingTitle: candidate.workingTitle,
+          concept: candidate.concept,
+          source: candidate.source,
+          rawText: candidate.rawText,
+          rawMetadata: candidate.rawMetadata,
+          collectionId: candidate.collectionId ?? null,
+          status: "IN_BUNKER",
+        })
+        .returning({ id: signals.id });
+
+      await createInitialJourney(
+        { signalId: createdSignal.id, createdBy: user.authId },
+        tx,
+      );
+
+      return createdSignal;
+    });
+  } catch (e) {
+    // Race case: two approves picked the same finalShortcode between
+    // resolveAvailableShortcode() and the INSERT. Postgres unique
+    // violation = error code 23505. Retry once with a fresh resolve;
+    // if it still fails, surface a clean error rather than a 500.
+    // Note: if the candidate-claim race lost (someone else approved
+    // first), the thrown Error from inside the txn lands here too —
+    // we re-throw it because there's no shortcode collision to retry.
+    if (
+      e instanceof Error &&
+      "code" in e &&
+      (e as { code: string }).code === "23505"
+    ) {
+      const retryShortcode = await resolveAvailableShortcode(
+        candidate.shortcode,
+        user.orgId,
+      );
+      signal = await db.transaction(async (tx) => {
+        // Re-claim defensively — if first txn's claim succeeded but
+        // the insert failed on shortcode collision, the candidate is
+        // already APPROVED. This second claim handles the "first
+        // attempt claimed; this is a clean retry" path.
+        const [claimed] = await tx
+          .update(bunkerCandidates)
+          .set({ status: "APPROVED" })
+          .where(
+            and(
+              eq(bunkerCandidates.id, candidateId),
+              eq(bunkerCandidates.orgId, user.orgId),
+              // Accept both PENDING_REVIEW (first claim was rolled
+              // back with the failed insert) and APPROVED (first
+              // claim committed before the insert failure).
+            ),
+          )
+          .returning({ id: bunkerCandidates.id });
+
+        if (!claimed) {
+          throw new Error(
+            "Candidate vanished during retry — manual investigation needed",
+          );
+        }
+
+        const [createdSignal] = await tx
+          .insert(signals)
+          .values({
+            orgId: user.orgId,
+            shortcode: retryShortcode,
+            workingTitle: candidate.workingTitle,
+            concept: candidate.concept,
+            source: candidate.source,
+            rawText: candidate.rawText,
+            rawMetadata: candidate.rawMetadata,
+            collectionId: candidate.collectionId ?? null,
+            status: "IN_BUNKER",
+          })
+          .returning({ id: signals.id });
+
+        await createInitialJourney(
+          { signalId: createdSignal.id, createdBy: user.authId },
+          tx,
+        );
+
+        return createdSignal;
+      });
+    } else {
+      throw e;
+    }
+  }
 
   // Update aggregate counters on the collection.
   // Subqueries include org_id even though collection_id is UUID-unique

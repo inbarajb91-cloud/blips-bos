@@ -3,6 +3,7 @@ import { generateStructured } from "@/lib/ai/generate";
 import { loadSkill } from "@/skills";
 import { logAgentCall } from "@/lib/ai/logger";
 import type { AgentKey } from "@/lib/ai/types";
+import { getActiveJourney } from "@/lib/orc/journey";
 
 export interface RunSkillParams<TInput> {
   agentKey: AgentKey;
@@ -44,10 +45,20 @@ export async function runSkill<TInput, TOutput>(
   const { agentKey, orgId, signalId, input } = params;
   const skill = loadSkill<TInput, TOutput>(agentKey);
 
+  // Phase 8 — resolve the signal's active journey up front. Every
+  // per-signal artifact we produce (agent_output + agent_log rows)
+  // tags to this journey so the workspace's stage views + future
+  // observability queries can scope correctly. Throws if no active
+  // journey exists, which indicates a data integrity issue (signal
+  // created without its initial journey) that's worth failing on
+  // rather than silently writing orphaned outputs.
+  const journey = await getActiveJourney(signalId);
+
   // 1. Log skill load for observability
   void logAgentCall({
     orgId,
     signalId,
+    journeyId: journey.id,
     agentName: agentKey,
     action: "skill_loaded",
     status: "success",
@@ -67,11 +78,12 @@ export async function runSkill<TInput, TOutput>(
     schema: skill.outputSchema,
   });
 
-  // 4. Persist output
+  // 4. Persist output scoped to the active journey
   const [row] = await db
     .insert(agentOutputs)
     .values({
       signalId,
+      journeyId: journey.id,
       agentName: agentKey,
       outputType: agentKey.toLowerCase(),
       content: result.object as object,
@@ -83,6 +95,7 @@ export async function runSkill<TInput, TOutput>(
   void logAgentCall({
     orgId,
     signalId,
+    journeyId: journey.id,
     agentName: agentKey,
     action: "output_written",
     status: "success",

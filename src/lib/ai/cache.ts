@@ -1,0 +1,160 @@
+import type { ModelMessage } from "ai";
+
+/**
+ * Per-provider cache-aware prompt shaper — Phase 8E.
+ *
+ * Providers cache prompt prefixes differently, so the same "stable
+ * prefix + mutable suffix" split needs a different payload shape per
+ * provider. This module owns that translation so the streaming route
+ * doesn't have to branch on provider.
+ *
+ * PROVIDER CACHE MECHANICS
+ *
+ * Anthropic (Claude)
+ *   Marker-based. Adding `cacheControl: { type: "ephemeral" }` via
+ *   `providerOptions.anthropic` on a message part tells Claude to
+ *   cache everything up to and including that part. The cache has a
+ *   5-min TTL that auto-extends on hit. 90% discount on cached input
+ *   tokens. We mark the system message once; the stable prefix sits
+ *   entirely inside it.
+ *
+ * Gemini / OpenAI / xAI (automatic prefix caching)
+ *   No explicit marker. The provider auto-caches the longest
+ *   byte-stable prefix it sees across requests. Our responsibility:
+ *   send the stable prefix byte-identically across turns (no
+ *   timestamps, no request IDs, no anything that varies). Gemini:
+ *   75% discount, 5+ min TTL. OpenAI: 50% discount on gpt-4o family,
+ *   5-min TTL. xAI: similar pattern.
+ *
+ * Explicit Gemini caches.create() — deferred. Gives bigger savings
+ * and a 1-hour TTL but requires managing cache lifecycle (create,
+ * name, expiry, invalidation on signal edits) which adds complexity
+ * not justified at current scale. Adding the hook here so Phase 8.5
+ * can slot it in without refactoring callers.
+ *
+ * PAYLOAD SHAPE (return from buildCachedMessages)
+ *
+ *   system: string
+ *     The stable prefix — concatenated ORC system prompt + brand
+ *     DNA + signal core. Byte-stable across turns (critical for
+ *     automatic prefix caching).
+ *
+ *   messages: ModelMessage[]
+ *     The mutable suffix — rolling summary (if present) + verbatim
+ *     window + current user message. One message per conversational
+ *     turn, in chronological order.
+ *
+ *   providerOptions: Record<string, unknown>
+ *     Provider-specific hints (Anthropic cacheControl, Gemini
+ *     cachedContent ref when enabled, etc.) passed through to
+ *     streamText. Empty object for providers with automatic caching.
+ */
+
+import type { Message } from "@/lib/actions/conversations";
+
+export type Provider = "anthropic" | "google" | "openai" | "xai";
+
+/**
+ * Resolve a model ID to its provider. Matches the logic in
+ * `src/lib/ai/model-router.ts` — kept as a pure string inspection
+ * here so callers that only need provider identification don't have
+ * to go through the full router.
+ */
+export function providerFor(modelId: string): Provider {
+  // Prefixed form: "anthropic/claude-sonnet-4.7" → anthropic
+  if (modelId.startsWith("anthropic/")) return "anthropic";
+  if (modelId.startsWith("google/")) return "google";
+  if (modelId.startsWith("openai/")) return "openai";
+  if (modelId.startsWith("xai/")) return "xai";
+  // Bare form: inspect known model-name substrings
+  if (modelId.startsWith("claude")) return "anthropic";
+  if (modelId.startsWith("gemini")) return "google";
+  if (modelId.startsWith("gpt")) return "openai";
+  if (modelId.startsWith("grok")) return "xai";
+  // Default — assume google since Gemini is our current default
+  // across `config_agents`. Caller should always be passing a real
+  // resolved model ID at this point anyway.
+  return "google";
+}
+
+export interface BuildCachedMessagesParams {
+  provider: Provider;
+  stablePrefix: string;
+  summary: string | null;
+  verbatim: readonly Message[];
+  currentUserMessage: string;
+}
+
+export interface CachedPayload {
+  system: string;
+  messages: ModelMessage[];
+  providerOptions: Record<string, unknown>;
+}
+
+/**
+ * Build the streamText payload with per-provider caching hints.
+ *
+ * The stable prefix (system + brand DNA + signal core) always lives
+ * in the `system` field. The mutable suffix becomes the `messages`
+ * array. This ordering matters — putting anything dynamic inside
+ * `system` breaks every provider's cache hit.
+ */
+export function buildCachedMessages(
+  params: BuildCachedMessagesParams,
+): CachedPayload {
+  const { provider, stablePrefix, summary, verbatim, currentUserMessage } =
+    params;
+
+  const messages: ModelMessage[] = [];
+
+  // Rolling summary lands as an "assistant" system-style note so the
+  // model reads it as prior context rather than a user turn. Using
+  // the `system` role inside messages is not a thing in AI SDK, and
+  // prepending to `system` would break caching — so this sits as an
+  // assistant message tagged with a clear preamble.
+  if (summary && summary.trim().length > 0) {
+    messages.push({
+      role: "assistant",
+      content: `[earlier conversation summary] ${summary.trim()}`,
+    });
+  }
+
+  // Verbatim window — role-mapped. Our internal Message uses "orc"
+  // for the agent; AI SDK uses "assistant". Map once here.
+  for (const m of verbatim) {
+    messages.push({
+      role: m.role === "orc" ? "assistant" : "user",
+      content: m.content,
+    });
+  }
+
+  // Current user message — last. Always a fresh user turn.
+  messages.push({
+    role: "user",
+    content: currentUserMessage,
+  });
+
+  // Provider-specific hints
+  const providerOptions: Record<string, unknown> = {};
+
+  if (provider === "anthropic") {
+    // Mark the system prompt as ephemeral-cacheable. Anthropic
+    // caches everything up to and including this marker; 5-min TTL
+    // auto-extended on hit; 90% discount on cached input tokens.
+    providerOptions.anthropic = {
+      cacheControl: { type: "ephemeral" },
+    };
+  }
+
+  // Gemini/OpenAI/xAI: automatic prefix caching. No explicit hint
+  // needed — keeping the system prompt byte-stable across turns is
+  // what engages it. Our `stablePrefix` is built from static ORC
+  // constants + signal core (stable for the life of the signal),
+  // so it's naturally byte-stable.
+
+  return {
+    system: stablePrefix,
+    messages,
+    providerOptions,
+  };
+}

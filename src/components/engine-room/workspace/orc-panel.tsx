@@ -5,7 +5,6 @@ import type { signals } from "@/db/schema";
 import type { AgentKey } from "./types";
 import {
   getOrCreateOrcConversation,
-  appendUserMessage,
   type Message,
   type StageKey,
 } from "@/lib/actions/conversations";
@@ -54,6 +53,41 @@ export function OrcPanel({
   const [inputValue, setInputValue] = useState("");
   const [sendError, setSendError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  // Chips per streaming ORC message, keyed by a per-call UUID
+  // generated client-side (see `orcClientId` in handleSend). Pre-
+  // CodeRabbit-pass-3 we keyed by message timestamp, but two
+  // `new Date().toISOString()` calls in the same handleSend can
+  // produce identical strings within one millisecond — so the
+  // optimistic user row and streaming ORC row could share a key
+  // and the chip cleanup could remove the wrong mapping. Per-call
+  // UUIDs sidestep that entirely.
+  //
+  // Persisted messages (loaded from agent_conversations on signal
+  // mount) don't carry a clientId, so lookups for them fall through
+  // to undefined → no chips rendered. That's correct: chips are
+  // ephemeral session-only state, persisted messages never had any.
+  //
+  // Phase 8.5+ can persist chips to agent_logs and reconstruct on
+  // conversation load; for now they live only in this React state.
+  const [chipsByClientId, setChipsByClientId] = useState<
+    Record<string, OrcChip[]>
+  >({});
+  // AbortController for the in-flight /api/orc/reply request.
+  // Pre-CodeRabbit-pass-2, switching signals mid-stream left the
+  // previous fetch alive; its consumeStream callbacks would keep
+  // calling setMessages/setChipsByClientId and write into the NEW
+  // conversation at the old orcIdx. Now we abort on signal change
+  // (and on subsequent send), which causes consumeStream to throw
+  // AbortError — the catch ignores AbortError so no UI noise.
+  const abortRef = useRef<AbortController | null>(null);
+  // Latest signal.id stored in a ref so async callbacks (the recovery
+  // reload after a pre-stream failure) can compare what the user is
+  // currently viewing against what they were viewing when the failure
+  // happened. Updated during render — refs are React-safe to write
+  // during render as long as the value is derived from props/state.
+  // CodeRabbit pass 3.
+  const currentSignalIdRef = useRef(signal.id);
+  currentSignalIdRef.current = signal.id;
 
   // Load conversation on mount + when the signal changes (user navigates
   // to a different signal, the panel reloads with that signal's thread).
@@ -61,6 +95,27 @@ export function OrcPanel({
     let cancelled = false;
     setMessages(null);
     setLoadError(null);
+    // Reset conversationId to disable the Send button until the new
+    // signal's conversation has loaded — prevents the user (or the
+    // optimistic-UI path) from sending into the previous signal's
+    // thread while the swap is in flight.
+    setConversationId(null);
+    // Clear chip state — chips from the previous signal's conversation
+    // would otherwise live in memory; they're ephemeral session-state
+    // and don't apply across signals.
+    setChipsByClientId({});
+    // Clear composer state — a draft typed on the previous signal
+    // shouldn't follow the user to the next signal (CodeRabbit pass 5).
+    // Same for sendError: an error from the previous thread is
+    // misleading on a fresh signal.
+    setInputValue("");
+    setSendError(null);
+    // Abort any in-flight /api/orc/reply for the previous signal so
+    // its callbacks can't write into the new conversation.
+    if (abortRef.current) {
+      abortRef.current.abort();
+      abortRef.current = null;
+    }
     getOrCreateOrcConversation(signal.id)
       .then((convo) => {
         if (cancelled) return;
@@ -85,36 +140,207 @@ export function OrcPanel({
     if (text.length === 0) return;
 
     setSendError(null);
-    // Optimistic append — message appears instantly; server call
-    // reconciles when it returns. If the server throws, we roll back
-    // the optimistic append so the user sees the right state.
-    const optimistic: Message = {
+
+    // Optimistic: append the user message locally so it renders
+    // instantly. The server also persists it (route handler calls
+    // appendUserMessage early in the flow) — if the stream errors,
+    // the user's message is still saved server-side, so a page
+    // reload recovers the state. That's why the client-side rollback
+    // on failure (that Phase 7D had) is GONE — we no longer want to
+    // roll back, because the server commits before the stream runs.
+    const optimisticUser: Message = {
       role: "user",
       content: text,
       ts: new Date().toISOString(),
       stage: activeStage as StageKey,
     };
+
+    // Per-call client ID for the streaming ORC message — used as the
+    // chip key. crypto.randomUUID is collision-safe (vs. ts which
+    // can repeat within a millisecond when the optimistic user row
+    // and streaming ORC row are minted back-to-back). The renderer
+    // reads this off the message via `msg as Message & { clientId? }`
+    // and falls back to undefined (no chips) for persisted messages.
+    const orcClientId = crypto.randomUUID();
+
+    // Placeholder ORC "typing" message — starts empty, grows as
+    // tokens stream in. The `streaming` flag and `clientId` live in
+    // a client-only intersection type; the stored `Message` schema
+    // stays clean. We cast back to the base Message for the array
+    // push, and the renderer reads them via the intersection cast.
+    const streamingOrc = {
+      role: "orc",
+      content: "",
+      ts: new Date().toISOString(),
+      streaming: true,
+      clientId: orcClientId,
+    } as Message & { streaming: boolean; clientId: string };
+
     const prevMessages = messages ?? [];
-    setMessages([...prevMessages, optimistic]);
+    const withPlaceholder = [...prevMessages, optimisticUser, streamingOrc];
+    setMessages(withPlaceholder);
     setInputValue("");
+
+    // Index of the streaming ORC message — we'll mutate this slot
+    // in the messages array as tokens arrive.
+    const orcIdx = withPlaceholder.length - 1;
+
+    // Abort any prior in-flight request before starting this one.
+    // Then create a fresh controller for THIS request and store it
+    // so the signal-change useEffect (or a subsequent send) can
+    // abort it.
+    if (abortRef.current) abortRef.current.abort();
+    const ac = new AbortController();
+    abortRef.current = ac;
+
+    // Track whether the failure happened BEFORE the stream started
+    // (response.ok=false) vs AFTER persistence began. Pre-stream
+    // failures may or may not have persisted the user message
+    // server-side (429 doesn't, 413 does), so on those we re-fetch
+    // the conversation to sync UI with server reality. Post-stream
+    // failures: the user message IS persisted, so we keep the
+    // optimistic row and just drop the streaming placeholder.
+    let failedPreStream = false;
 
     startTransition(async () => {
       try {
-        const updated = await appendUserMessage(
-          conversationId,
-          text,
-          activeStage as StageKey,
+        const response = await fetch("/api/orc/reply", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            signalId: signal.id,
+            userMessage: text,
+            stage: activeStage,
+          }),
+          signal: ac.signal,
+        });
+
+        if (!response.ok) {
+          // Structured error from the route (413, 429, etc.) — body
+          // is JSON with a detail field.
+          failedPreStream = true;
+          const err = (await response.json().catch(() => null)) as {
+            detail?: string;
+            error?: string;
+          } | null;
+          throw new Error(
+            err?.detail ?? err?.error ?? `Request failed (${response.status})`,
+          );
+        }
+
+        if (!response.body) {
+          failedPreStream = true;
+          throw new Error("No stream returned from server.");
+        }
+
+        await consumeStream(
+          response.body,
+          (chunk) => {
+            // Text-delta: append to the streaming ORC message.
+            setMessages((curr) => {
+              if (!curr) return curr;
+              const next = curr.slice();
+              const cur = next[orcIdx] as Message & { streaming?: boolean };
+              if (!cur) return curr;
+              next[orcIdx] = {
+                ...cur,
+                content: cur.content + chunk,
+              };
+              return next;
+            });
+          },
+          (chip) => {
+            // Chip from flag_concern / request_re_run. Attach to the
+            // current streaming ORC message by its per-call clientId
+            // (collision-safe key) so it renders below the reply text
+            // and stays correct even if the array shifts later.
+            setChipsByClientId((curr) => ({
+              ...curr,
+              [orcClientId]: [...(curr[orcClientId] ?? []), chip],
+            }));
+          },
         );
-        setMessages(updated);
+
+        // Stream closed cleanly — mark as no longer streaming
+        setMessages((curr) => {
+          if (!curr) return curr;
+          const next = curr.slice();
+          const cur = next[orcIdx] as Message & { streaming?: boolean };
+          if (!cur) return curr;
+          next[orcIdx] = {
+            ...cur,
+            streaming: false,
+          } as Message & { streaming: boolean };
+          return next;
+        });
       } catch (e) {
-        console.error("Failed to send ORC message:", e);
+        // AbortError = caller deliberately cancelled (signal change
+        // or a fresh send superseded this one). Don't show an error
+        // or rollback — the new context is already taking over.
+        if (e instanceof Error && e.name === "AbortError") {
+          return;
+        }
+        console.error("ORC reply failed:", e);
         setSendError(
-          e instanceof Error ? e.message : "Couldn't send your message.",
+          e instanceof Error ? e.message : "Something went wrong.",
         );
-        // Roll back the optimistic append
-        setMessages(prevMessages);
-        // Restore the input so the user can retry without re-typing
-        setInputValue(text);
+        // Always drop the streaming ORC placeholder.
+        setMessages((curr) => {
+          if (!curr) return curr;
+          const last = curr[curr.length - 1] as Message & {
+            streaming?: boolean;
+          } | undefined;
+          if (last && last.role === "orc" && last.streaming) {
+            return curr.slice(0, -1);
+          }
+          return curr;
+        });
+        // Drop any chips that were attached to the failed placeholder
+        // — its clientId won't be referenced anywhere now, so they'd
+        // just leak in memory.
+        setChipsByClientId((curr) => {
+          if (!(orcClientId in curr)) return curr;
+          const { [orcClientId]: _dropped, ...rest } = curr;
+          void _dropped;
+          return rest;
+        });
+        // Pre-stream failure: server may or may not have persisted
+        // the user message (429 doesn't, 404 doesn't, 413 does, ...).
+        // Re-fetch the conversation so UI matches server reality
+        // — drops the optimistic user row when the server didn't
+        // commit it, keeps it when it did.
+        // CodeRabbit pass 3: capture signal.id at failure time and
+        // re-check against currentSignalIdRef before applying. If the
+        // user switches signals between failure and reload completion,
+        // applying the old conversation would clobber the new signal's
+        // thread (race window of ~50-200ms in practice).
+        if (failedPreStream) {
+          const signalIdAtFailure = signal.id;
+          getOrCreateOrcConversation(signalIdAtFailure)
+            .then((convo) => {
+              if (currentSignalIdRef.current !== signalIdAtFailure) {
+                // User switched signals; the new signal's mount
+                // useEffect will load its own conversation. Drop ours.
+                return;
+              }
+              setMessages(convo.messages);
+            })
+            .catch((reloadErr: Error) => {
+              console.error(
+                "Conversation reload after failure failed:",
+                reloadErr,
+              );
+              // Best-effort: keep whatever local state is there. The
+              // user can refresh manually if it really matters.
+            });
+        }
+      } finally {
+        // Clear the abort ref only if it's still pointing at OUR
+        // controller — a concurrent send may have already replaced
+        // it with theirs.
+        if (abortRef.current === ac) {
+          abortRef.current = null;
+        }
       }
     });
   }
@@ -158,9 +384,21 @@ export function OrcPanel({
             No messages yet. Say something to ORC below.
           </div>
         ) : (
-          messages.map((msg, i) => (
-            <MessageRow key={`${msg.ts}-${i}`} msg={msg} />
-          ))
+          messages.map((msg, i) => {
+            // clientId only present on the streaming ORC placeholder
+            // (set in handleSend). Persisted messages don't have one,
+            // so the lookup falls through to undefined → no chips,
+            // which is correct since chips are ephemeral session state.
+            const clientId = (msg as Message & { clientId?: string })
+              .clientId;
+            return (
+              <MessageRow
+                key={`${msg.ts}-${i}`}
+                msg={msg}
+                chips={clientId ? chipsByClientId[clientId] : undefined}
+              />
+            );
+          })
         )}
       </div>
 
@@ -247,7 +485,125 @@ export function OrcPanel({
   );
 }
 
-function MessageRow({ msg }: { msg: Message }) {
+/** Chip payload — emitted by ORC's flag_concern / request_re_run tools. */
+export interface OrcChip {
+  type: "flag_concern" | "request_re_run";
+  reason: string;
+  /** Only set for request_re_run chips. */
+  stage?: string;
+}
+
+/**
+ * Consume a `toUIMessageStreamResponse()` body stream.
+ *
+ * AI SDK v6 streams a Server-Sent Events format — each event line
+ * starts with `data: ` followed by a JSON chunk. Chunk types we care
+ * about:
+ *   - `text-delta` → append fragment to the streaming reply
+ *   - `tool-output-available` → if the tool was flag_concern or
+ *     request_re_run, the output is a chip payload to surface in UI
+ *   - `error` → throw so caller handles rollback
+ *
+ * Other types (start, finish, tool-input-*, data-*) flow past. Tool
+ * executions still log to agent_logs server-side; we just don't need
+ * those events client-side.
+ */
+async function consumeStream(
+  body: ReadableStream<Uint8Array>,
+  onTextDelta: (fragment: string) => void,
+  onChip?: (chip: OrcChip) => void,
+): Promise<void> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      // SSE events are separated by a blank line ("\n\n"). Process
+      // each complete event, keep any trailing partial in the
+      // buffer for the next read.
+      let eventBoundary = buffer.indexOf("\n\n");
+      while (eventBoundary !== -1) {
+        const eventRaw = buffer.slice(0, eventBoundary);
+        buffer = buffer.slice(eventBoundary + 2);
+        eventBoundary = buffer.indexOf("\n\n");
+
+        // Each event has `data: <json>` lines. Concatenate them if
+        // multi-line, then parse.
+        const dataLines: string[] = [];
+        for (const line of eventRaw.split("\n")) {
+          if (line.startsWith("data: ")) {
+            dataLines.push(line.slice(6));
+          }
+        }
+        if (dataLines.length === 0) continue;
+        const raw = dataLines.join("\n");
+        // The AI SDK sends a plain "[DONE]" line at the end of some
+        // streams — ignore it.
+        if (raw === "[DONE]") continue;
+
+        let chunk: {
+          type?: string;
+          delta?: string;
+          errorText?: string;
+          output?: unknown;
+        };
+        try {
+          chunk = JSON.parse(raw);
+        } catch {
+          continue;
+        }
+
+        if (chunk.type === "text-delta" && typeof chunk.delta === "string") {
+          onTextDelta(chunk.delta);
+        } else if (
+          chunk.type === "tool-output-available" &&
+          chunk.output &&
+          typeof chunk.output === "object"
+        ) {
+          // Our chip tools return { type: "flag_concern", reason }
+          // or { type: "request_re_run", stage, reason }. Anything
+          // else (data tool output, side-effect confirmation) we
+          // ignore — text-delta carries the reply copy for those.
+          const out = chunk.output as {
+            type?: string;
+            reason?: string;
+            stage?: string;
+          };
+          if (
+            (out.type === "flag_concern" || out.type === "request_re_run") &&
+            typeof out.reason === "string"
+          ) {
+            onChip?.({
+              type: out.type,
+              reason: out.reason,
+              stage: out.stage,
+            });
+          }
+        } else if (chunk.type === "error") {
+          throw new Error(chunk.errorText ?? "Stream error");
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+function MessageRow({
+  msg,
+  chips,
+}: {
+  msg: Message & { streaming?: boolean };
+  chips?: OrcChip[];
+}) {
+  const isStreaming = msg.streaming === true;
+  const isEmptyStreaming = isStreaming && msg.content.length === 0;
+
   return (
     <div className="flex flex-col gap-[6px]">
       <div
@@ -256,7 +612,8 @@ function MessageRow({ msg }: { msg: Message }) {
         }`}
       >
         {msg.role === "orc" ? "ORC" : "You"}
-        {msg.ts && <span> · {formatTime(msg.ts)}</span>}
+        {msg.ts && !isStreaming && <span> · {formatTime(msg.ts)}</span>}
+        {isStreaming && <span className="text-t5"> · thinking…</span>}
         {msg.stage && msg.role === "user" && (
           <span className="text-t5"> · at {msg.stage}</span>
         )}
@@ -268,7 +625,79 @@ function MessageRow({ msg }: { msg: Message }) {
             : "font-display font-normal text-[14.5px] -tracking-[0.002em] text-t1"
         }
       >
-        {msg.content}
+        {/* When an ORC reply is streaming, show an animated breathing
+            dot as a caret so the user sees the reply is still coming.
+            The dot picks up the parent collection's decade color via
+            the existing `breathe` CSS class + rgba(var(--d)). */}
+        {isEmptyStreaming ? (
+          <span
+            className="breathe inline-block rounded-full align-middle"
+            style={{
+              width: 8,
+              height: 8,
+              background: "rgba(var(--d), 0.75)",
+            }}
+            aria-label="ORC is thinking"
+          />
+        ) : (
+          <>
+            {msg.content}
+            {isStreaming && (
+              <span
+                className="breathe inline-block ml-[3px] align-middle"
+                style={{
+                  width: 8,
+                  height: 14,
+                  background: "rgba(var(--d), 0.6)",
+                  verticalAlign: "text-bottom",
+                }}
+                aria-hidden
+              />
+            )}
+          </>
+        )}
+      </div>
+
+      {/* Chips — flag_concern / request_re_run payloads from tool
+          calls. Rendered as decade-tinted cards under the reply text.
+          Not clickable yet (Phase 9 wires reset action for re-run
+          chips; flag_concern is informational until we add a "keep
+          in journal" side panel). Ephemeral — chip state clears on
+          reload since it lives in component memory, not persisted. */}
+      {chips && chips.length > 0 && (
+        <div className="mt-[10px] flex flex-col gap-[8px]">
+          {chips.map((chip, i) => (
+            <ChipCard key={i} chip={chip} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ChipCard({ chip }: { chip: OrcChip }) {
+  const label =
+    chip.type === "flag_concern"
+      ? "ORC flags"
+      : `ORC suggests re-run · ${chip.stage ?? "stage"}`;
+  return (
+    <div
+      className="p-[10px_12px] border rounded-sm"
+      style={{
+        borderColor: "rgba(var(--d), 0.35)",
+        background: "rgba(var(--d), 0.05)",
+        borderLeftWidth: 2,
+        borderLeftColor: "rgba(var(--d), 0.7)",
+      }}
+    >
+      <div
+        className="font-mono text-[9px] tracking-[0.22em] uppercase mb-[4px]"
+        style={{ color: "rgba(var(--d), 0.92)" }}
+      >
+        {label}
+      </div>
+      <div className="font-editorial text-[13px] leading-[1.45] text-t2">
+        {chip.reason}
       </div>
     </div>
   );

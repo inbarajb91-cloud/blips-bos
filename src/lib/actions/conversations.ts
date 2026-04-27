@@ -4,6 +4,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db, agentConversations, signals } from "@/db";
 import { getCurrentUserWithOrg } from "@/lib/auth/current-user";
+import { getActiveJourney } from "@/lib/orc/journey";
 
 /**
  * ORC conversation actions — Phase 7D.
@@ -72,38 +73,35 @@ export async function getOrCreateOrcConversation(
     .limit(1);
   if (!signal) throw new Error("Signal not found");
 
+  // Resolve the active journey for this signal. Every signal has
+  // exactly one active journey at any time (partial unique index
+  // enforces it); the ORC conversation is scoped to THAT journey so
+  // resetting a signal (archiving the active journey, spawning a new
+  // one) gives ORC a fresh thread on the new attempt while preserving
+  // the old journey's thread readable as history.
+  const activeJourney = await getActiveJourney(signalId);
+
   // SELECT first, INSERT if missing, catch 23505 on the race.
   //
-  // The earlier draft used `INSERT ... ON CONFLICT (signal_id,
-  // agent_name) DO UPDATE` — elegant when the unique index exists, but
-  // statement-fatal when it doesn't. Postgres parses `ON CONFLICT
-  // (cols)` against the catalog at execution time and errors with
-  // "there is no unique or exclusion constraint matching the ON
-  // CONFLICT specification" if no matching index is found. That bit
-  // prod: the schema ships the `uniqueIndex` declaration, but the
-  // matching migration (0001_unique_orc_thread.sql) has to be applied
-  // manually to Supabase (the repo uses hand-managed SQL sidecars, not
-  // drizzle-kit auto-migrate), and between the code landing and the
-  // SQL running, every signal open raised an error.
+  // Post-Phase-8 the unique index is on (journey_id, agent_name) — a
+  // new journey naturally gets its own ORC thread because its
+  // journey_id is fresh. Race only matters when two concurrent first
+  // opens hit the same journey at the same time, which is the same
+  // race we handled in Phase 7.
   //
-  // The pattern here is resilient to both states:
-  //
-  //   1. Index not yet created: SELECT returns either the existing
-  //      row (normal) or nothing → INSERT proceeds and succeeds. No
-  //      23505 is possible because there's no unique constraint. A
-  //      concurrent race can still produce duplicates (old behavior
-  //      before this PR — accepted transiently until migration lands).
-  //
-  //   2. Index created: a losing racer hits 23505. We catch it,
-  //      re-SELECT, and return the winning row. No duplicates land.
-  //
-  // Either way the caller always gets a valid OrcConversation back.
+  // The pattern is resilient regardless of index presence:
+  //   1. Index present + no race: SELECT → nothing → INSERT succeeds.
+  //   2. Index present + race: losing racer catches 23505 and
+  //      re-SELECTs the winner.
+  //   3. Index absent (pre-migration): INSERT always succeeds; races
+  //      may produce duplicates, accepted transiently until migration
+  //      lands — same pattern used in Phase 7 and still apt here.
   const [existing] = await db
     .select()
     .from(agentConversations)
     .where(
       and(
-        eq(agentConversations.signalId, signalId),
+        eq(agentConversations.journeyId, activeJourney.id),
         eq(agentConversations.agentName, "ORC"),
       ),
     )
@@ -129,6 +127,7 @@ export async function getOrCreateOrcConversation(
       .insert(agentConversations)
       .values({
         signalId,
+        journeyId: activeJourney.id,
         agentName: "ORC",
         messages: [seedMessage],
       })
@@ -146,7 +145,7 @@ export async function getOrCreateOrcConversation(
       .from(agentConversations)
       .where(
         and(
-          eq(agentConversations.signalId, signalId),
+          eq(agentConversations.journeyId, activeJourney.id),
           eq(agentConversations.agentName, "ORC"),
         ),
       )
@@ -154,7 +153,7 @@ export async function getOrCreateOrcConversation(
       .limit(1);
     if (!raced) {
       // Shouldn't happen: 23505 means there's already a row on the
-      // (signal_id, agent_name) pair. If the select misses, something
+      // (journey_id, agent_name) pair. If the select misses, something
       // is truly wrong — surface the original error to keep diagnostics.
       throw e;
     }
@@ -233,6 +232,13 @@ export async function appendUserMessage(
   // name and keeps future phases' per-agent threads isolated from
   // cross-agent append.
   //
+  // Phase 8: also join journeys and require `status = 'active'`.
+  // When Phase 9's archived-journey-view UX lands, the client will
+  // already prevent sends from read-only mode, but defense in depth
+  // matters — a crafted request against an archived-journey
+  // conversationId should touch zero rows, not silently append into
+  // history. "Not found" is the right surface either way.
+  //
   // Concurrent appends serialize on the row's write lock — the DB is
   // the source of truth for ordering, not the client. No message drop.
   const newMessageJson = JSON.stringify(newMessage);
@@ -240,11 +246,13 @@ export async function appendUserMessage(
     UPDATE agent_conversations AS ac
     SET messages = ac.messages || jsonb_build_array(${newMessageJson}::jsonb),
         updated_at = NOW()
-    FROM signals AS s
+    FROM signals AS s, journeys AS j
     WHERE ac.id = ${conversationId}::uuid
       AND ac.agent_name = 'ORC'
       AND s.id = ac.signal_id
       AND s.org_id = ${user.orgId}::uuid
+      AND j.id = ac.journey_id
+      AND j.status = 'active'
     RETURNING ac.messages
   `);
 

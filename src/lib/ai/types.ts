@@ -43,6 +43,12 @@ export type AgentLogAction =
 export interface AgentCallMetadata {
   orgId: string;
   signalId?: string;
+  /** Phase 8 — optional journey scoping for per-signal log rows.
+   *  Pre-signal BUNKER extraction logs and cron-triggered source
+   *  fetches leave this unset (they're not inside any journey).
+   *  Post-signal agent calls should populate it so observability
+   *  queries can filter by "this journey's costs." */
+  journeyId?: string;
   agentName: AgentKey;
   action: AgentLogAction;
   model?: string;
