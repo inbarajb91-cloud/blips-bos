@@ -1,4 +1,6 @@
 import Supermemory from "supermemory";
+import { eq } from "drizzle-orm";
+import { db, orgs } from "@/db";
 import type {
   MemoryBackend,
   MemoryContainer,
@@ -9,18 +11,95 @@ import type {
 } from "./types";
 
 /**
- * Map a (orgId, container) pair to a supermemory containerTag. The
- * 'test' container gets its own supermemory tenant entirely — that's
- * the wall that stops smoke-test pollution from ever leaking into
- * production recall.
+ * Per-container, slug-based supermemory tags.
  *
- *   events    → 'org-{orgId}'         (production)
- *   knowledge → 'org-{orgId}'         (production, distinguished by metadata.container)
- *   test      → 'org-test-{orgId}'    (separate supermemory tenant)
+ * Originally we tagged everything as `org-{uuid}` and `org-test-{uuid}`,
+ * with the production tag holding BOTH events + knowledge differentiated
+ * by metadata.container. That was correct but unreadable in supermemory's
+ * dashboard — the UUID gives no signal about what the bucket is, and you
+ * couldn't see "what's in events vs knowledge" without filtering by metadata.
+ *
+ * The new tag layout splits each container into its own tag and uses the
+ * org's stable slug:
+ *
+ *   events    → 'org-{slug}-events'        e.g. org-blips-events
+ *   knowledge → 'org-{slug}-knowledge'     e.g. org-blips-knowledge
+ *   test      → 'org-test-{slug}'          e.g. org-test-blips
+ *
+ * Two upsides:
+ *   1. The dashboard reads at a glance — you can see exactly which
+ *      bucket every doc belongs to without reading metadata.
+ *   2. Recall scoping is now enforced at the supermemory containerTag
+ *      boundary instead of by post-filtering metadata.container — fewer
+ *      hits to wade through, less risk of a misconfigured filter
+ *      surfacing the wrong bucket.
+ *
+ * The org's UUID still uniquely identifies the tenant in Postgres; the
+ * slug is the human-facing identifier in supermemory. Both are unique;
+ * `orgs.slug` is NOT NULL with a UNIQUE index.
  */
-function containerTagFor(orgId: string, container: MemoryContainer): string {
-  if (container === "test") return `org-test-${orgId}`;
-  return `org-${orgId}`;
+/**
+ * Returns the slug-based container tag, or an empty string if the
+ * slug lookup fails. Empty-string return is the sentinel for "fail
+ * closed" — callers MUST treat it as "do not write/read" rather than
+ * substituting a fallback tag.
+ *
+ * CodeRabbit pass on PR #6 caught the previous behavior — falling
+ * back to `org-{uuid}-{container}` on slug-lookup failure created a
+ * split bucket: writes landed under the UUID-tagged tag, reads went
+ * to the slug-tagged tag, doc was invisible to recall, and callers
+ * happily persisted a non-empty supermemoryId. We now fail closed.
+ */
+async function buildContainerTag(
+  orgId: string,
+  container: MemoryContainer,
+  slugCache: Map<string, string>,
+): Promise<string> {
+  const slug = await resolveOrgSlug(orgId, slugCache);
+  if (!slug) return ""; // fail-closed sentinel for caller
+  if (container === "test") return `org-test-${slug}`;
+  return `org-${slug}-${container}`;
+}
+
+/**
+ * Look up an org's slug, with a process-local cache so memory writes
+ * don't query Postgres on every call. Slugs don't change after creation,
+ * so the cache is effectively eternal for the life of the process.
+ *
+ * Returns "" when the slug can't be resolved. Caller treats that as
+ * "do not write/read" — see buildContainerTag for the fail-closed
+ * rationale. Does NOT cache the empty string so the next call retries
+ * (e.g. after a transient DB hiccup).
+ */
+async function resolveOrgSlug(
+  orgId: string,
+  cache: Map<string, string>,
+): Promise<string> {
+  const cached = cache.get(orgId);
+  if (cached) return cached;
+
+  try {
+    const [row] = await db
+      .select({ slug: orgs.slug })
+      .from(orgs)
+      .where(eq(orgs.id, orgId))
+      .limit(1);
+
+    if (row?.slug) {
+      cache.set(orgId, row.slug);
+      return row.slug;
+    }
+    console.error(
+      `[memory] org ${orgId} has no slug — failing closed (will not write/read)`,
+    );
+  } catch (err) {
+    console.error(
+      "[memory] resolveOrgSlug failed — failing closed:",
+      safeError(err),
+    );
+  }
+
+  return "";
 }
 
 /**
@@ -81,7 +160,7 @@ function safeError(err: unknown): {
 }
 
 /**
- * Supermemory backend — Phase 8K.
+ * Supermemory backend — Phase 8K + 8L (slug-based per-container tags).
  *
  * Thin wrapper around the `supermemory` npm package (v4.21+). Translates
  * our MemoryBackend contract into supermemory's actual API:
@@ -91,13 +170,14 @@ function safeError(err: unknown): {
  *     call carries a single semantic fact.
  *   - READ: `client.search.memories({q, containerTag, ...})` — low-
  *     latency conversational search. Returns extracted memory entries
- *     ranked by similarity.
+ *     ranked by similarity. When recall spans multiple containers
+ *     (default: events + knowledge), we fan out one search per tag in
+ *     parallel and merge results by similarity.
  *
- * Tenant scoping uses supermemory's `containerTag` primitive. We tag
- * every document with `org-{orgId}` so cross-org leaks are impossible
- * at the API boundary, not just at our app code. Sub-org scoping
- * (kind / signal / journey / collection) lives in metadata, which we
- * post-filter in JS — fine at our hit volume.
+ * Tenant scoping uses supermemory's `containerTag` primitive in a per-
+ * container, slug-based layout (see buildContainerTag above). Sub-org
+ * scoping (kind / signal / journey / collection) lives in metadata,
+ * which we post-filter in JS — fine at our hit volume.
  *
  * Failure philosophy: ALL errors are swallowed. Memory must never
  * break ORC's reply path. We log to console for now; a future hook
@@ -117,6 +197,7 @@ export interface SupermemoryBackendOptions {
 
 export class SupermemoryBackend implements MemoryBackend {
   private client: Supermemory;
+  private slugCache = new Map<string, string>();
 
   constructor(opts: SupermemoryBackendOptions) {
     this.client = new Supermemory({
@@ -128,7 +209,18 @@ export class SupermemoryBackend implements MemoryBackend {
   async remember(item: MemoryItem): Promise<{ id: string }> {
     try {
       const container: MemoryContainer = item.container ?? "events";
-      const containerTag = containerTagFor(item.orgId, container);
+      const containerTag = await buildContainerTag(
+        item.orgId,
+        container,
+        this.slugCache,
+      );
+
+      // Fail closed if slug couldn't be resolved (CodeRabbit pass on
+      // PR #6). resolveOrgSlug already logged the failure. Returning
+      // {id: ""} mirrors a write-failure response so callers fall
+      // through to their retry/skip path instead of persisting a
+      // bogus supermemoryId.
+      if (!containerTag) return { id: "" };
 
       // Metadata values can only be primitives or string[]. We
       // serialize caller metadata FIRST (lowest priority), then
@@ -158,6 +250,10 @@ export class SupermemoryBackend implements MemoryBackend {
         }
       }
       // Reserved wrapper keys assigned LAST so they win on collision.
+      // We still set `container` in metadata even though the tag now
+      // encodes it — defense-in-depth for any hit that ends up in a
+      // mixed-tag query and as a tiebreaker if a caller ever passes
+      // multiple containers explicitly.
       metadata.kind = item.kind;
       metadata.container = container;
       if (item.signalId) metadata.signalId = item.signalId;
@@ -183,10 +279,10 @@ export class SupermemoryBackend implements MemoryBackend {
   ): Promise<MemoryHit[]> {
     try {
       // Container scoping: if scope.container is undefined, default
-      // to the production tenant (events + knowledge, NOT test). If
-      // explicitly 'test' (or includes test), we hit the isolated
-      // test tenant. Mixing prod + test in one query isn't supported
-      // — they live in different supermemory containerTags.
+      // to BOTH production tenants (events + knowledge, NOT test).
+      // If explicitly 'test' (or includes test), we only hit the
+      // isolated test tenant — mixing prod + test in one query isn't
+      // supported.
       const requestedContainers = scope.container
         ? Array.isArray(scope.container)
           ? scope.container
@@ -199,9 +295,22 @@ export class SupermemoryBackend implements MemoryBackend {
           "[memory] recall: mixing 'test' with other containers is unsupported; using test only",
         );
       }
-      const containerTag = isTestSearch
-        ? `org-test-${scope.orgId}`
-        : `org-${scope.orgId}`;
+      const containers: MemoryContainer[] = isTestSearch
+        ? ["test"]
+        : requestedContainers;
+
+      // Resolve all tags up front so the per-container fan-out is
+      // a single round-trip after the slug cache is warm.
+      const tags = await Promise.all(
+        containers.map((c) => buildContainerTag(scope.orgId, c, this.slugCache)),
+      );
+
+      // Fail closed if any tag couldn't be resolved (slug lookup
+      // failure). resolveOrgSlug already logged. Empty array mirrors
+      // a backend-failure response so the caller's reasoning path
+      // doesn't get a partial result that misrepresents what's in
+      // memory.
+      if (tags.some((t) => !t)) return [];
 
       // Clamp limit to sane range — pre-CodeRabbit-pass-6 a caller
       // passing 0, NaN, or a negative would silently degrade to
@@ -215,28 +324,50 @@ export class SupermemoryBackend implements MemoryBackend {
 
       // Over-fetch when ANY post-filter applies, so the final result
       // still has `limit` hits in most cases. Cap at 25 to stay well
-      // within supermemory's per-call quotas.
-      const wantPostFilter =
-        Boolean(scope.signalId || scope.journeyId || scope.collectionId) ||
-        Boolean(scope.kind) ||
-        // For production tenant, we still post-filter by metadata.container
-        // when caller specified a subset (e.g. 'knowledge' only).
-        (!isTestSearch &&
-          requestedContainers.length === 1 &&
-          requestedContainers[0] !== "events");
-      const fetchLimit = wantPostFilter ? Math.min(limit * 4, 25) : limit;
+      // within supermemory's per-call quotas. Note: tag-based
+      // container scoping no longer needs over-fetching for the
+      // container filter (each container is its own tag now), but
+      // signal/journey/collection/kind still post-filter.
+      const wantPostFilter = Boolean(
+        scope.signalId || scope.journeyId || scope.collectionId || scope.kind,
+      );
+      const perTagFetchLimit = wantPostFilter
+        ? Math.min(limit * 4, 25)
+        : limit;
 
-      const result = await this.client.search.memories({
-        q: query,
-        containerTag,
-        limit: fetchLimit,
-        // rerank improves quality at +200-300ms latency. Worth it
-        // for ORC's recall use case — we only call this when ORC
-        // explicitly needs memory, so latency budget is forgiving.
-        rerank: true,
+      // Fan out: one search per tag, in parallel. Each call hits a
+      // different supermemory bucket so they don't compete; merging
+      // happens in JS by similarity descending.
+      //
+      // Promise.allSettled (CodeRabbit pass on PR #6): with plain
+      // Promise.all, one rejected tag query would discard the entire
+      // recall and return [] — that makes the new split-tag layout
+      // strictly less reliable than the single-tag predecessor, since
+      // any partial outage in one bucket nukes everything else.
+      // allSettled keeps successful tags' results and just logs the
+      // failed one.
+      const responses = await Promise.allSettled(
+        tags.map((containerTag) =>
+          this.client.search.memories({
+            q: query,
+            containerTag,
+            limit: perTagFetchLimit,
+            // rerank improves quality at +200-300ms latency. Worth it
+            // for ORC's recall use case — we only call this when ORC
+            // explicitly needs memory, so latency budget is forgiving.
+            rerank: true,
+          }),
+        ),
+      );
+
+      const raw = responses.flatMap((r, i) => {
+        if (r.status === "fulfilled") return r.value.results ?? [];
+        console.warn(
+          `[memory] supermemory.recall failed for tag ${tags[i]}:`,
+          safeError(r.reason),
+        );
+        return [];
       });
-
-      const raw = result.results ?? [];
 
       const filtered = raw.filter((r) => {
         const m = (r.metadata ?? {}) as Record<string, unknown>;
@@ -255,12 +386,6 @@ export class SupermemoryBackend implements MemoryBackend {
             : [scope.kind];
           if (!kinds.includes(m.kind as MemoryKind)) return false;
         }
-        // Container filter (only relevant for production tenant where
-        // both events + knowledge live behind the same containerTag).
-        if (!isTestSearch) {
-          const c = (m.container ?? "events") as MemoryContainer;
-          if (!requestedContainers.includes(c)) return false;
-        }
         if (scope.signalId && m.signalId !== scope.signalId) return false;
         if (scope.journeyId && m.journeyId !== scope.journeyId) return false;
         if (scope.collectionId && m.collectionId !== scope.collectionId) {
@@ -268,6 +393,16 @@ export class SupermemoryBackend implements MemoryBackend {
         }
         return true;
       });
+
+      // Sort by similarity descending across all tags, then cap at
+      // `limit`. Without this sort, results are clustered per-tag in
+      // the order the parallel responses returned — a high-similarity
+      // hit in tag 2 could lose to a low-similarity hit in tag 1.
+      filtered.sort(
+        (a, b) =>
+          (typeof b.similarity === "number" ? b.similarity : 0) -
+          (typeof a.similarity === "number" ? a.similarity : 0),
+      );
 
       return filtered.slice(0, limit).map((r) => {
         const m = (r.metadata ?? {}) as Record<string, unknown>;
