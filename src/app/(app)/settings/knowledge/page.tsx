@@ -27,7 +27,7 @@ export default async function KnowledgeListPage({
   });
 
   return (
-    <div className="max-w-4xl mx-auto px-6 md:px-10 pt-10 pb-16">
+    <div className="max-w-6xl mx-auto px-6 md:px-10 pt-10 pb-16">
       <div className="flex items-start justify-between gap-6 mb-2">
         <div>
           <h1 className="font-display text-2xl font-semibold">Knowledge</h1>

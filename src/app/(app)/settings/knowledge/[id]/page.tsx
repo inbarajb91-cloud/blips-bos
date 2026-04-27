@@ -25,7 +25,7 @@ export default async function EditKnowledgeDocPage({
   if (!doc) notFound();
 
   return (
-    <div className="max-w-6xl mx-auto px-6 md:px-10 pt-10 pb-16">
+    <div className="max-w-[1600px] mx-auto px-6 md:px-10 pt-10 pb-16">
       <KnowledgeEditor mode="edit" doc={doc} versions={versions} />
     </div>
   );

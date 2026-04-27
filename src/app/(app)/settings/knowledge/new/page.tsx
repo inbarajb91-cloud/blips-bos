@@ -11,7 +11,7 @@ export const metadata = { title: "New knowledge doc · BLIPS" };
 export default async function NewKnowledgeDocPage() {
   await requireFounder();
   return (
-    <div className="max-w-4xl mx-auto px-6 md:px-10 pt-10 pb-16">
+    <div className="max-w-6xl mx-auto px-6 md:px-10 pt-10 pb-16">
       <KnowledgeEditor mode="new" />
     </div>
   );
