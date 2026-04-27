@@ -2,7 +2,7 @@
 
 BLIPS Brand Operating System — the internal platform that powers BLIPS's product design pipeline.
 
-**Status:** Phases 1–7 shipped to production. Phase 8 (~85%) live on `phase-8/conversational-orc` branch — conversational ORC + cross-signal long-term memory.
+**Status:** Phases 1–8 shipped to production (conversational ORC + cross-signal long-term memory). Phase 8K (stage-completion memory hook) shipping next on this branch.
 
 ## What this is
 
@@ -50,7 +50,7 @@ npm run dev
 
 See the [Notion project plan](https://www.notion.so/348df0e1f1b581769c60d81213e4f8e3) for the full phase-by-phase build.
 
-Phases 1–8 shipped to main and live in production. Phase 8 (Conversational ORC + Memory Layer) merged April 27 as `e6455d9`. Next: Phase 8K stage-completion hook, Phase 8L curated knowledge UI, Phase 8M proactive surfacing.
+Phases 1–8 shipped to main and live in production. Phase 8 (Conversational ORC + Memory Layer) merged April 27 as `e6455d9`. This PR ships **Phase 8K stage-completion hook** — orchestrator writes a memory row to the `events` container after each agent_outputs insert so ORC can later recall stage-level patterns across signals. Next on the queue: Phase 8L curated knowledge UI, Phase 8M proactive surfacing.
 
 ## Private repo — access
 
