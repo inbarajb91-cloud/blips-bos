@@ -38,12 +38,25 @@ import type {
  * slug is the human-facing identifier in supermemory. Both are unique;
  * `orgs.slug` is NOT NULL with a UNIQUE index.
  */
+/**
+ * Returns the slug-based container tag, or an empty string if the
+ * slug lookup fails. Empty-string return is the sentinel for "fail
+ * closed" — callers MUST treat it as "do not write/read" rather than
+ * substituting a fallback tag.
+ *
+ * CodeRabbit pass on PR #6 caught the previous behavior — falling
+ * back to `org-{uuid}-{container}` on slug-lookup failure created a
+ * split bucket: writes landed under the UUID-tagged tag, reads went
+ * to the slug-tagged tag, doc was invisible to recall, and callers
+ * happily persisted a non-empty supermemoryId. We now fail closed.
+ */
 async function buildContainerTag(
   orgId: string,
   container: MemoryContainer,
   slugCache: Map<string, string>,
 ): Promise<string> {
   const slug = await resolveOrgSlug(orgId, slugCache);
+  if (!slug) return ""; // fail-closed sentinel for caller
   if (container === "test") return `org-test-${slug}`;
   return `org-${slug}-${container}`;
 }
@@ -53,11 +66,10 @@ async function buildContainerTag(
  * don't query Postgres on every call. Slugs don't change after creation,
  * so the cache is effectively eternal for the life of the process.
  *
- * Falls back to the orgId itself if the slug lookup fails — this should
- * never happen in practice (slug is NOT NULL, UNIQUE) but keeps memory
- * writes from breaking on a transient db hiccup. The fallback tag will
- * be different from the slug-based tag, so a recall after a transient
- * failure could miss the doc — accepted as a degradation, not a leak.
+ * Returns "" when the slug can't be resolved. Caller treats that as
+ * "do not write/read" — see buildContainerTag for the fail-closed
+ * rationale. Does NOT cache the empty string so the next call retries
+ * (e.g. after a transient DB hiccup).
  */
 async function resolveOrgSlug(
   orgId: string,
@@ -77,13 +89,17 @@ async function resolveOrgSlug(
       cache.set(orgId, row.slug);
       return row.slug;
     }
+    console.error(
+      `[memory] org ${orgId} has no slug — failing closed (will not write/read)`,
+    );
   } catch (err) {
-    console.error("[memory] failed to resolve org slug, falling back to orgId:", safeError(err));
+    console.error(
+      "[memory] resolveOrgSlug failed — failing closed:",
+      safeError(err),
+    );
   }
 
-  // Fallback: use the orgId. Tag still unique per tenant; just less
-  // readable. Don't cache — let the next call retry the slug lookup.
-  return orgId;
+  return "";
 }
 
 /**
@@ -199,6 +215,13 @@ export class SupermemoryBackend implements MemoryBackend {
         this.slugCache,
       );
 
+      // Fail closed if slug couldn't be resolved (CodeRabbit pass on
+      // PR #6). resolveOrgSlug already logged the failure. Returning
+      // {id: ""} mirrors a write-failure response so callers fall
+      // through to their retry/skip path instead of persisting a
+      // bogus supermemoryId.
+      if (!containerTag) return { id: "" };
+
       // Metadata values can only be primitives or string[]. We
       // serialize caller metadata FIRST (lowest priority), then
       // overwrite with reserved wrapper keys (kind / container /
@@ -282,6 +305,13 @@ export class SupermemoryBackend implements MemoryBackend {
         containers.map((c) => buildContainerTag(scope.orgId, c, this.slugCache)),
       );
 
+      // Fail closed if any tag couldn't be resolved (slug lookup
+      // failure). resolveOrgSlug already logged. Empty array mirrors
+      // a backend-failure response so the caller's reasoning path
+      // doesn't get a partial result that misrepresents what's in
+      // memory.
+      if (tags.some((t) => !t)) return [];
+
       // Clamp limit to sane range — pre-CodeRabbit-pass-6 a caller
       // passing 0, NaN, or a negative would silently degrade to
       // empty recalls or send invalid fetch limits to supermemory.
@@ -308,7 +338,15 @@ export class SupermemoryBackend implements MemoryBackend {
       // Fan out: one search per tag, in parallel. Each call hits a
       // different supermemory bucket so they don't compete; merging
       // happens in JS by similarity descending.
-      const responses = await Promise.all(
+      //
+      // Promise.allSettled (CodeRabbit pass on PR #6): with plain
+      // Promise.all, one rejected tag query would discard the entire
+      // recall and return [] — that makes the new split-tag layout
+      // strictly less reliable than the single-tag predecessor, since
+      // any partial outage in one bucket nukes everything else.
+      // allSettled keeps successful tags' results and just logs the
+      // failed one.
+      const responses = await Promise.allSettled(
         tags.map((containerTag) =>
           this.client.search.memories({
             q: query,
@@ -322,7 +360,14 @@ export class SupermemoryBackend implements MemoryBackend {
         ),
       );
 
-      const raw = responses.flatMap((r) => r.results ?? []);
+      const raw = responses.flatMap((r, i) => {
+        if (r.status === "fulfilled") return r.value.results ?? [];
+        console.warn(
+          `[memory] supermemory.recall failed for tag ${tags[i]}:`,
+          safeError(r.reason),
+        );
+        return [];
+      });
 
       const filtered = raw.filter((r) => {
         const m = (r.metadata ?? {}) as Record<string, unknown>;

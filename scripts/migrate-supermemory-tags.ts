@@ -78,12 +78,30 @@ async function main() {
 
   for (const org of orgRows) {
     console.log(
-      `\n[migrate] org ${org.slug} (${org.id}) — clearing old tags`,
+      `\n[migrate] org ${org.slug} (${org.id}) — clearing tags`,
     );
 
-    const oldTags = [`org-${org.id}`, `org-test-${org.id}`];
-    for (const oldTag of oldTags) {
-      await deleteAllInTag(client, oldTag, isDryRun);
+    // CodeRabbit pass on PR #6: also clear the NEW knowledge tag.
+    // Without this, re-running the migration after a partial failure
+    // would write a second copy of every knowledge doc into
+    // org-{slug}-knowledge — supermemory's documents.add() always
+    // creates a new doc, never upserts. Clearing the target tag
+    // makes the migration idempotent / restart-safe.
+    //
+    // We do NOT clear `org-{slug}-events` or `org-test-{slug}` here:
+    //   - events: rebuilt organically by hooks; nothing for us to
+    //     restore. If the migration ever re-runs mid-flight there's
+    //     no doc to duplicate.
+    //   - test: smoke tests are transient by definition; eval suite
+    //     cleans up after itself via memory.forget(). No re-sync step
+    //     writes to it.
+    const tagsToClear = [
+      `org-${org.id}`, // old layout
+      `org-test-${org.id}`, // old layout
+      `org-${org.slug}-knowledge`, // new layout — re-sync target
+    ];
+    for (const tag of tagsToClear) {
+      await deleteAllInTag(client, tag, isDryRun);
     }
   }
 
@@ -252,6 +270,49 @@ async function deleteAllInTag(
 }
 
 main().catch((err) => {
-  console.error("[migrate] fatal:", err);
+  // Sanitize the SDK error before logging (CodeRabbit pass on PR #6).
+  // Supermemory's error objects can carry the original Authorization
+  // header (our API key) and request/response bodies (full document
+  // content). We extract a small redacted summary instead.
+  console.error("[migrate] fatal:", redactError(err));
   process.exit(1);
 });
+
+/**
+ * Local copy of the safeError() helper used by the supermemory
+ * wrapper. Kept inline here so the migration script doesn't pull in
+ * the whole memory module just for this helper. Strips
+ * Authorization headers, request payloads, and response bodies;
+ * keeps name + message + status + the supermemory-specific error
+ * string when present.
+ */
+function redactError(err: unknown): {
+  name: string;
+  message: string;
+  status?: number;
+  code?: string;
+  errorBody?: string;
+} {
+  if (err instanceof Error) {
+    const out: ReturnType<typeof redactError> = {
+      name: err.name,
+      message: err.message,
+    };
+    const anyErr = err as Error & {
+      status?: unknown;
+      code?: unknown;
+      error?: { error?: unknown };
+    };
+    if (typeof anyErr.status === "number") out.status = anyErr.status;
+    if (typeof anyErr.code === "string") out.code = anyErr.code;
+    if (
+      anyErr.error &&
+      typeof anyErr.error === "object" &&
+      typeof anyErr.error.error === "string"
+    ) {
+      out.errorBody = anyErr.error.error;
+    }
+    return out;
+  }
+  return { name: "UnknownError", message: String(err) };
+}
