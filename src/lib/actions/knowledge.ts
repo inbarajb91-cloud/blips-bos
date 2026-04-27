@@ -318,8 +318,22 @@ export async function updateKnowledgeDocument(
   const nextVersion = existing.currentVersion + 1;
   const previousSupermemoryId = existing.supermemoryId;
 
+  // Optimistic locking on currentVersion (CodeRabbit local CLI):
+  // the previous read-then-update could race if two concurrent saves
+  // both read currentVersion=N. Both would compute nextVersion=N+1;
+  // one would win the UNIQUE on (documentId, version) and the other
+  // would surface a confusing constraint violation, plus
+  // knowledgeDocuments.currentVersion would only reflect one of the
+  // two saves' fields (the last writer's title/content/tags).
+  //
+  // Adding eq(currentVersion, existing.currentVersion) in the WHERE
+  // means only one of the racing transactions advances the row;
+  // .returning() gives us the affected count, and zero means we
+  // raced and should ask the user to refresh. The (documentId,
+  // version) UNIQUE constraint on knowledge_document_versions stays
+  // as defense in depth.
   await db.transaction(async (tx) => {
-    await tx
+    const updated = await tx
       .update(knowledgeDocuments)
       .set({
         title,
@@ -333,8 +347,20 @@ export async function updateKnowledgeDocument(
         and(
           eq(knowledgeDocuments.id, input.documentId),
           eq(knowledgeDocuments.orgId, user.orgId),
+          eq(knowledgeDocuments.currentVersion, existing.currentVersion),
         ),
+      )
+      .returning({ id: knowledgeDocuments.id });
+
+    if (updated.length === 0) {
+      // Either someone else saved between our SELECT and UPDATE, or
+      // the row was archived. Throwing inside tx rolls back the
+      // version insert too; user-facing message is generic enough
+      // to cover both cases.
+      throw new Error(
+        "This document was updated by someone else (or archived) while you were editing. Refresh and try again.",
       );
+    }
 
     await tx.insert(knowledgeDocumentVersions).values({
       documentId: input.documentId,

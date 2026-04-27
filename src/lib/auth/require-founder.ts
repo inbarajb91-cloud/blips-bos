@@ -24,8 +24,11 @@ export async function requireFounder(): Promise<CurrentUserWithOrg> {
     throw new Error("Unauthenticated");
   }
   if (user.role !== "FOUNDER") {
+    // Generic message — kept agnostic of the current founder's
+    // identity so it survives any future ownership / staffing change.
+    // CodeRabbit local CLI flagged the previous hardcoded name.
     throw new Error(
-      "Only the founder can edit knowledge documents. Contact Inba if you need access.",
+      "Only the founder can edit knowledge documents. Contact your organization admin if you need access.",
     );
   }
   return user;

@@ -158,6 +158,20 @@ async function main() {
 
       if (!full) continue;
 
+      // Defensive guard: knowledge_documents.content is NOT NULL at
+      // the schema level, but Drizzle's type inference can still
+      // surface null/undefined if a row was written through a path
+      // that bypassed app-level validation (e.g. a manual SQL fix).
+      // Skip rather than write "# Title\n\nundefined" into supermemory
+      // — the user can republish from the UI to restore the entry.
+      // CodeRabbit local CLI flagged this.
+      if (!full.content) {
+        console.warn(
+          `[migrate] skipping "${full.title}" (v${full.currentVersion}) — content is empty/null`,
+        );
+        continue;
+      }
+
       const summary = `# ${full.title}\n\n${full.content}`;
 
       console.log(
