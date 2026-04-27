@@ -1,9 +1,11 @@
-import { db, agentOutputs } from "@/db";
+import { eq } from "drizzle-orm";
+import { db, agentOutputs, signals } from "@/db";
 import { generateStructured } from "@/lib/ai/generate";
 import { loadSkill } from "@/skills";
 import { logAgentCall } from "@/lib/ai/logger";
 import type { AgentKey } from "@/lib/ai/types";
 import { getActiveJourney } from "@/lib/orc/journey";
+import { getMemoryBackend } from "@/lib/orc/memory";
 
 export interface RunSkillParams<TInput> {
   agentKey: AgentKey;
@@ -101,6 +103,51 @@ export async function runSkill<TInput, TOutput>(
     status: "success",
     metadata: { outputId: row.id, outputType: agentKey.toLowerCase() },
   });
+
+  // 6. Memory write — Phase 8K stage-completion hook. Records that
+  // this stage's output landed so ORC can later recall "show me how
+  // BUNKER handled signals like this" or detect patterns across many
+  // stage runs. Fire-and-forget by design (memory failures must not
+  // break the pipeline). Wrapped in try/catch as a final safety net
+  // even though the backend swallows its own errors — anything
+  // unexpected here would otherwise propagate up and fail the
+  // skill's Inngest function unnecessarily.
+  try {
+    const [signalRow] = await db
+      .select({
+        shortcode: signals.shortcode,
+        workingTitle: signals.workingTitle,
+      })
+      .from(signals)
+      .where(eq(signals.id, signalId))
+      .limit(1);
+
+    if (signalRow) {
+      const memory = await getMemoryBackend();
+      await memory.remember({
+        orgId,
+        container: "events",
+        kind: "stage_completion",
+        content:
+          `Stage ${agentKey} produced output for signal ${signalRow.shortcode} ` +
+          `"${signalRow.workingTitle}". Output id ${row.id} written with status PENDING ` +
+          `(awaiting human gate before advancing).`,
+        signalId,
+        journeyId: journey.id,
+        metadata: {
+          stage: agentKey,
+          shortcode: signalRow.shortcode,
+          outputId: row.id,
+          outputStatus: "PENDING",
+        },
+      });
+    }
+  } catch (err) {
+    // Don't let a memory write failure surface as a skill failure.
+    // The backend already swallows its own errors; this catch is the
+    // safety net for anything else (e.g. signal lookup failure).
+    console.error("[orchestrator] stage-completion memory write failed:", err);
+  }
 
   return {
     output: result.object,
