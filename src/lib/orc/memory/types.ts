@@ -43,12 +43,14 @@ export type MemoryKind =
  *
  *   - 'events'    → auto-written by hooks (decisions, summaries,
  *                   stage completions). The lived experience of the
- *                   brand. Grows organically as Inba uses BLIPS.
+ *                   brand. Tag: `org-{slug}-events`. Grows organically
+ *                   as Inba uses BLIPS.
  *   - 'knowledge' → human-curated reference docs (brand strategy,
- *                   decade playbooks, voice guidelines). Written via
- *                   the Settings → Knowledge UI (Phase 8L).
+ *                   decade playbooks, voice guidelines). Tag:
+ *                   `org-{slug}-knowledge`. Written via the
+ *                   Settings → Knowledge UI (Phase 8L).
  *   - 'test'      → smoke-test data only. Lives in a SEPARATE
- *                   supermemory containerTag (`org-test-{orgId}`) so
+ *                   supermemory containerTag (`org-test-{slug}`) so
  *                   it's invisible to production recall.
  *
  * Default for production code: 'events'. Default for production
