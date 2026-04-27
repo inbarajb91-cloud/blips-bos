@@ -612,6 +612,81 @@ export const signalLocks = pgTable("signal_locks", {
 });
 
 // ══════════════════════════════════════════════════════════════════
+// KNOWLEDGE LAYER — curated reference docs (Phase 8L)
+// ══════════════════════════════════════════════════════════════════
+// Counterpart to supermemory's auto-written `events` container. The
+// founder authors markdown docs here that ORC consults via
+// `recall(query, container='knowledge')`. Every save creates a
+// version row; the latest version syncs to supermemory's knowledge
+// container; older versions stay in Postgres for audit + rollback.
+
+export const knowledgeDocumentStatus = pgEnum("knowledge_document_status", [
+  "active",
+  "archived",
+]);
+
+export const knowledgeDocuments = pgTable(
+  "knowledge_documents",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id, { onDelete: "cascade" }),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id),
+    title: text("title").notNull(),
+    content: text("content").notNull(),
+    tags: text("tags").array().notNull().default(sql`'{}'::text[]`),
+    status: knowledgeDocumentStatus("status").notNull().default("active"),
+    currentVersion: integer("current_version").notNull().default(1),
+    /** Latest synced supermemory document id. NULL when sync hasn't
+     *  happened yet (just-created doc) or sync failed (best-effort —
+     *  doc still saved in Postgres, can retry sync later). */
+    supermemoryId: text("supermemory_id"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("knowledge_documents_org_idx").on(t.orgId),
+    index("knowledge_documents_org_status_idx").on(t.orgId, t.status),
+  ],
+);
+
+export const knowledgeDocumentVersions = pgTable(
+  "knowledge_document_versions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    documentId: uuid("document_id")
+      .notNull()
+      .references(() => knowledgeDocuments.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    title: text("title").notNull(),
+    content: text("content").notNull(),
+    tags: text("tags").array().notNull().default(sql`'{}'::text[]`),
+    editedBy: uuid("edited_by")
+      .notNull()
+      .references(() => users.id),
+    editedAt: timestamp("edited_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    /** Optional commit-message-style note explaining the change. */
+    changeNote: text("change_note"),
+  },
+  (t) => [
+    uniqueIndex("knowledge_document_versions_doc_version_uq").on(
+      t.documentId,
+      t.version,
+    ),
+    index("knowledge_document_versions_doc_idx").on(t.documentId),
+  ],
+);
+
+// ══════════════════════════════════════════════════════════════════
 // CONFIGURATION — BOS / Engine Room / Agent level
 // ══════════════════════════════════════════════════════════════════
 
@@ -689,6 +764,8 @@ export const allTables = {
   agentLogs,
   decisionHistory,
   signalLocks,
+  knowledgeDocuments,
+  knowledgeDocumentVersions,
   configBos,
   configEngineRoom,
   configAgents,
