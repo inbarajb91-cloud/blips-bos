@@ -2,7 +2,7 @@
 
 BLIPS Brand Operating System — the internal platform that powers BLIPS's product design pipeline.
 
-**Status:** Phase 0 → Phase 1 transition. Planning + design complete. Code scaffolding starting.
+**Status:** Phases 1–8 shipped to production (conversational ORC + cross-signal long-term memory). Phase 8K (stage-completion memory hook) shipping next on this branch.
 
 ## What this is
 
@@ -27,6 +27,7 @@ See the project docs at `/Users/inbaraj/Downloads/Blipsstores/`:
 - **LLM abstraction:** Vercel AI SDK (Anthropic · Gemini · OpenAI swappable)
 - **Background jobs:** Inngest
 - **Client cache:** TanStack Query
+- **Long-term memory (Phase 8K+):** Supermemory hosted (behind swappable `MemoryBackend` interface — pg_vector available as fallback)
 
 See `STACK.md` for per-tool explanations.
 
@@ -49,7 +50,7 @@ npm run dev
 
 See the [Notion project plan](https://www.notion.so/348df0e1f1b581769c60d81213e4f8e3) for the full phase-by-phase build.
 
-Current phase: **Phase 1 — Foundation** (BOS shell + Supabase + Auth).
+Phases 1–8 shipped to main and live in production. Phase 8 (Conversational ORC + Memory Layer) merged April 27 as `e6455d9`. This PR ships **Phase 8K stage-completion hook** — orchestrator writes a memory row to the `events` container after each agent_outputs insert so ORC can later recall stage-level patterns across signals. Next on the queue: Phase 8L curated knowledge UI, Phase 8M proactive surfacing.
 
 ## Private repo — access
 

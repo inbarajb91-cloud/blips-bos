@@ -1,9 +1,11 @@
-import { db, agentOutputs } from "@/db";
+import { and, eq } from "drizzle-orm";
+import { db, agentOutputs, signals } from "@/db";
 import { generateStructured } from "@/lib/ai/generate";
 import { loadSkill } from "@/skills";
 import { logAgentCall } from "@/lib/ai/logger";
 import type { AgentKey } from "@/lib/ai/types";
 import { getActiveJourney } from "@/lib/orc/journey";
+import { getMemoryBackend } from "@/lib/orc/memory";
 
 export interface RunSkillParams<TInput> {
   agentKey: AgentKey;
@@ -101,6 +103,72 @@ export async function runSkill<TInput, TOutput>(
     status: "success",
     metadata: { outputId: row.id, outputType: agentKey.toLowerCase() },
   });
+
+  // 6. Memory write — Phase 8K stage-completion hook. Records that
+  // this stage's output landed so ORC can later recall "show me how
+  // BUNKER handled signals like this" or detect patterns across many
+  // stage runs.
+  //
+  // TRULY fire-and-forget: we explicitly do NOT await the IIFE.
+  // CodeRabbit on PR #5 caught that the previous shape still awaited
+  // the signal lookup + memory.remember(), so a slow/hung memory
+  // backend would extend every runSkill() invocation and could push
+  // the enclosing Inngest step past its time budget.
+  //
+  // Tenant scoping (CR on PR #5): the lookup is scoped by BOTH
+  // signalId AND orgId. A caller that ever passed a mismatched
+  // {orgId, signalId} pair would otherwise have written a memory row
+  // tagged under params.orgId carrying ANOTHER org's signal text —
+  // a cross-tenant leak we close at the query boundary.
+  //
+  // Trade-off acknowledged: under serverless pressure a dangling
+  // background promise inside an Inngest step may be cut short when
+  // the step resolves. Acceptable here because (a) supermemory
+  // writes typically complete in <500ms — well before the next step
+  // starts — and (b) the cold-export job (8K+1) backstops dropped
+  // writes for data sovereignty. If we ever need stronger delivery,
+  // the right shape is a separate Inngest step, not an inline await.
+  void (async () => {
+    try {
+      const [signalRow] = await db
+        .select({
+          shortcode: signals.shortcode,
+          workingTitle: signals.workingTitle,
+        })
+        .from(signals)
+        .where(and(eq(signals.id, signalId), eq(signals.orgId, orgId)))
+        .limit(1);
+
+      if (!signalRow) return;
+
+      const memory = await getMemoryBackend();
+      await memory.remember({
+        orgId,
+        container: "events",
+        kind: "stage_completion",
+        content:
+          `Stage ${agentKey} produced output for signal ${signalRow.shortcode} ` +
+          `"${signalRow.workingTitle}". Output id ${row.id} written with status PENDING ` +
+          `(awaiting human gate before advancing).`,
+        signalId,
+        journeyId: journey.id,
+        metadata: {
+          stage: agentKey,
+          shortcode: signalRow.shortcode,
+          outputId: row.id,
+          outputStatus: "PENDING",
+        },
+      });
+    } catch (err) {
+      // Final safety net — backend already swallows its own errors,
+      // but a thrown signal lookup or auth-resolution failure would
+      // otherwise reject the dangling promise unhandled.
+      console.error(
+        "[orchestrator] stage-completion memory write failed:",
+        err,
+      );
+    }
+  })();
 
   return {
     output: result.object,
