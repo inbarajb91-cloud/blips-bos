@@ -32,7 +32,13 @@ CREATE TYPE "knowledge_document_status" AS ENUM ('active', 'archived');
 CREATE TABLE "knowledge_documents" (
   "id" UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   "org_id" UUID NOT NULL REFERENCES "orgs"("id") ON DELETE CASCADE,
-  "created_by" UUID NOT NULL REFERENCES "users"("id"),
+  -- created_by uses ON DELETE RESTRICT — knowledge docs are founder-
+  -- authored, and a founder-account deletion should fail loudly until
+  -- a deliberate reassignment / archive step has been taken. Preserves
+  -- audit fidelity (we always know who authored a doc). Made explicit
+  -- in 0005_knowledge_ondelete_restrict.sql; baked back into 0004 for
+  -- fresh installs.
+  "created_by" UUID NOT NULL REFERENCES "users"("id") ON DELETE RESTRICT,
   "title" TEXT NOT NULL,
   "content" TEXT NOT NULL,
   "tags" TEXT[] NOT NULL DEFAULT '{}',
@@ -64,7 +70,9 @@ CREATE TABLE "knowledge_document_versions" (
   "title" TEXT NOT NULL,
   "content" TEXT NOT NULL,
   "tags" TEXT[] NOT NULL DEFAULT '{}',
-  "edited_by" UUID NOT NULL REFERENCES "users"("id"),
+  -- edited_by uses ON DELETE RESTRICT — same rationale as
+  -- knowledge_documents.created_by; version history is the audit trail.
+  "edited_by" UUID NOT NULL REFERENCES "users"("id") ON DELETE RESTRICT,
   "edited_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
   -- Optional commit-message-style note explaining the change. UI
   -- prompts for it on save but doesn't require it.

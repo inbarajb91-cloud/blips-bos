@@ -632,9 +632,19 @@ export const knowledgeDocuments = pgTable(
     orgId: uuid("org_id")
       .notNull()
       .references(() => orgs.id, { onDelete: "cascade" }),
+    // onDelete: "restrict" — knowledge docs are founder-authored, and
+    // founder accounts shouldn't be deletable while their authored docs
+    // exist. CodeRabbit on PR #6 flagged the missing onDelete behavior;
+    // we picked restrict (over set null) because:
+    //   1. createdBy is NOT NULL — making it nullable just to satisfy
+    //      set null would lose audit fidelity (we'd no longer know who
+    //      authored a doc after their user row is removed)
+    //   2. Founder deletion is a one-time event that requires care
+    //      anyway; surfacing the FK violation forces a deliberate
+    //      reassignment / archive step instead of silently nulling.
     createdBy: uuid("created_by")
       .notNull()
-      .references(() => users.id),
+      .references(() => users.id, { onDelete: "restrict" }),
     title: text("title").notNull(),
     content: text("content").notNull(),
     tags: text("tags").array().notNull().default(sql`'{}'::text[]`),
@@ -668,9 +678,12 @@ export const knowledgeDocumentVersions = pgTable(
     title: text("title").notNull(),
     content: text("content").notNull(),
     tags: text("tags").array().notNull().default(sql`'{}'::text[]`),
+    // onDelete: "restrict" — same rationale as knowledgeDocuments.createdBy.
+    // Version history is the audit trail; losing editor identity here
+    // would defeat the point of versioning.
     editedBy: uuid("edited_by")
       .notNull()
-      .references(() => users.id),
+      .references(() => users.id, { onDelete: "restrict" }),
     editedAt: timestamp("edited_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
