@@ -24,6 +24,63 @@ function containerTagFor(orgId: string, container: MemoryContainer): string {
 }
 
 /**
+ * Redact an SDK error before logging. The supermemory SDK throws
+ * rich error objects that include the original request payload + headers
+ * (including the Authorization header carrying our API key) and the
+ * full response body. Logging the raw object would leak credentials
+ * and memory content into application logs.
+ *
+ * Returns a small safe shape with: message, name, status code, and
+ * optional supermemory-specific error.error string when present.
+ * Stack is included in dev for debugging but skipped in production
+ * to keep log volume sane.
+ *
+ * CodeRabbit pass 7 — security hardening.
+ */
+function safeError(err: unknown): {
+  name: string;
+  message: string;
+  status?: number;
+  code?: string;
+  errorBody?: string;
+  stack?: string;
+} {
+  if (err instanceof Error) {
+    const out: ReturnType<typeof safeError> = {
+      name: err.name,
+      message: err.message,
+    };
+    // Many SDK error classes attach .status, .code, and .error fields.
+    // Read defensively without tripping on missing types.
+    const anyErr = err as Error & {
+      status?: unknown;
+      code?: unknown;
+      error?: { error?: unknown };
+    };
+    if (typeof anyErr.status === "number") out.status = anyErr.status;
+    if (typeof anyErr.code === "string") out.code = anyErr.code;
+    if (
+      anyErr.error &&
+      typeof anyErr.error === "object" &&
+      typeof anyErr.error.error === "string"
+    ) {
+      // Surface supermemory's own error message string (e.g.
+      // "Document is still processing") without dragging the full
+      // body. This is safe to log — it's the user-facing reason.
+      out.errorBody = anyErr.error.error;
+    }
+    if (
+      process.env.NODE_ENV !== "production" &&
+      typeof err.stack === "string"
+    ) {
+      out.stack = err.stack;
+    }
+    return out;
+  }
+  return { name: "UnknownError", message: String(err) };
+}
+
+/**
  * Supermemory backend — Phase 8K.
  *
  * Thin wrapper around the `supermemory` npm package (v4.21+). Translates
@@ -115,7 +172,7 @@ export class SupermemoryBackend implements MemoryBackend {
 
       return { id: String(result.id ?? "") };
     } catch (err) {
-      console.error("[memory] supermemory.remember failed:", err);
+      console.error("[memory] supermemory.remember failed:", safeError(err));
       return { id: "" };
     }
   }
@@ -244,7 +301,7 @@ export class SupermemoryBackend implements MemoryBackend {
         };
       });
     } catch (err) {
-      console.error("[memory] supermemory.recall failed:", err);
+      console.error("[memory] supermemory.recall failed:", safeError(err));
       return [];
     }
   }
@@ -259,7 +316,7 @@ export class SupermemoryBackend implements MemoryBackend {
       // failure means the doc lingers; the cold-export job (Phase
       // 8K+1) catches it on the next run, or it falls out via
       // supermemory's own retention.
-      console.error("[memory] supermemory.forget failed:", err);
+      console.error("[memory] supermemory.forget failed:", safeError(err));
     }
   }
 }
