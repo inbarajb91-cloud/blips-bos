@@ -290,6 +290,13 @@ export async function POST(req: Request) {
     summary: context.parts.summary,
     verbatim: context.parts.verbatim,
     currentUserMessage: context.parts.currentUserMessage,
+    // Phase 7.5 — pass the current tab as a workspace-orientation
+    // hint. buildCachedMessages prepends it to the user message
+    // ephemerally (not in the cached prefix) so ORC knows which tab
+    // the user is on without invalidating the prefix cache on every
+    // stage switch. ORC stays cross-stage aware via tools; the hint
+    // just orients reasoning toward where the user is looking.
+    activeStageHint: stage,
   });
 
   // Detect mutation intent in the user's current message. Defense-

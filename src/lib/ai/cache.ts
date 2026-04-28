@@ -83,6 +83,28 @@ export interface BuildCachedMessagesParams {
   summary: string | null;
   verbatim: readonly Message[];
   currentUserMessage: string;
+  /**
+   * Optional workspace orientation hint — the agent tab the user is
+   * looking at right now (Phase 7.5). Prepended ephemerally to the
+   * current user message so the LLM knows where the user's attention
+   * is, without the hint polluting the persisted conversation row or
+   * the cached system prefix.
+   *
+   * Why ephemeral (in messages, not system):
+   *   - The hint changes per-turn (user switches tabs); stuffing it in
+   *     the system field would invalidate the prefix cache on every
+   *     stage switch (Anthropic 5-min TTL, Gemini auto-prefix) — that
+   *     would tear up our token economics for no reason.
+   *   - Persisted user messages (agent_conversations.messages[].content)
+   *     stay clean because we only prepend at LLM-prompt-build time.
+   *
+   * Why a hint, not a scope-restriction:
+   *   - ORC stays cross-stage aware (still has tools to query other
+   *     stages' outputs). The hint just orients reasoning toward the
+   *     user's current viewport. Phrasing in the prepended line makes
+   *     this explicit so the model doesn't infer scope-locking.
+   */
+  activeStageHint?: string;
 }
 
 export interface CachedPayload {
@@ -102,8 +124,14 @@ export interface CachedPayload {
 export function buildCachedMessages(
   params: BuildCachedMessagesParams,
 ): CachedPayload {
-  const { provider, stablePrefix, summary, verbatim, currentUserMessage } =
-    params;
+  const {
+    provider,
+    stablePrefix,
+    summary,
+    verbatim,
+    currentUserMessage,
+    activeStageHint,
+  } = params;
 
   const messages: ModelMessage[] = [];
 
@@ -129,9 +157,19 @@ export function buildCachedMessages(
   }
 
   // Current user message — last. Always a fresh user turn.
+  // If activeStageHint is set, prepend a brief workspace-orientation
+  // line so ORC knows which tab the user is on. The square-bracket
+  // framing keeps it visually distinct from the user's own words and
+  // signals to the model that this is system-style metadata, not part
+  // of what the user typed. The "but you have access" clause prevents
+  // the model from treating this as a scope-lock.
+  const finalUserMessage = activeStageHint
+    ? `[Workspace orientation: Inba is currently viewing the ${activeStageHint} tab. Frame your reply with that as orientation context — but you have access to every stage's outputs via tools, so don't refuse a cross-stage question.]\n\n${currentUserMessage}`
+    : currentUserMessage;
+
   messages.push({
     role: "user",
-    content: currentUserMessage,
+    content: finalUserMessage,
   });
 
   // Provider-specific hints
