@@ -241,12 +241,17 @@ export const signals = pgTable(
     // both are SET on manifestation children. Enforced by the
     // signals_manifestation_consistency CHECK constraint at the SQL level.
     //
-    // ON DELETE SET NULL on parent_signal_id: if a parent is hard-deleted
-    // (rare), children survive as orphan manifestations the founder can
-    // still review. Cascade-delete would silently lose work.
+    // ON DELETE RESTRICT on parent_signal_id (CR pass on PR #8 — same
+    // pattern as Phase 8L knowledge_documents author FKs). The original
+    // ON DELETE SET NULL caused a CHECK violation when a parent was
+    // deleted: parent_signal_id became NULL but manifestation_decade
+    // stayed SET, violating signals_manifestation_consistency. With
+    // RESTRICT, a parent delete fails loudly until the founder
+    // explicitly handles the manifestation children first — forces
+    // deliberate cleanup, never silent-loses audit trail.
     parentSignalId: uuid("parent_signal_id").references(
       (): AnyPgColumn => signals.id,
-      { onDelete: "set null" },
+      { onDelete: "restrict" },
     ),
     manifestationDecade: decadeLens("manifestation_decade"),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -262,11 +267,23 @@ export const signals = pgTable(
     index("signals_org_batch_idx").on(t.orgId, t.batchId),
     index("signals_org_collection_idx").on(t.orgId, t.collectionId),
     index("signals_org_created_idx").on(t.orgId, t.createdAt),
-    // Phase 9 — Bridge nested-children query path. The partial index
-    // (WHERE parent_signal_id IS NOT NULL) keeps the index small —
-    // raw signals (parent NULL) are the majority of rows and don't
-    // need to be indexed for the manifestation lookup.
-    index("signals_parent_signal_idx").on(t.parentSignalId),
+    // Phase 9 — Bridge nested-children query path. The partial WHERE
+    // clause keeps the index small — raw signals (parent NULL) are the
+    // majority of rows and don't need to be indexed for the
+    // manifestation lookup. CR pass on PR #8: Drizzle declaration was
+    // missing the `.where()` so it was creating a full index in code
+    // even though the SQL migration shipped a partial one. Aligning
+    // the declaration with the actual production index.
+    index("signals_parent_signal_idx")
+      .on(t.parentSignalId)
+      .where(sql`${t.parentSignalId} IS NOT NULL`),
+    // Phase 9 — at most one manifestation per (parent, decade). STOKER
+    // never produces duplicates per run, but ORC's add_manifestation
+    // tool (Phase 9G) could insert one if asked twice. Schema-level
+    // guarantee. Partial so raw signals (parent NULL) don't collide.
+    uniqueIndex("signals_parent_decade_unique_idx")
+      .on(t.parentSignalId, t.manifestationDecade)
+      .where(sql`${t.parentSignalId} IS NOT NULL`),
   ],
 );
 

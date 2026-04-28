@@ -35,40 +35,62 @@ const STAGES = [
   "PROPELLER",
 ] as const;
 
-function currentStageIndex(status: SignalStatus): number {
+/**
+ * Stage progression for a signal — three values:
+ *   - `completedThrough`: how many pips light up (0 = none, 6 = all)
+ *   - `activeStage`: the breathing in-progress stage, or null if terminal
+ *   - `label`: the text shown next to the pips
+ *
+ * CR pass on PR #8: the previous shape returned a single numeric index
+ * which conflated "stage 2 in progress" with "stage 2 done, terminal."
+ * Both rendered breathing pips at the same position and pulled the
+ * wrong STAGES[] label for terminal states (FANNED_OUT showed
+ * "FURNACE" because index=2). Replaced with a structured shape so
+ * terminal states render correctly: pips up to N filled, no breathe,
+ * label sourced from the status itself.
+ */
+interface StageProgress {
+  completedThrough: number; // pips 0..completedThrough-1 are lit
+  activeStage: number | null; // null = terminal, no breathing pip
+  label: string;
+}
+
+function progressFor(status: SignalStatus): StageProgress {
   switch (status) {
     case "IN_BUNKER":
-      return 0;
+      return { completedThrough: 0, activeStage: 0, label: "BUNKER" };
     case "IN_STOKER":
-      return 1;
+      return { completedThrough: 1, activeStage: 1, label: "STOKER" };
     case "IN_FURNACE":
-      return 2;
+      return { completedThrough: 2, activeStage: 2, label: "FURNACE" };
     case "IN_BOILER":
-      return 3;
+      return { completedThrough: 3, activeStage: 3, label: "BOILER" };
     case "IN_ENGINE":
-      return 4;
+      return { completedThrough: 4, activeStage: 4, label: "ENGINE" };
     case "AT_PROPELLER":
-      return 5;
+      return { completedThrough: 5, activeStage: 5, label: "PROPELLER" };
     case "DOCKED":
-      return 6; // all six complete
+      return { completedThrough: 6, activeStage: null, label: "DOCKED" };
     case "FANNED_OUT":
-      // Parent terminal state after STOKER produces children. STOKER
-      // is "complete" for the parent (children take over), but the
-      // parent itself never proceeds past STOKER — show two pips lit.
-      return 2;
+      // Parent terminal state — STOKER produced children, parent's
+      // pipeline ends. Two pips filled (BUNKER + STOKER), no breathe,
+      // label communicates the terminal nature.
+      return { completedThrough: 2, activeStage: null, label: "FANNED OUT" };
     case "STOKER_REFUSED":
-      // STOKER ran but refused to manifest. BUNKER is still "complete"
-      // (parent was BUNKER-extracted) but STOKER produced no output —
-      // show one pip lit, second pip empty (refusal isn't a failure of
-      // BUNKER, just a STOKER outcome).
-      return 1;
+      // BUNKER complete + STOKER ran-but-refused. One pip filled (BUNKER
+      // succeeded), no breathing pip, explicit refusal label.
+      return {
+        completedThrough: 1,
+        activeStage: null,
+        label: "STOKER REFUSED",
+      };
     case "COLD_BUNKER":
     case "DISMISSED":
     case "BUNKER_FAILED":
     case "EXTRACTION_FAILED":
-      return -1; // none lit
+      return { completedThrough: 0, activeStage: null, label: status };
     default:
-      return 0;
+      return { completedThrough: 0, activeStage: 0, label: "BUNKER" };
   }
 }
 
@@ -87,18 +109,14 @@ export function StagePips({
   className = "",
   ...rest
 }: StagePipsProps) {
-  const current = currentStageIndex(status);
-  const label = STAGES[current] ?? (status === "DOCKED" ? "DOCKED" : "—");
+  const progress = progressFor(status);
 
   return (
-    <div
-      className={`flex items-center gap-2.5 ${className}`}
-      {...rest}
-    >
+    <div className={`flex items-center gap-2.5 ${className}`} {...rest}>
       <div className="flex items-center gap-1.5">
         {STAGES.map((stage, i) => {
-          const isCompleted = i < current;
-          const isActive = i === current;
+          const isActive = progress.activeStage === i;
+          const isCompleted = i < progress.completedThrough && !isActive;
           const style = { width: size, height: size } as const;
           const base = "rounded-full transition-colors duration-200";
           const cls = isActive
@@ -118,7 +136,7 @@ export function StagePips({
       </div>
       {showLabel && (
         <span className="font-mono text-[10px] tracking-[0.22em] uppercase text-t3 whitespace-nowrap">
-          {label}
+          {progress.label}
         </span>
       )}
     </div>

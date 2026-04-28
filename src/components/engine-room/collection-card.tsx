@@ -821,6 +821,10 @@ function currentStageLabel(status: SignalStatus): string {
       return "PROPELLER";
     case "DOCKED":
       return "DOCKED";
+    case "FANNED_OUT":
+      return "FANNED OUT";
+    case "STOKER_REFUSED":
+      return "STOKER REFUSED";
     case "COLD_BUNKER":
       return "COLD";
     case "DISMISSED":

@@ -402,7 +402,11 @@ function CardActions({
         });
         router.refresh();
       } catch (e) {
-        setError((e as Error).message);
+        // CR pass on PR #8 — safe extraction. (e as Error).message
+        // would coerce non-Error throws (string, number, anything from
+        // a buggy library) into garbage. instanceof check + String()
+        // fallback keeps the UI's error display predictable.
+        setError(e instanceof Error ? e.message : String(e));
       }
     });
   }
@@ -416,7 +420,11 @@ function CardActions({
         });
         router.refresh();
       } catch (e) {
-        setError((e as Error).message);
+        // CR pass on PR #8 — safe extraction. (e as Error).message
+        // would coerce non-Error throws (string, number, anything from
+        // a buggy library) into garbage. instanceof check + String()
+        // fallback keeps the UI's error display predictable.
+        setError(e instanceof Error ? e.message : String(e));
       }
     });
   }
@@ -540,37 +548,56 @@ function EditForm({
         onSaved();
         router.refresh();
       } catch (e) {
-        setError((e as Error).message);
+        // CR pass on PR #8 — safe extraction. (e as Error).message
+        // would coerce non-Error throws (string, number, anything from
+        // a buggy library) into garbage. instanceof check + String()
+        // fallback keeps the UI's error display predictable.
+        setError(e instanceof Error ? e.message : String(e));
       }
     });
   }
 
   return (
     <div className="flex flex-col gap-3">
+      <label className="sr-only" htmlFor={`stoker-edit-hook-${child.id}`}>
+        Framing hook
+      </label>
       <input
+        id={`stoker-edit-hook-${child.id}`}
         value={framingHook}
         onChange={(e) => setFramingHook(e.target.value)}
+        aria-label="Framing hook"
         className="bg-black/30 border border-rule-2 text-t1 font-display text-[17px] font-medium -tracking-[0.005em] px-3 py-2.5 rounded-sm outline-none focus:border-[rgba(var(--d),0.7)]"
       />
       <div>
-        <div className="font-mono text-[9px] tracking-[0.22em] uppercase text-[rgba(var(--d),0.85)] mb-1">
+        <label
+          htmlFor={`stoker-edit-tension-${child.id}`}
+          className="font-mono text-[9px] tracking-[0.22em] uppercase text-[rgba(var(--d),0.85)] mb-1 block"
+        >
           Tension
-        </div>
+        </label>
         <textarea
+          id={`stoker-edit-tension-${child.id}`}
           value={tensionAxis}
           onChange={(e) => setTensionAxis(e.target.value)}
           rows={2}
+          aria-label="Tension axis"
           className="w-full bg-black/30 border border-rule-2 text-t1 font-mono text-[12px] px-3 py-2.5 rounded-sm outline-none focus:border-[rgba(var(--d),0.7)] resize-vertical"
         />
       </div>
       <div>
-        <div className="font-mono text-[9px] tracking-[0.22em] uppercase text-[rgba(var(--d),0.85)] mb-1">
+        <label
+          htmlFor={`stoker-edit-angle-${child.id}`}
+          className="font-mono text-[9px] tracking-[0.22em] uppercase text-[rgba(var(--d),0.85)] mb-1 block"
+        >
           Angle
-        </div>
+        </label>
         <textarea
+          id={`stoker-edit-angle-${child.id}`}
           value={narrativeAngle}
           onChange={(e) => setNarrativeAngle(e.target.value)}
           rows={4}
+          aria-label="Narrative angle"
           className="w-full bg-black/30 border border-rule-2 text-t1 font-editorial text-[14px] leading-relaxed px-3 py-2.5 rounded-sm outline-none focus:border-[rgba(var(--d),0.7)] resize-vertical"
         />
       </div>

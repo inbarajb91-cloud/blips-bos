@@ -71,12 +71,31 @@ export async function approveStokerManifestation(opts: {
     );
   }
 
+  // Pre-check that a STOKER agent_outputs row exists before the
+  // transaction — without this, the tx.update on agent_outputs could
+  // affect 0 rows silently while the signal status flips to IN_FURNACE,
+  // leaving a manifestation advancing without an APPROVED audit trail.
+  // CR pass on PR #8 caught this consistency hole; same pre-check is
+  // already used in editStokerManifestation. Keep the patterns aligned.
+  const [existingOutput] = await db
+    .select({ id: agentOutputs.id })
+    .from(agentOutputs)
+    .where(
+      and(
+        eq(agentOutputs.signalId, child.id),
+        eq(agentOutputs.agentName, "STOKER"),
+      ),
+    )
+    .limit(1);
+  if (!existingOutput) {
+    throw new Error(
+      "STOKER output row missing for this manifestation — can't approve. The Inngest fan-out may have partially failed; ask ORC to restart STOKER on the parent.",
+    );
+  }
+
   // Flip child status → IN_FURNACE (advances it). Also flip its STOKER
   // agent_outputs row to APPROVED so the renderer knows the card was
-  // acted on. The atomicity is helpful here but not strictly required —
-  // the next read sees both flips or neither, and the partial state
-  // (status=IN_FURNACE but agent_outputs=PENDING) wouldn't break
-  // downstream queries — it'd just confuse the renderer briefly.
+  // acted on.
   await db.transaction(async (tx) => {
     await tx
       .update(signalsTable)
@@ -193,7 +212,11 @@ export async function editStokerManifestation(opts: {
     .limit(1);
   if (!output) throw new Error("STOKER output row not found.");
 
-  const oldContent = output.content as Record<string, unknown>;
+  // Defensive default to {} when content is null/undefined (CR pass on
+  // PR #8). Schema permits NOT NULL on agent_outputs.content but the
+  // jsonb type can technically hold null at the value level; the spread
+  // below would throw at runtime if oldContent were null.
+  const oldContent = (output.content ?? {}) as Record<string, unknown>;
   const newContent = { ...oldContent, ...trimmedFields };
 
   const revisionEntry = {
@@ -261,6 +284,25 @@ export async function dismissStokerManifestation(opts: {
   if (child.status !== "IN_STOKER") {
     throw new Error(
       `Past-gate dismiss goes through ORC's dismiss_manifestation tool with cascade. This signal is at ${child.status}.`,
+    );
+  }
+
+  // Same pre-check as approveStokerManifestation — without it, a
+  // missing STOKER row would silently leave the dismiss with no audit
+  // trail on the agent_outputs side. CR pass on PR #8.
+  const [existingOutput] = await db
+    .select({ id: agentOutputs.id })
+    .from(agentOutputs)
+    .where(
+      and(
+        eq(agentOutputs.signalId, child.id),
+        eq(agentOutputs.agentName, "STOKER"),
+      ),
+    )
+    .limit(1);
+  if (!existingOutput) {
+    throw new Error(
+      "STOKER output row missing for this manifestation — can't dismiss. The Inngest fan-out may have partially failed; ask ORC to restart STOKER on the parent.",
     );
   }
 

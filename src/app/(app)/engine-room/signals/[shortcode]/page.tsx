@@ -1,4 +1,4 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { notFound, redirect } from "next/navigation";
 import {
   db,
@@ -128,7 +128,13 @@ export default async function SignalPage({
           ),
         );
 
-      // Map children's STOKER agent_outputs by signal id
+      // Map children's STOKER agent_outputs by signal id.
+      // CR pass on PR #8 caught this query was missing the
+      // inArray(signalId, childIds) filter — without it, this would
+      // fetch every STOKER agent_outputs row in the entire org and then
+      // map a tiny subset by id. Real performance + correctness bug at
+      // scale. With the filter, we only fetch this parent's children's
+      // outputs.
       const childIds = children.map((c) => c.id);
       const childOutputs = childIds.length
         ? await db
@@ -139,7 +145,12 @@ export default async function SignalPage({
               revisions: agentOutputsTable.revisions,
             })
             .from(agentOutputsTable)
-            .where(eq(agentOutputsTable.agentName, "STOKER"))
+            .where(
+              and(
+                eq(agentOutputsTable.agentName, "STOKER"),
+                inArray(agentOutputsTable.signalId, childIds),
+              ),
+            )
         : [];
       const outputBySignal = new Map(
         childOutputs.map((o) => [o.signalId, o]),
@@ -208,6 +219,12 @@ export default async function SignalPage({
           eq(agentOutputsTable.agentName, "STOKER"),
         ),
       )
+      // CR pass on PR #8 — match the parent-side query's ordering so
+      // the .limit(1) is deterministic when multiple STOKER outputs
+      // exist (e.g., after a future restart_stoker tool produces a
+      // second output row on a journey 2). Earliest createdAt = the
+      // canonical first run for this manifestation.
+      .orderBy(asc(agentOutputsTable.createdAt))
       .limit(1);
     if (own) {
       manifestationDetail = {
