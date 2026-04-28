@@ -44,11 +44,21 @@ import {
  *     survives reloads
  */
 
-const STORAGE_KEY = "ws.railRight";
+// Phase 7.5 — ORC panel pinned to the LEFT side of the workspace.
+// Previous Phase 7 layout placed ORC on the right, which (a) wasted the
+// thin empty column on the left edge and (b) visually suggested ORC
+// was somehow tab-scoped because it sat alongside the tab content.
+// Pinning ORC left makes the architectural truth obvious — ORC is a
+// signal-scoped constant, the tab strip controls only the canvas.
+//
+// Storage key changed from `ws.railRight` so users on the old layout
+// don't inherit a size that doesn't fit the new orientation. Any saved
+// "I want ORC at 540px" preference resets to the new default 380.
+const STORAGE_KEY = "ws.orcLeft";
 const LAST_SIGNAL_KEY = "ws.lastSignalShortcode";
-const DEFAULT_RIGHT = 380;
-const MIN_RIGHT = 300;
-const MAX_RIGHT = 620;
+const DEFAULT_PANEL = 380;
+const MIN_PANEL = 300;
+const MAX_PANEL = 620;
 
 export function WorkspaceFrame({
   signal,
@@ -72,15 +82,18 @@ export function WorkspaceFrame({
     setActiveTab(pickInitialTab(states));
   }, [states]);
 
-  // Right-panel width — restore from localStorage, clamp, default 380.
-  const [railRight, setRailRight] = useState<number>(DEFAULT_RIGHT);
+  // Left-panel width (ORC pinned left as of Phase 7.5) — restore from
+  // localStorage, clamp, default 380. Users who customise this width
+  // are usually doing so for chat readability, not canvas dominance,
+  // so the same 300-620 range carries over from the right-side era.
+  const [panelWidth, setPanelWidth] = useState<number>(DEFAULT_PANEL);
   useEffect(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
         const n = parseInt(raw, 10);
-        if (Number.isFinite(n) && n >= MIN_RIGHT && n <= MAX_RIGHT) {
-          setRailRight(n);
+        if (Number.isFinite(n) && n >= MIN_PANEL && n <= MAX_PANEL) {
+          setPanelWidth(n);
         }
       }
     } catch {
@@ -220,12 +233,16 @@ export function WorkspaceFrame({
   useEffect(() => {
     function onMouseMove(e: MouseEvent) {
       if (!resizingRef.current) return;
-      const delta = startXRef.current - e.clientX; // drag LEFT widens panel
+      // Phase 7.5 — ORC is on the LEFT now, so dragging the resize
+      // handle RIGHT widens the panel. (Inverse of the Phase 7
+      // direction, where the panel sat on the right and dragging
+      // LEFT widened it.)
+      const delta = e.clientX - startXRef.current;
       const next = Math.max(
-        MIN_RIGHT,
-        Math.min(MAX_RIGHT, startWidthRef.current + delta),
+        MIN_PANEL,
+        Math.min(MAX_PANEL, startWidthRef.current + delta),
       );
-      setRailRight(next);
+      setPanelWidth(next);
     }
     function onMouseUp() {
       if (!resizingRef.current) return;
@@ -233,7 +250,7 @@ export function WorkspaceFrame({
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
       try {
-        localStorage.setItem(STORAGE_KEY, String(railRightLatest.current));
+        localStorage.setItem(STORAGE_KEY, String(panelWidthLatest.current));
       } catch {
         /* ignore */
       }
@@ -246,24 +263,24 @@ export function WorkspaceFrame({
     };
   }, []);
 
-  // Track latest railRight for the mouseup persist handler (closure otherwise
-  // captures the initial value).
-  const railRightLatest = useRef(railRight);
+  // Track latest panelWidth for the mouseup persist handler (closure
+  // otherwise captures the initial value).
+  const panelWidthLatest = useRef(panelWidth);
   useEffect(() => {
-    railRightLatest.current = railRight;
-  }, [railRight]);
+    panelWidthLatest.current = panelWidth;
+  }, [panelWidth]);
 
   function startResize(e: React.MouseEvent) {
     resizingRef.current = true;
     startXRef.current = e.clientX;
-    startWidthRef.current = railRight;
+    startWidthRef.current = panelWidth;
     document.body.style.cursor = "col-resize";
     document.body.style.userSelect = "none";
     e.preventDefault();
   }
 
-  function resetRailRight() {
-    setRailRight(DEFAULT_RIGHT);
+  function resetPanelWidth() {
+    setPanelWidth(DEFAULT_PANEL);
     try {
       localStorage.removeItem(STORAGE_KEY);
     } catch {
@@ -296,8 +313,13 @@ export function WorkspaceFrame({
   // its siblings) so drag is grabbable along either cell's full extent.
   return (
     <div className={`${typeClass} flex flex-col bg-ink`}>
-      {/* Header — identity only: shortcode + working title. */}
-      <section className="px-11 pt-5 pb-6">
+      {/* Header — identity only: shortcode + working title.
+          Phase 7.5 — pl-7 (28px) instead of the previous px-11 (44px)
+          so the shortcode sits closer to the page edge, matching the
+          tighter visual density Inba flagged ("empty space on the
+          left we don't need"). Right padding stays generous so the
+          title text breathes against the viewport edge. */}
+      <section className="pl-7 pr-11 pt-5 pb-6">
         <div className="flex items-baseline gap-8">
           <span className="font-display font-bold text-[13px] tracking-[0.16em] text-t1">
             {signal.shortcode}
@@ -336,54 +358,48 @@ export function WorkspaceFrame({
         />
       </div>
 
-      {/* Two-region grid — canvas + ORC panel. Natural height, flows
-          with document. Panels use align-self: start so they don't
-          stretch to match each other. The resize handle stretches
-          (default behavior) so it's grabbable along the canvas's full
-          vertical extent. */}
+      {/* Two-region grid — ORC panel + canvas. ORC pinned LEFT
+          (Phase 7.5 flip from Phase 7's right-side placement). Natural
+          height, flows with document. Panels use align-self: start so
+          they don't stretch to match each other. The resize handle
+          stretches so it's grabbable along the row's full extent.
+
+          Order in DOM: ORC first, then resize handle, then canvas —
+          which also sets the natural keyboard tab order (ORC input
+          before canvas content), matching the visual reading order
+          on LTR. */}
       <div
         className="grid transition-[grid-template-columns] duration-300 ease-out"
         style={{
-          gridTemplateColumns: `1fr 6px ${railRight}px`,
+          gridTemplateColumns: `${panelWidth}px 6px 1fr`,
         }}
       >
-        {/* Canvas — natural content height. Flows with document scroll.
-            min-w-0 prevents text/grid overflow pushing the canvas cell
-            wider than its grid track. */}
-        <main
-          id="workspace-canvas"
-          role="tabpanel"
-          aria-labelledby={`tab-${activeTab}`}
-          className="min-w-0"
+        {/* Left panel — ORC conversation. align-self: start so it's
+            its natural content height and doesn't stretch to match
+            the canvas. Long conversations just grow the panel; no
+            internal scroll to trap the user. */}
+        <aside
+          className="border-r border-rule-1 bg-wash-1 flex flex-col self-start"
+          aria-label="ORC conversation"
         >
-          {/* Canvas content fills the grid track — no max-width cap.
-              The earlier 880px cap left ~200px of dead space between
-              the extraction grid and the ORC panel's left edge on
-              wider viewports. Extraction cells, source metadata, and
-              the Review timeline all benefit from breathing room; the
-              content has its own internal max-widths where readability
-              matters (paragraphs stay reasonable line-lengths via
-              their own font-size + leading). */}
-          <div className="w-full px-12 py-10">
-            <Renderer
-              signal={signal}
-              collection={collection}
-              state={states[activeTab]}
-            />
-          </div>
-        </main>
+          <OrcPanel
+            signal={signal}
+            activeStage={activeTab}
+            lockStatus={lockStatus}
+          />
+        </aside>
 
-        {/* Resize handle — drag to widen/narrow the ORC panel. Double-click
-            to reset to default width. Visual grip lights up in the parent
-            collection's decade color on hover/drag via the `group`
-            hover-state pattern (no styled-jsx). */}
+        {/* Resize handle — drag right to widen ORC panel, drag left to
+            narrow it. Double-click resets to the default width. Visual
+            grip lights up in the parent collection's decade color on
+            hover/drag via the `group` hover-state pattern. */}
         <div
           role="separator"
           aria-orientation="vertical"
           aria-label="Resize ORC panel"
-          className="cursor-col-resize relative border-l border-rule-1 hover:border-[rgba(var(--d),0.45)] group transition-colors"
+          className="cursor-col-resize relative border-r border-rule-1 hover:border-[rgba(var(--d),0.45)] group transition-colors"
           onMouseDown={startResize}
-          onDoubleClick={resetRailRight}
+          onDoubleClick={resetPanelWidth}
         >
           <div
             aria-hidden
@@ -395,20 +411,29 @@ export function WorkspaceFrame({
           />
         </div>
 
-        {/* Right panel — ORC conversation. align-self: start so it's its
-            natural content height and doesn't stretch to match the
-            canvas. Flows with document scroll. Long conversations just
-            grow the panel; no internal scroll to trap the user. */}
-        <aside
-          className="border-l border-rule-1 bg-wash-1 flex flex-col self-start"
-          aria-label="ORC conversation"
+        {/* Canvas — natural content height. Flows with document scroll.
+            min-w-0 prevents text/grid overflow pushing the canvas cell
+            wider than its grid track. */}
+        <main
+          id="workspace-canvas"
+          role="tabpanel"
+          aria-labelledby={`tab-${activeTab}`}
+          className="min-w-0"
         >
-          <OrcPanel
-            signal={signal}
-            activeStage={activeTab}
-            lockStatus={lockStatus}
-          />
-        </aside>
+          {/* Canvas content fills the grid track — no max-width cap.
+              Extraction cells, source metadata, and the Review timeline
+              all benefit from breathing room; the content has its own
+              internal max-widths where readability matters (paragraphs
+              stay reasonable line-lengths via their own font-size +
+              leading). */}
+          <div className="w-full px-12 py-10">
+            <Renderer
+              signal={signal}
+              collection={collection}
+              state={states[activeTab]}
+            />
+          </div>
+        </main>
       </div>
     </div>
   );
