@@ -21,7 +21,10 @@ export type SignalStatus =
   | "COLD_BUNKER"
   | "DISMISSED"
   | "BUNKER_FAILED"
-  | "EXTRACTION_FAILED";
+  | "EXTRACTION_FAILED"
+  // Phase 9 — STOKER terminal states for parent signals.
+  | "FANNED_OUT" // STOKER produced 1+ approved manifestation children
+  | "STOKER_REFUSED"; // STOKER refused (no decade scored >= 50)
 
 const STAGES = [
   "BUNKER",
@@ -48,6 +51,17 @@ function currentStageIndex(status: SignalStatus): number {
       return 5;
     case "DOCKED":
       return 6; // all six complete
+    case "FANNED_OUT":
+      // Parent terminal state after STOKER produces children. STOKER
+      // is "complete" for the parent (children take over), but the
+      // parent itself never proceeds past STOKER — show two pips lit.
+      return 2;
+    case "STOKER_REFUSED":
+      // STOKER ran but refused to manifest. BUNKER is still "complete"
+      // (parent was BUNKER-extracted) but STOKER produced no output —
+      // show one pip lit, second pip empty (refusal isn't a failure of
+      // BUNKER, just a STOKER outcome).
+      return 1;
     case "COLD_BUNKER":
     case "DISMISSED":
     case "BUNKER_FAILED":

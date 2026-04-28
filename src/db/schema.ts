@@ -43,6 +43,13 @@ export const signalStatus = pgEnum("signal_status", [
   "DISMISSED",
   "BUNKER_FAILED",
   "EXTRACTION_FAILED",
+  // Phase 9 — STOKER terminal states for parent signals.
+  // FANNED_OUT: STOKER produced 1+ approved manifestation children;
+  //   the parent's pipeline ends here, children take over.
+  // STOKER_REFUSED: STOKER found no decade with resonance score >= 50
+  //   and refused to manifest. Founder may force-add via add_manifestation.
+  "FANNED_OUT",
+  "STOKER_REFUSED",
 ]);
 
 export const agentName = pgEnum("agent_name", [
@@ -92,6 +99,10 @@ export const signalSource = pgEnum("signal_source", [
   "upload",
   "llm_synthesis",
   "grounded_search", // Phase 6.6 — Gemini useSearchGrounding results
+  // Phase 9 — STOKER-produced manifestation child signals. A signal
+  // with this source MUST have parent_signal_id + manifestation_decade
+  // set (enforced by signals_manifestation_consistency CHECK).
+  "stoker_manifestation",
 ]);
 
 // Phase 6.5 — Collections replace the original `batches` concept.
@@ -225,6 +236,19 @@ export const signals = pgTable(
     collectionId: uuid("collection_id").references(() => collections.id, {
       onDelete: "set null",
     }),
+    // Phase 9 (Model 3) — STOKER fan-out is a parent → 1-3 manifestation
+    // children relationship. Both columns are nullable for raw signals,
+    // both are SET on manifestation children. Enforced by the
+    // signals_manifestation_consistency CHECK constraint at the SQL level.
+    //
+    // ON DELETE SET NULL on parent_signal_id: if a parent is hard-deleted
+    // (rare), children survive as orphan manifestations the founder can
+    // still review. Cascade-delete would silently lose work.
+    parentSignalId: uuid("parent_signal_id").references(
+      (): AnyPgColumn => signals.id,
+      { onDelete: "set null" },
+    ),
+    manifestationDecade: decadeLens("manifestation_decade"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -238,6 +262,11 @@ export const signals = pgTable(
     index("signals_org_batch_idx").on(t.orgId, t.batchId),
     index("signals_org_collection_idx").on(t.orgId, t.collectionId),
     index("signals_org_created_idx").on(t.orgId, t.createdAt),
+    // Phase 9 — Bridge nested-children query path. The partial index
+    // (WHERE parent_signal_id IS NOT NULL) keeps the index small —
+    // raw signals (parent NULL) are the majority of rows and don't
+    // need to be indexed for the manifestation lookup.
+    index("signals_parent_signal_idx").on(t.parentSignalId),
   ],
 );
 
@@ -503,6 +532,14 @@ export const agentOutputs = pgTable(
       onDelete: "set null",
     }),
     approvedAt: timestamp("approved_at", { withTimezone: true }),
+    // Phase 9 — STOKER edit history. Each per-card edit appends an
+    // entry: { ts: ISO-8601, fields: {...changed fields},
+    //          editor: { authId, kind: 'founder'|'orc' }, reason?: string }.
+    // Empty array on creation; populated lazily as edits land. Used by the
+    // workspace renderer to show "this manifestation was edited 3 times by
+    // you on April 30" provenance, and by ORC's recall to learn
+    // edit-pattern data over time.
+    revisions: jsonb("revisions").notNull().default([]),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
