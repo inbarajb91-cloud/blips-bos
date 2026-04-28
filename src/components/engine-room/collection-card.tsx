@@ -59,6 +59,12 @@ export interface SignalForCard {
   status: SignalStatus;
   source: string;
   updatedAt: Date;
+  /** Phase 9E — set on manifestation children, null on raw signals. */
+  decade: "RCK" | "RCL" | "RCD" | null;
+  /** Phase 9E — nested manifestations rendered indented under the
+   *  parent row. Empty array on manifestation children themselves
+   *  (no grandchildren — STOKER refuses to recurse on its own outputs). */
+  manifestations: SignalForCard[];
 }
 
 /** Summary of the collection's most recent run — surfaces on the spine. */
@@ -620,36 +626,101 @@ function CandidateRow({ c }: { c: CandidateForCard }) {
   );
 }
 
-/** Pipeline signal row — stage pips + Open → workspace link. */
-function SignalRow({ s }: { s: SignalForCard }) {
+/** Pipeline signal row — stage pips + Open → workspace link.
+ *
+ * Phase 9E: when the signal has manifestation children (top-level
+ * parents), render each child as a nested row beneath. Children carry
+ * a decade chip (RCK/RCL/RCD) and visually indent. Connector glyphs
+ * (├─ / └─) make the parent-child relationship obvious.
+ *
+ * Children themselves never have manifestations (STOKER doesn't
+ * recurse), so this nesting is single-level only.
+ */
+function SignalRow({
+  s,
+  isManifestation = false,
+  isLastSibling = false,
+}: {
+  s: SignalForCard;
+  /** True when this row is itself a nested manifestation child. */
+  isManifestation?: boolean;
+  /** Whether this child is the last in its parent's manifestation
+   *  list — drives the └─ vs ├─ connector glyph. Ignored on parents. */
+  isLastSibling?: boolean;
+}) {
   const age = formatAge(s.updatedAt);
+  const hasManifestations = s.manifestations.length > 0;
+
+  const connector = isManifestation ? (isLastSibling ? "└─" : "├─") : null;
+
+  const decadeTintClass =
+    s.decade === "RCK"
+      ? "t-rck"
+      : s.decade === "RCL"
+        ? "t-rcl"
+        : s.decade === "RCD"
+          ? "t-rcd"
+          : "";
 
   return (
-    <Link
-      href={`/engine-room/signals/${encodeURIComponent(s.shortcode)}`}
-      className="grid grid-cols-[72px_1fr_auto_auto_auto] gap-4 items-center py-3.5 border-b border-rule-1 last:border-b-0 hover:bg-wash-1 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2 rounded-sm"
-    >
-      <span className="font-display font-bold text-[11.5px] tracking-[0.16em] text-t1">
-        {s.shortcode}
-      </span>
-      <div className="min-w-0 flex flex-col gap-0.5">
-        <span className="font-display font-medium text-[14.5px] -tracking-[0.005em] text-t1 leading-[1.3]">
-          {s.workingTitle}
-        </span>
-        {s.concept && (
-          <span className="font-editorial italic text-[14px] leading-[1.5] text-t3 line-clamp-1">
-            {s.concept}
+    <>
+      <Link
+        href={`/engine-room/signals/${encodeURIComponent(s.shortcode)}`}
+        className={`${decadeTintClass} grid grid-cols-[72px_1fr_auto_auto_auto] gap-4 items-center py-3.5 border-b border-rule-1 last:border-b-0 hover:bg-wash-1 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2 rounded-sm ${isManifestation ? "pl-9 relative" : ""}`}
+      >
+        {isManifestation && connector && (
+          <span
+            aria-hidden
+            className="absolute left-3 top-3.5 font-mono text-[11px] text-t5"
+          >
+            {connector}
           </span>
         )}
-      </div>
-      <StagePips status={s.status} size={5} showLabel={false} />
-      <span className="font-mono text-[10.5px] tracking-[0.18em] uppercase text-t2 whitespace-nowrap">
-        {currentStageLabel(s.status)}
-      </span>
-      <span className="font-mono text-[10.5px] tracking-[0.18em] uppercase text-t5 whitespace-nowrap">
-        {age} &rsaquo;
-      </span>
-    </Link>
+        <span
+          className={`font-display font-bold text-[11.5px] tracking-[0.16em] flex items-center gap-2 ${
+            isManifestation ? "text-t2" : "text-t1"
+          }`}
+        >
+          {s.shortcode}
+          {s.decade && (
+            <span className="font-mono text-[9px] tracking-[0.18em] uppercase text-[rgba(var(--d),0.95)] px-1.5 py-0.5 border border-[rgba(var(--d),0.4)] rounded-sm">
+              {s.decade}
+            </span>
+          )}
+        </span>
+        <div className="min-w-0 flex flex-col gap-0.5">
+          <span
+            className={`font-display font-medium ${isManifestation ? "text-[13px] text-t3" : "text-[14.5px] text-t1"} -tracking-[0.005em] leading-[1.3]`}
+          >
+            {s.workingTitle}
+          </span>
+          {s.concept && !isManifestation && (
+            <span className="font-editorial italic text-[14px] leading-[1.5] text-t3 line-clamp-1">
+              {s.concept}
+            </span>
+          )}
+        </div>
+        <StagePips status={s.status} size={5} showLabel={false} />
+        <span className="font-mono text-[10.5px] tracking-[0.18em] uppercase text-t2 whitespace-nowrap">
+          {currentStageLabel(s.status)}
+        </span>
+        <span className="font-mono text-[10.5px] tracking-[0.18em] uppercase text-t5 whitespace-nowrap">
+          {age} &rsaquo;
+        </span>
+      </Link>
+      {/* Nested manifestation children rendered immediately after the
+          parent row. Each child gets isLastSibling=true on the final
+          row so the connector flips from ├─ to └─. */}
+      {hasManifestations &&
+        s.manifestations.map((m, i) => (
+          <SignalRow
+            key={m.id}
+            s={m}
+            isManifestation={true}
+            isLastSibling={i === s.manifestations.length - 1}
+          />
+        ))}
+    </>
   );
 }
 
