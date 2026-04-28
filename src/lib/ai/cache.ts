@@ -50,7 +50,7 @@ import type { ModelMessage } from "ai";
  *     streamText. Empty object for providers with automatic caching.
  */
 
-import type { Message } from "@/lib/actions/conversations";
+import type { Message, StageKey } from "@/lib/actions/conversations";
 
 export type Provider = "anthropic" | "google" | "openai" | "xai";
 
@@ -90,6 +90,13 @@ export interface BuildCachedMessagesParams {
    * is, without the hint polluting the persisted conversation row or
    * the cached system prefix.
    *
+   * Typed as `StageKey` (not `string`) since the route validates the
+   * incoming `stage` field via `z.enum([...])` before passing it
+   * here. CodeRabbit on PR #7 caught the loose `string` declaration —
+   * tightening to the enum keeps the contract explicit and avoids a
+   * theoretical pathway where an unvalidated string could be
+   * concatenated into the prompt template.
+   *
    * Why ephemeral (in messages, not system):
    *   - The hint changes per-turn (user switches tabs); stuffing it in
    *     the system field would invalidate the prefix cache on every
@@ -104,7 +111,7 @@ export interface BuildCachedMessagesParams {
    *     user's current viewport. Phrasing in the prepended line makes
    *     this explicit so the model doesn't infer scope-locking.
    */
-  activeStageHint?: string;
+  activeStageHint?: StageKey;
 }
 
 export interface CachedPayload {
