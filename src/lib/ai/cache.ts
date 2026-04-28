@@ -163,8 +163,13 @@ export function buildCachedMessages(
   // signals to the model that this is system-style metadata, not part
   // of what the user typed. The "but you have access" clause prevents
   // the model from treating this as a scope-lock.
+  // Phrasing kept user-agnostic ("the user is currently viewing") so
+  // the same hint works once DECK ships and there are non-founder
+  // users in BOS. CodeRabbit on PR #7 caught this; it's the same
+  // pattern as the require-founder.ts fix on Phase 8L (no founder
+  // name baked into a string that may outlive a single-founder org).
   const finalUserMessage = activeStageHint
-    ? `[Workspace orientation: Inba is currently viewing the ${activeStageHint} tab. Frame your reply with that as orientation context — but you have access to every stage's outputs via tools, so don't refuse a cross-stage question.]\n\n${currentUserMessage}`
+    ? `[Workspace orientation: The user is currently viewing the ${activeStageHint} tab. Frame your reply with that as orientation context — but you have access to every stage's outputs via tools, so don't refuse a cross-stage question.]\n\n${currentUserMessage}`
     : currentUserMessage;
 
   messages.push({
