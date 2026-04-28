@@ -7,6 +7,10 @@ import { ContextStrip } from "./context-strip";
 import { OrcPanel } from "./orc-panel";
 import { RENDERERS } from "./renderers/registry";
 import type { ParentStokerData } from "./renderers/stoker-resonance";
+import type {
+  ParentReference,
+  ManifestationOwnDetail,
+} from "./renderers/types";
 import { computeStageStates, pickInitialTab, type AgentKey } from "./types";
 import type { SignalStatus } from "@/components/engine-room/stage-pips";
 import {
@@ -65,11 +69,17 @@ export function WorkspaceFrame({
   signal,
   collection,
   stokerData,
+  parentRef,
+  manifestationDetail,
 }: {
   signal: typeof signals.$inferSelect;
   collection: typeof collections.$inferSelect | null;
   /** Phase 9D — STOKER tab data fetched server-side. Null pre-STOKER. */
   stokerData: ParentStokerData | null;
+  /** Phase 9F — set when signal is a manifestation child. */
+  parentRef: ParentReference | null;
+  /** Phase 9F — manifestation's own STOKER agent_outputs detail. */
+  manifestationDetail: ManifestationOwnDetail | null;
 }) {
   const states = useMemo(
     () => computeStageStates(signal.status as SignalStatus),
@@ -436,6 +446,8 @@ export function WorkspaceFrame({
               collection={collection}
               state={states[activeTab]}
               stokerData={stokerData}
+              parentRef={parentRef}
+              manifestationDetail={manifestationDetail}
             />
           </div>
         </main>

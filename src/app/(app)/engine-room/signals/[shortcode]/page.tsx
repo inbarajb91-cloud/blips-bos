@@ -9,6 +9,10 @@ import {
 import { getCurrentUserWithOrg } from "@/lib/auth/current-user";
 import { WorkspaceFrame } from "@/components/engine-room/workspace/workspace-frame";
 import type { ParentStokerData } from "@/components/engine-room/workspace/renderers/stoker-resonance";
+import type {
+  ParentReference,
+  ManifestationOwnDetail,
+} from "@/components/engine-room/workspace/renderers/types";
 
 export const metadata = { title: "Signal · Engine Room · BLIPS BOS" };
 
@@ -165,11 +169,63 @@ export default async function SignalPage({
     }
   }
 
+  // Phase 9F — when this signal is a manifestation, fetch the parent's
+  // basic info (for the inherited BUNKER banner + workspace breadcrumbs)
+  // and this manifestation's own STOKER agent_outputs row (for the
+  // STOKER tab's single-card detail view).
+  let parentRef: ParentReference | null = null;
+  let manifestationDetail: ManifestationOwnDetail | null = null;
+
+  if (isManifestation && signal.parentSignalId) {
+    const [parent] = await db
+      .select({
+        id: signalsTable.id,
+        shortcode: signalsTable.shortcode,
+        workingTitle: signalsTable.workingTitle,
+        concept: signalsTable.concept,
+      })
+      .from(signalsTable)
+      .where(
+        and(
+          eq(signalsTable.id, signal.parentSignalId),
+          eq(signalsTable.orgId, user.orgId),
+        ),
+      )
+      .limit(1);
+    if (parent) parentRef = parent;
+
+    const [own] = await db
+      .select({
+        id: agentOutputsTable.id,
+        content: agentOutputsTable.content,
+        status: agentOutputsTable.status,
+        revisions: agentOutputsTable.revisions,
+      })
+      .from(agentOutputsTable)
+      .where(
+        and(
+          eq(agentOutputsTable.signalId, signal.id),
+          eq(agentOutputsTable.agentName, "STOKER"),
+        ),
+      )
+      .limit(1);
+    if (own) {
+      manifestationDetail = {
+        id: own.id,
+        content: own.content as Record<string, unknown>,
+        status: own.status,
+        revisionsCount: Array.isArray(own.revisions) ? own.revisions.length : 0,
+      };
+    }
+  }
+
   return (
     <WorkspaceFrame
       signal={signal}
       collection={collection}
       stokerData={stokerData}
+      parentRef={parentRef}
+      manifestationDetail={manifestationDetail}
     />
   );
 }

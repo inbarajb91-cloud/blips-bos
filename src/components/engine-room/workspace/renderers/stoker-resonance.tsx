@@ -3,6 +3,8 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { RendererProps } from "./registry";
+import type { ParentReference, ManifestationOwnDetail } from "./types";
+import type { signals } from "@/db/schema";
 import {
   approveStokerManifestation,
   dismissStokerManifestation,
@@ -103,15 +105,23 @@ interface StokerOutputContent {
 
 // ─── Renderer ─────────────────────────────────────────────────────
 
-export function StokerResonance({ signal, stokerData }: RendererProps) {
-  // Manifestation children's workspace shouldn't render this — they get
-  // a different STOKER tab in Phase 9F. Defensive guard.
+export function StokerResonance({
+  signal,
+  stokerData,
+  parentRef,
+  manifestationDetail,
+}: RendererProps) {
+  // Phase 9F — manifestation child's STOKER tab. Renders a single
+  // detail card for THIS manifestation (not the 3-card grid), tinted
+  // in this manifestation's decade color. The 3-card grid is only on
+  // the parent's STOKER tab.
   if (signal.parentSignalId !== null) {
     return (
-      <div className="text-t3 text-sm font-mono uppercase tracking-[0.18em]">
-        STOKER detail for manifestations renders on the manifestation's
-        own STOKER tab — Phase 9F.
-      </div>
+      <ManifestationDetailView
+        signal={signal}
+        parentRef={parentRef}
+        manifestationDetail={manifestationDetail}
+      />
     );
   }
 
@@ -707,6 +717,197 @@ function FanOutPreview({
           {dismissed.length} dismissed
         </span>
       )}
+    </div>
+  );
+}
+
+// ─── Manifestation workspace detail (Phase 9F) ───────────────────
+
+/**
+ * Single-card STOKER tab detail rendered on a manifestation child's
+ * own workspace. Shows decade chip + score + framing + dimensions —
+ * full content for THIS manifestation only. Per-card actions are
+ * disabled here because the per-card actions live on the parent's
+ * STOKER tab (where the founder reviews all 3 manifestations together).
+ *
+ * Status badge surfaces the manifestation's current gate state:
+ * PENDING (awaiting parent-side approval) / APPROVED (advancing past
+ * STOKER) / REJECTED (dismissed).
+ */
+function ManifestationDetailView({
+  signal,
+  parentRef,
+  manifestationDetail,
+}: {
+  signal: typeof signals.$inferSelect;
+  parentRef: ParentReference | null;
+  manifestationDetail: ManifestationOwnDetail | null;
+}) {
+  if (!manifestationDetail) {
+    return (
+      <div className="py-8 text-t3 font-editorial italic">
+        STOKER output for this manifestation hasn&apos;t been loaded yet.
+        If this persists after a refresh, check the parent signal and
+        re-run STOKER from there.
+      </div>
+    );
+  }
+
+  const decade = signal.manifestationDecade as "RCK" | "RCL" | "RCD" | null;
+  const tint = decade ? DECADE_TINTS[decade] : "";
+  const ageRange = decade ? DECADE_AGES[decade] : "";
+  const c = manifestationDetail.content as {
+    framingHook?: string;
+    tensionAxis?: string;
+    narrativeAngle?: string;
+    rationale?: string;
+    resonanceScore?: number;
+    dimensionAlignment?: Record<string, string>;
+  };
+
+  const status = manifestationDetail.status;
+  const isApproved = status === "APPROVED";
+  const isRejected = status === "REJECTED";
+
+  return (
+    <div className="py-2">
+      <div className="text-[9px] font-mono tracking-[0.24em] uppercase text-t4 mb-1">
+        STOKER · MANIFESTATION DETAIL
+      </div>
+      <h2 className="font-display text-base font-semibold text-t1 mb-1">
+        This is the {decade ?? "—"} manifestation
+        {parentRef && (
+          <span className="text-t3"> of {parentRef.shortcode}</span>
+        )}
+      </h2>
+      <p className="font-editorial italic text-t3 text-sm mb-7 max-w-3xl">
+        Originally produced by STOKER
+        {manifestationDetail.revisionsCount > 0 && (
+          <>, last edited (revision {manifestationDetail.revisionsCount})</>
+        )}
+        . Approve / edit / dismiss this manifestation from{" "}
+        {parentRef ? (
+          <a
+            href={`/engine-room/signals/${encodeURIComponent(parentRef.shortcode)}`}
+            className="font-mono text-[12px] tracking-[0.06em] not-italic uppercase text-t2 hover:text-t1 transition-colors"
+          >
+            {parentRef.shortcode} ↗
+          </a>
+        ) : (
+          "the parent signal"
+        )}
+        &apos;s STOKER tab.
+      </p>
+
+      <div
+        className={`${tint} border rounded-md px-8 py-7`}
+        style={{
+          background: "rgba(var(--d), 0.08)",
+          borderColor: "rgba(var(--d), 0.45)",
+        }}
+      >
+        {/* Head */}
+        <div
+          className="flex items-baseline justify-between mb-4 pb-4 border-b"
+          style={{ borderColor: "rgba(var(--d), 0.25)" }}
+        >
+          <span className="font-display font-bold text-[13px] tracking-[0.16em] text-[rgba(var(--d),1)]">
+            {decade}
+            <span className="font-mono text-[10px] tracking-[0.2em] text-t4 ml-2.5">
+              {ageRange}
+            </span>
+          </span>
+          <div className="flex items-center gap-4">
+            {isApproved && (
+              <span className="font-mono text-[9px] tracking-[0.22em] uppercase text-[rgba(var(--d),1)]">
+                Approved
+              </span>
+            )}
+            {isRejected && (
+              <span className="font-mono text-[9px] tracking-[0.22em] uppercase text-t4">
+                Dismissed
+              </span>
+            )}
+            {!isApproved && !isRejected && (
+              <span className="font-mono text-[9px] tracking-[0.22em] uppercase text-t3">
+                Pending parent gate
+              </span>
+            )}
+            {typeof c.resonanceScore === "number" && (
+              <span className="font-display font-bold text-[26px] -tracking-[0.01em] tabular-nums text-[rgba(var(--d),1)]">
+                {c.resonanceScore}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Hook */}
+        {c.framingHook && (
+          <div className="font-display font-medium text-[22px] -tracking-[0.008em] leading-snug text-t1 mb-5">
+            {c.framingHook}
+          </div>
+        )}
+
+        {/* Tension */}
+        {c.tensionAxis && (
+          <div className="mb-4">
+            <div className="font-mono text-[10px] tracking-[0.22em] uppercase text-t4 mb-1.5">
+              Tension axis
+            </div>
+            <div className="font-mono text-[13px] leading-relaxed text-t1">
+              {c.tensionAxis}
+            </div>
+          </div>
+        )}
+
+        {/* Angle */}
+        {c.narrativeAngle && (
+          <div className="mb-5">
+            <div className="font-mono text-[10px] tracking-[0.22em] uppercase text-t4 mb-1.5">
+              Narrative angle
+            </div>
+            <div className="font-editorial text-[16px] leading-relaxed text-t1">
+              {c.narrativeAngle}
+            </div>
+          </div>
+        )}
+
+        {/* Rationale */}
+        {c.rationale && (
+          <div className="mb-5">
+            <div className="font-mono text-[10px] tracking-[0.22em] uppercase text-t4 mb-1.5">
+              Rationale
+            </div>
+            <div className="font-editorial text-[14px] leading-relaxed text-t2 italic">
+              {c.rationale}
+            </div>
+          </div>
+        )}
+
+        {/* Dimension alignment grid */}
+        {c.dimensionAlignment && (
+          <div
+            className="pt-4 mt-2 border-t"
+            style={{ borderColor: "rgba(var(--d), 0.25)" }}
+          >
+            <div className="font-mono text-[10px] tracking-[0.22em] uppercase text-t4 mb-3">
+              Dimension alignment
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 gap-x-8">
+              {Object.entries(c.dimensionAlignment).map(([dim, value]) => (
+                <div key={dim} className="font-mono text-[11px] leading-tight">
+                  <div className="font-mono text-[9px] tracking-[0.22em] uppercase text-t4 mb-0.5">
+                    {dim}
+                  </div>
+                  <div className="text-t1">
+                    {value && value.trim().length > 0 ? value : "—"}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

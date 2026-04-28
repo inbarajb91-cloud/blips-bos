@@ -6,6 +6,10 @@ import {
   StokerResonance,
   type ParentStokerData,
 } from "./stoker-resonance";
+import type {
+  ParentReference,
+  ManifestationOwnDetail,
+} from "./types";
 
 /**
  * Renderer Registry — Phase 7.
@@ -37,6 +41,19 @@ export interface RendererProps {
    * STOKER tab — see Phase 9F).
    */
   stokerData: ParentStokerData | null;
+  /**
+   * Phase 9F — when the signal is a manifestation child, basic info
+   * about its parent for the inherited BUNKER banner + breadcrumbs.
+   * Null on raw signals.
+   */
+  parentRef: ParentReference | null;
+  /**
+   * Phase 9F — manifestation child's own STOKER agent_outputs row,
+   * used to render the manifestation's single-card STOKER tab detail
+   * (not the 3-card grid that lives on the parent's STOKER tab).
+   * Null on raw signals.
+   */
+  manifestationDetail: ManifestationOwnDetail | null;
 }
 
 export type Renderer = React.ComponentType<RendererProps>;
