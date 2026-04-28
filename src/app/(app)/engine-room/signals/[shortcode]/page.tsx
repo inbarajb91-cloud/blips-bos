@@ -1,12 +1,14 @@
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { notFound, redirect } from "next/navigation";
 import {
   db,
   signals as signalsTable,
   collections as collectionsTable,
+  agentOutputs as agentOutputsTable,
 } from "@/db";
 import { getCurrentUserWithOrg } from "@/lib/auth/current-user";
 import { WorkspaceFrame } from "@/components/engine-room/workspace/workspace-frame";
+import type { ParentStokerData } from "@/components/engine-room/workspace/renderers/stoker-resonance";
 
 export const metadata = { title: "Signal · Engine Room · BLIPS BOS" };
 
@@ -64,5 +66,110 @@ export default async function SignalPage({
     collection = c ?? null;
   }
 
-  return <WorkspaceFrame signal={signal} collection={collection} />;
+  // Phase 9D — eagerly load STOKER data for the parent's STOKER tab
+  // renderer if the signal has progressed past BUNKER. Renderer convention
+  // says "Renderers must not fetch data" — so the page does it once.
+  //
+  // Two pieces:
+  //   1. Parent's own STOKER agent_outputs row (the decade_resonance
+  //      JSON the 3-card grid renders from). Only present once STOKER
+  //      has run; null pre-STOKER, null on raw signals that haven't
+  //      advanced.
+  //   2. Manifestation children (signals where parent_signal_id =
+  //      this signal's id) plus each child's STOKER agent_outputs row
+  //      (so the renderer knows status: PENDING / APPROVED / REJECTED
+  //      and can show approved/dismissed markers per card).
+  let stokerData: ParentStokerData | null = null;
+  const isManifestation = signal.parentSignalId !== null;
+  const stokerHasRun =
+    !isManifestation &&
+    [
+      "IN_STOKER",
+      "FANNED_OUT",
+      "STOKER_REFUSED",
+      "DISMISSED",
+    ].includes(signal.status);
+
+  if (stokerHasRun) {
+    const [parentStokerOutputRow] = await db
+      .select({
+        id: agentOutputsTable.id,
+        content: agentOutputsTable.content,
+        status: agentOutputsTable.status,
+        revisions: agentOutputsTable.revisions,
+      })
+      .from(agentOutputsTable)
+      .where(
+        and(
+          eq(agentOutputsTable.signalId, signal.id),
+          eq(agentOutputsTable.agentName, "STOKER"),
+        ),
+      )
+      .orderBy(asc(agentOutputsTable.createdAt))
+      .limit(1);
+
+    if (parentStokerOutputRow) {
+      const children = await db
+        .select({
+          id: signalsTable.id,
+          shortcode: signalsTable.shortcode,
+          status: signalsTable.status,
+          manifestationDecade: signalsTable.manifestationDecade,
+        })
+        .from(signalsTable)
+        .where(
+          and(
+            eq(signalsTable.parentSignalId, signal.id),
+            eq(signalsTable.orgId, user.orgId),
+          ),
+        );
+
+      // Map children's STOKER agent_outputs by signal id
+      const childIds = children.map((c) => c.id);
+      const childOutputs = childIds.length
+        ? await db
+            .select({
+              signalId: agentOutputsTable.signalId,
+              status: agentOutputsTable.status,
+              content: agentOutputsTable.content,
+              revisions: agentOutputsTable.revisions,
+            })
+            .from(agentOutputsTable)
+            .where(eq(agentOutputsTable.agentName, "STOKER"))
+        : [];
+      const outputBySignal = new Map(
+        childOutputs.map((o) => [o.signalId, o]),
+      );
+
+      stokerData = {
+        parentOutput: {
+          id: parentStokerOutputRow.id,
+          content: parentStokerOutputRow.content as Record<string, unknown>,
+          status: parentStokerOutputRow.status,
+        },
+        children: children.map((c) => {
+          const out = outputBySignal.get(c.id);
+          return {
+            id: c.id,
+            shortcode: c.shortcode,
+            status: c.status,
+            decade: c.manifestationDecade as "RCK" | "RCL" | "RCD",
+            outputStatus: out?.status ?? null,
+            outputContent: (out?.content ?? null) as Record<
+              string,
+              unknown
+            > | null,
+          };
+        }),
+      };
+    }
+  }
+
+  return (
+    <WorkspaceFrame
+      signal={signal}
+      collection={collection}
+      stokerData={stokerData}
+    />
+  );
 }

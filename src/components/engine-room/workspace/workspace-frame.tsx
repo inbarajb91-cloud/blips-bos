@@ -6,6 +6,7 @@ import { AgentTabStrip } from "./agent-tab-strip";
 import { ContextStrip } from "./context-strip";
 import { OrcPanel } from "./orc-panel";
 import { RENDERERS } from "./renderers/registry";
+import type { ParentStokerData } from "./renderers/stoker-resonance";
 import { computeStageStates, pickInitialTab, type AgentKey } from "./types";
 import type { SignalStatus } from "@/components/engine-room/stage-pips";
 import {
@@ -63,9 +64,12 @@ const MAX_PANEL = 620;
 export function WorkspaceFrame({
   signal,
   collection,
+  stokerData,
 }: {
   signal: typeof signals.$inferSelect;
   collection: typeof collections.$inferSelect | null;
+  /** Phase 9D — STOKER tab data fetched server-side. Null pre-STOKER. */
+  stokerData: ParentStokerData | null;
 }) {
   const states = useMemo(
     () => computeStageStates(signal.status as SignalStatus),
@@ -431,6 +435,7 @@ export function WorkspaceFrame({
               signal={signal}
               collection={collection}
               state={states[activeTab]}
+              stokerData={stokerData}
             />
           </div>
         </main>
