@@ -193,6 +193,7 @@ export default async function SignalPage({
       const childOutputs = childIds.length
         ? await db
             .select({
+              id: agentOutputsTable.id,
               signalId: agentOutputsTable.signalId,
               status: agentOutputsTable.status,
               content: agentOutputsTable.content,
@@ -250,14 +251,21 @@ export default async function SignalPage({
       // once Phase 10 ships, without changing the schema. STOKER_DISMISSED
       // is filtered at the SELECTOR level (not here), so the renderers
       // can still surface a dismissed-state banner if needed.
+      // CR pass 1 on PR #10: stokerDetail was previously populated
+      // with sentinel values (`id: ""`, `revisionsCount: 0`) which
+      // made the shared ManifestationOwnDetail contract lie. The
+      // detail row's real id and revisions count are now threaded
+      // through from the agent_outputs row.
       manifestations = children.map((c) => {
         const out = outputBySignal.get(c.id);
         const stokerDetail: ManifestationOwnDetail | null = out
           ? {
-              id: "",
+              id: out.id,
               content: (out.content ?? {}) as Record<string, unknown>,
               status: out.status,
-              revisionsCount: 0,
+              revisionsCount: Array.isArray(out.revisions)
+                ? out.revisions.length
+                : 0,
             }
           : null;
         return {

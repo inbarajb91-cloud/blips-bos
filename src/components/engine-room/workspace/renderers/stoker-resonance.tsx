@@ -152,11 +152,56 @@ interface StokerOutputContent {
 // following a single space). Single-sentence prose falls through
 // to a plain paragraph render so short-form content doesn't get a
 // useless one-bullet list.
+//
+// CR pass on PR #10: the bare regex split miscategorises common
+// honorifics ("Dr. Smith arrived") + Latin abbreviations
+// ("e.g. tomatoes") as sentence boundaries, mangling otherwise
+// normal STOKER prose into broken bullets. We now scan the produced
+// segments for trailing-abbreviation tokens; if any segment ends in
+// a known abbreviation, the split was almost certainly wrong, so
+// we fall back to rendering the original prose as a single block.
+// This is a heuristic guard, not a full sentence segmenter — but it
+// covers the abbreviation classes STOKER actually emits, which is
+// what the user feedback was about.
+const ABBREVIATIONS_TRAILING_PERIOD: ReadonlySet<string> = new Set([
+  "Mr",
+  "Mrs",
+  "Ms",
+  "Dr",
+  "Prof",
+  "Sr",
+  "Jr",
+  "St",
+  "vs",
+  "Ave",
+  "Inc",
+  "Ltd",
+  "Co",
+  "Corp",
+  "etc",
+  // Latin abbreviations show up at end of phrases too.
+  "e.g",
+  "i.e",
+]);
+
 function splitSentences(text: string): string[] {
-  return text
+  const segments = text
     .split(/(?<=[.!?])\s+(?=[A-Z])/)
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
+  // Single segment — nothing to validate. Caller renders as plain
+  // paragraph anyway.
+  if (segments.length <= 1) return segments;
+  // Walk all segments except the last: a wrong-split symptom is
+  // segment[i] ending in an abbreviation token. The last segment
+  // legitimately ends in `.`/`?`/`!` so we don't validate it.
+  for (let i = 0; i < segments.length - 1; i++) {
+    const trailingToken = segments[i].match(/(\S+?)\.$/)?.[1];
+    if (trailingToken && ABBREVIATIONS_TRAILING_PERIOD.has(trailingToken)) {
+      return [text.trim()];
+    }
+  }
+  return segments;
 }
 
 function ProseAsBullets({

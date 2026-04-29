@@ -2,6 +2,12 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { SignalStatus } from "@/components/engine-room/stage-pips";
+import type { DecadeKey } from "@/components/engine-room/workspace/renderers/types";
+
+// Re-export so existing imports of `DecadeKey` from this module keep
+// working — DecadeKey was hoisted into renderers/types.ts (CR pass on
+// PR #10) so server code doesn't have to depend on this UI component.
+export type { DecadeKey };
 
 /**
  * ManifestationSelector — Phase 9.5.
@@ -45,8 +51,6 @@ import type { SignalStatus } from "@/components/engine-room/stage-pips";
  * already aliases to var(--d-batch / -instant / -scheduled) — so
  * Phase 9's polish work carries forward unchanged.
  */
-
-export type DecadeKey = "RCK" | "RCL" | "RCD";
 
 export type ManifestationOption = {
   decade: DecadeKey;
@@ -184,7 +188,7 @@ export function ManifestationSelector({
         ref={triggerRef}
         type="button"
         onClick={() => setOpen((v) => !v)}
-        aria-haspopup="listbox"
+        aria-haspopup="true"
         aria-expanded={open}
         aria-label={`Active manifestation: ${DECADE_LABELS[activeOption.decade]} (${activeOption.shortcode}). Click to switch.`}
         className="inline-flex items-center gap-[10px] px-[14px] py-[7px] rounded-full text-[12px] font-display font-medium -tracking-[0.005em] border transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2 hover:brightness-110"
@@ -210,9 +214,15 @@ export function ManifestationSelector({
         </span>
       </button>
 
+      {/* Popover. CR pass on PR #10 — dropped artificial ARIA
+          listbox/option roles. Plain native <button>s give the user
+          natural Tab focus + Enter/Space activation, which matches
+          the rest of the workspace's keyboard model. The popover
+          itself is a labeled region for AT context but no longer
+          claims listbox semantics it can't fully implement
+          (arrow-key navigation, type-ahead, etc.). */}
       {open && (
         <div
-          role="listbox"
           aria-label="Switch manifestation"
           className="absolute top-full left-0 mt-2 z-20 min-w-[280px] border border-rule-2 rounded-sm bg-ink shadow-[0_8px_28px_rgba(0,0,0,0.4)] overflow-hidden"
         >
@@ -223,8 +233,6 @@ export function ManifestationSelector({
               <button
                 key={m.decade}
                 type="button"
-                role="option"
-                aria-selected={isActive}
                 onClick={() => {
                   onSelect(m.decade);
                   setOpen(false);

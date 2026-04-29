@@ -684,72 +684,94 @@ function SignalRow({
   const router = useRouter();
 
   return (
-    <Link
-      href={parentHref}
-      className="grid grid-cols-[72px_1fr_auto_auto_auto_auto] gap-4 items-center py-3.5 border-b border-rule-1 last:border-b-0 hover:bg-wash-1 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2 rounded-sm"
-    >
-      <span className="font-display font-bold text-[11.5px] tracking-[0.16em] text-t1">
-        {s.shortcode}
-      </span>
-      <div className="min-w-0 flex flex-col gap-0.5">
-        <span className="font-display font-medium text-[14.5px] text-t1 -tracking-[0.005em] leading-[1.3]">
-          {s.workingTitle}
+    // Outer wrapper carries the row hover + border. Two <Link>s span
+    // the non-chip cells via `display: contents` so they participate
+    // in the parent grid as normal children but don't introduce
+    // nested-anchor markup. Chip cluster sits as a sibling between
+    // them — the Bridge's previous Link-wrapping-buttons layout was
+    // invalid HTML (interactive content inside <a>) and broke
+    // keyboard/AT navigation; CR pass on PR #10 caught it.
+    //
+    // Two-Link split (vs. one Link covering everything via more
+    // exotic display tricks): keeps each Link's purpose clear, both
+    // resolve to the same parentHref, and keyboard tab order stays
+    // intuitive (shortcode/title → chips → stage-pips/label/age).
+    // The outer <div> carries the row's hover+focus-within state so
+    // the row still highlights as a single unit.
+    <div className="grid grid-cols-[72px_1fr_auto_auto_auto_auto] gap-4 items-center py-3.5 border-b border-rule-1 last:border-b-0 hover:bg-wash-1 focus-within:bg-wash-1 transition-colors rounded-sm">
+      <Link
+        href={parentHref}
+        className="contents focus-visible:outline-none"
+      >
+        <span className="font-display font-bold text-[11.5px] tracking-[0.16em] text-t1">
+          {s.shortcode}
         </span>
-        {s.concept && (
-          <span className="font-editorial italic text-[14px] leading-[1.5] text-t3 line-clamp-1">
-            {s.concept}
+        <div className="min-w-0 flex flex-col gap-0.5">
+          <span className="font-display font-medium text-[14.5px] text-t1 -tracking-[0.005em] leading-[1.3]">
+            {s.workingTitle}
           </span>
-        )}
-      </div>
+          {s.concept && (
+            <span className="font-editorial italic text-[14px] leading-[1.5] text-t3 line-clamp-1">
+              {s.concept}
+            </span>
+          )}
+        </div>
+      </Link>
       {/* Decade chip cluster — Phase 9.5. One chip per non-dismissed
-          manifestation child, color-coded by decade. Empty cell when
-          the parent has no manifestations (pre-STOKER, STOKER_REFUSED,
-          all-dismissed) so the grid track collapses cleanly. */}
+          manifestation child, color-coded by decade. Empty div when
+          the parent has no manifestations so the grid track collapses
+          cleanly. CR pass on PR #10: chips moved out of the Link to
+          fix nested-anchor invalid markup; using m.id (not m.decade)
+          as the React key, and skipping any child whose decade is
+          missing (defensive — DB CHECK keeps decades present). */}
       <div className="flex items-center gap-1.5">
         {hasManifestations &&
-          activeManifestations.map((m) => (
-            <DecadeChip
-              key={m.decade}
-              decade={m.decade ?? "RCK"}
-              onClick={(e) => {
-                // Override the parent <Link>'s navigation. Navigate
-                // to the parent's workspace WITH ?m= pre-set so the
-                // ManifestationSelector lands on the right decade.
-                e.preventDefault();
-                e.stopPropagation();
-                router.push(
-                  `/engine-room/signals/${encodeURIComponent(s.shortcode)}?m=${m.decade ?? "RCK"}`,
-                );
-              }}
-            />
-          ))}
+          activeManifestations
+            .filter((m): m is typeof m & { decade: "RCK" | "RCL" | "RCD" } =>
+              m.decade != null,
+            )
+            .map((m) => (
+              <DecadeChip
+                key={m.id}
+                decade={m.decade}
+                onClick={() => {
+                  router.push(
+                    `/engine-room/signals/${encodeURIComponent(s.shortcode)}?m=${m.decade}`,
+                  );
+                }}
+              />
+            ))}
       </div>
-      <StagePips status={s.status} size={5} showLabel={false} />
-      <span className="font-mono text-[10.5px] tracking-[0.18em] uppercase text-t2 whitespace-nowrap">
-        {currentStageLabel(s.status)}
-      </span>
-      <span className="font-mono text-[10.5px] tracking-[0.18em] uppercase text-t5 whitespace-nowrap">
-        {age} &rsaquo;
-      </span>
-    </Link>
+      <Link
+        href={parentHref}
+        className="contents focus-visible:outline-none"
+      >
+        <StagePips status={s.status} size={5} showLabel={false} />
+        <span className="font-mono text-[10.5px] tracking-[0.18em] uppercase text-t2 whitespace-nowrap">
+          {currentStageLabel(s.status)}
+        </span>
+        <span className="font-mono text-[10.5px] tracking-[0.18em] uppercase text-t5 whitespace-nowrap">
+          {age} &rsaquo;
+        </span>
+      </Link>
+    </div>
   );
 }
 
 /**
  * Decade chip — small colored pill rendered in the parent row for each
- * non-dismissed manifestation. Functions as a button (overrides the
- * surrounding Link's navigation via preventDefault + stopPropagation
- * in its onClick) but uses a `<button>` element for proper keyboard
- * accessibility (Tab focusable, Enter/Space activates). Browser-native
- * <button> inside <a> is technically discouraged but well-supported
- * — see the SignalRow doc-block for rationale.
+ * non-dismissed manifestation. Renders as a sibling of the row's
+ * <Link>s (CR pass on PR #10 — was previously nested inside the Link
+ * which was invalid HTML and broke keyboard/AT navigation). Plain
+ * <button> with onClick for navigation; no preventDefault dance
+ * needed now that it's not under an anchor.
  */
 function DecadeChip({
   decade,
   onClick,
 }: {
   decade: "RCK" | "RCL" | "RCD";
-  onClick: (e: React.MouseEvent<HTMLButtonElement>) => void;
+  onClick: () => void;
 }) {
   const tint =
     decade === "RCK" ? "t-rck" : decade === "RCL" ? "t-rcl" : "t-rcd";

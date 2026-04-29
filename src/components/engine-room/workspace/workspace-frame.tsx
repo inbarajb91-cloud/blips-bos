@@ -243,28 +243,41 @@ export function WorkspaceFrame({
   // Resolve initial activeDecade once the visible list is known. The
   // null initial state is a single-frame transient — this useEffect
   // fires synchronously on first commit and resolves to URL or
-  // first-visible. We don't track "URL was explicitly null"; if the
-  // URL has no ?m=, we pick the first visible deterministically.
+  // first-visible.
   //
-  // The set-state-in-effect rule is suppressed below — initial
-  // resolution from URL+server-data is genuinely client-only state
-  // that has to upgrade post-hydration. Same reasoning as the ORC
-  // open-state effect above.
+  // CR pass on PR #10 (round 2): keep the URL `?m=` in sync with
+  // state on every transition. Previously, when the chosen decade
+  // disappeared (manifestation dismissed, status flipped past
+  // POST_STOKER_VISIBLE, etc.), state fell back to first-visible
+  // but the URL kept the stale decade. Reload would then bounce
+  // back to the dismissed decade, fall back again, and so on. Now
+  // we explicitly clear or replace the URL when the source-of-truth
+  // (server data) no longer matches what the URL claims.
+  //
+  // The set-state-in-effect rule is suppressed on the first
+  // setActiveDecade call — initial resolution from URL+server-data
+  // is genuinely client-only state that has to upgrade post-hydration.
   useEffect(() => {
+    const fromUrl = readDecadeFromUrl();
+
     if (visibleManifestations.length === 0) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setActiveDecade(null);
+      // Clear stale ?m= so the URL reflects the empty state.
+      if (fromUrl) writeDecadeToUrl(null);
       return;
     }
-    const fromUrl = readDecadeFromUrl();
     if (fromUrl && visibleManifestations.some((m) => m.decade === fromUrl)) {
       setActiveDecade(fromUrl);
       return;
     }
-    // Fall back to first visible. Don't write URL on fallback —
-    // leaving ?m unset means "default to first" which keeps URLs
-    // clean for shareable parent links.
-    setActiveDecade(visibleManifestations[0].decade);
+    // Fall back to first visible. If the URL had a stale decade,
+    // replace it with the fallback so reload-resilience holds. If
+    // the URL was clean (no ?m=), leave it clean — first-visible is
+    // the implicit default, no need to clutter the URL.
+    const fallback = visibleManifestations[0].decade;
+    setActiveDecade(fallback);
+    if (fromUrl && fromUrl !== fallback) writeDecadeToUrl(fallback);
     // Run this resolution whenever visible manifestations change
     // (e.g., a dismissal lands and the previously-active decade is
     // no longer visible). visibleManifestations is itself memo'd

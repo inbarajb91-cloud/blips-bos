@@ -4,10 +4,19 @@
  * Pulled out of registry.tsx so server pages can import the data shapes
  * without dragging the renderer components themselves into the server
  * bundle.
+ *
+ * CR pass 1 on PR #10: DecadeKey lived in the UI component
+ * `manifestation-selector.tsx` and was imported back here, which
+ * reverse-coupled this server-friendly model module to a leaf UI
+ * component. Hoisted DecadeKey into this module so the dependency
+ * direction stays one-way (UI → types, never types → UI).
  */
 
 import type { SignalStatus } from "@/components/engine-room/stage-pips";
-import type { DecadeKey } from "@/components/engine-room/workspace/manifestation-selector";
+
+/** The three decade cohorts STOKER scores against (and the values
+ *  used in URL `?m=` params for the manifestation selector). */
+export type DecadeKey = "RCK" | "RCL" | "RCD";
 
 /** Basic reference to a manifestation's parent signal — used by the
  *  inherited BUNKER banner + workspace breadcrumbs on manifestation
