@@ -22,8 +22,10 @@ import {
   integer,
   numeric,
   uniqueIndex,
+  unique,
   index,
   check,
+  foreignKey,
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
@@ -242,18 +244,19 @@ export const signals = pgTable(
     // both are SET on manifestation children. Enforced by the
     // signals_manifestation_consistency CHECK constraint at the SQL level.
     //
-    // ON DELETE RESTRICT on parent_signal_id (CR pass on PR #8 — same
-    // pattern as Phase 8L knowledge_documents author FKs). The original
-    // ON DELETE SET NULL caused a CHECK violation when a parent was
-    // deleted: parent_signal_id became NULL but manifestation_decade
-    // stayed SET, violating signals_manifestation_consistency. With
-    // RESTRICT, a parent delete fails loudly until the founder
-    // explicitly handles the manifestation children first — forces
-    // deliberate cleanup, never silent-loses audit trail.
-    parentSignalId: uuid("parent_signal_id").references(
-      (): AnyPgColumn => signals.id,
-      { onDelete: "restrict" },
-    ),
+    // Phase 9 — parent_signal_id is part of a COMPOSITE FK that
+    // also pins the org_id, so a manifestation child in org A can't
+    // point at a parent in org B even via a malformed write that
+    // bypasses the app's getCurrentUserWithOrg scoping. The single-
+    // column .references() that originally lived here is replaced
+    // by a table-level foreignKey() declaration in the constraints
+    // array below. Cloud CR pass 3 on PR #8.
+    //
+    // ON DELETE RESTRICT (same as Phase 8L knowledge_documents
+    // author FKs): parent delete fails loudly until founder
+    // explicitly handles manifestation children. Forces deliberate
+    // cleanup, never silent-loses audit trail.
+    parentSignalId: uuid("parent_signal_id"),
     manifestationDecade: decadeLens("manifestation_decade"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
@@ -310,6 +313,19 @@ export const signals = pgTable(
       sql`(${t.manifestationDecade} IS NOT NULL AND ${t.source} = 'stoker_manifestation')
           OR (${t.manifestationDecade} IS NULL AND ${t.source} <> 'stoker_manifestation')`,
     ),
+    // Phase 9 — composite UNIQUE on (id, org_id) so the parent FK
+    // can target it. id alone is the PK; this composite is the
+    // necessary backing for the cross-tenant-safe FK below.
+    unique("signals_id_org_id_key").on(t.id, t.orgId),
+    // Phase 9 — composite FK (parent_signal_id, org_id) →
+    // (id, org_id). Tenant isolation enforced at the DB layer,
+    // not just at the application boundary. Cloud CR pass 3 on
+    // PR #8.
+    foreignKey({
+      columns: [t.parentSignalId, t.orgId],
+      foreignColumns: [t.id, t.orgId],
+      name: "signals_parent_signal_id_fkey",
+    }).onDelete("restrict"),
   ],
 );
 

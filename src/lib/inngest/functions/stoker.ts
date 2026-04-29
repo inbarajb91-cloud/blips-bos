@@ -1,4 +1,4 @@
-import { and, eq, ilike } from "drizzle-orm";
+import { and, eq, ilike, inArray, isNull, sql } from "drizzle-orm";
 import { inngest } from "../client";
 import {
   db,
@@ -83,41 +83,42 @@ export const stokerProcess = inngest.createFunction(
     const { orgId, signalId } = event.data;
 
     // ─── 1. Move parent IN_STOKER ───────────────────────────────
+    // Atomic compare-and-set: a single UPDATE with all the guards
+    // baked into the WHERE clause + RETURNING. If 0 rows update, we
+    // can't infer which guard failed, so the error message lists the
+    // possibilities. Cloud CR pass 3 on PR #8 caught the prior
+    // read-then-write shape's race window: a concurrent function run
+    // could have read state and overwritten our flip back to IN_BUNKER.
+    //
+    // Guards (all must pass for the row to be updated):
+    //   1. id matches signalId
+    //   2. org_id matches orgId (defense-in-depth alongside the FK)
+    //   3. parent_signal_id IS NULL (STOKER doesn't recurse on its
+    //      own outputs — manifestation children have parent_signal_id
+    //      SET, raw signals have it NULL)
+    //   4. status is IN_BUNKER (just approved at BUNKER gate) or
+    //      IN_STOKER (idempotent retry path — function may run twice
+    //      if Inngest retries after a partial failure)
     const parent = await step.run("load-parent + flip-status", async () => {
-      const [row] = await db
-        .select()
-        .from(signalsTable)
-        .where(and(eq(signalsTable.id, signalId), eq(signalsTable.orgId, orgId)))
-        .limit(1);
-      if (!row) {
-        throw new Error(
-          `[STOKER] parent signal ${signalId} not found for org ${orgId}`,
-        );
-      }
-      // Refuse to re-process a signal that already advanced past STOKER.
-      // STOKER restart goes through the explicit restart_stoker tool
-      // (Phase 9G), not via re-firing bunker.candidate.approved.
-      if (
-        row.status !== "IN_BUNKER" &&
-        row.status !== "IN_STOKER"
-      ) {
-        throw new Error(
-          `[STOKER] parent ${row.shortcode} is at status ${row.status}; refusing to re-process via bunker.candidate.approved`,
-        );
-      }
-      // Don't write to children — manifestations have parent_signal_id set.
-      // STOKER never recurses on its own outputs.
-      if (row.parentSignalId !== null) {
-        throw new Error(
-          `[STOKER] signal ${row.shortcode} is itself a manifestation child; STOKER does not recurse on its own outputs`,
-        );
-      }
-      // Idempotent flip — fine if already IN_STOKER.
-      await db
+      const updated = await db
         .update(signalsTable)
         .set({ status: "IN_STOKER", updatedAt: new Date() })
-        .where(eq(signalsTable.id, signalId));
-      return row;
+        .where(
+          and(
+            eq(signalsTable.id, signalId),
+            eq(signalsTable.orgId, orgId),
+            isNull(signalsTable.parentSignalId),
+            sql`${signalsTable.status} IN ('IN_BUNKER', 'IN_STOKER')`,
+          ),
+        )
+        .returning();
+
+      if (updated.length === 0) {
+        throw new Error(
+          `[STOKER] Could not load + advance parent signal ${signalId} for org ${orgId}. One of: not found, wrong org, signal is itself a manifestation child (parent_signal_id IS NOT NULL), or status is not IN_BUNKER/IN_STOKER (already past STOKER, dismissed, or failed). Refusing to re-process via bunker.candidate.approved — use restart_stoker tool (Phase 9G) for explicit restart.`,
+        );
+      }
+      return updated[0];
     });
 
     // ─── 2. Fetch Decade Playbooks ──────────────────────────────
