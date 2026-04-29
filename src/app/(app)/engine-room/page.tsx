@@ -72,6 +72,10 @@ export default async function BridgePage() {
         source: signalsTable.source,
         status: signalsTable.status,
         updatedAt: signalsTable.updatedAt,
+        // Phase 9E — pull parent FK + decade tag so we can group
+        // manifestation children under their parent rows.
+        parentSignalId: signalsTable.parentSignalId,
+        manifestationDecade: signalsTable.manifestationDecade,
       })
       .from(signalsTable)
       .where(
@@ -183,8 +187,27 @@ export default async function BridgePage() {
                   source: cand.source,
                   createdAt: cand.createdAt,
                 }));
-              const signalsForC = sigRows
-                .filter((s) => s.collectionId === c.id)
+              // Phase 9E — manifestation children belong to the same
+              // collection as their parent (the Inngest fan-out
+              // inherits collectionId from parent at child creation).
+              // Group children under each parent to render them
+              // nested in SignalRow.
+              const sigsInCollection = sigRows.filter(
+                (s) => s.collectionId === c.id,
+              );
+              const childrenByParent = new Map<
+                string,
+                Array<(typeof sigRows)[number]>
+              >();
+              for (const s of sigsInCollection) {
+                if (s.parentSignalId !== null) {
+                  const arr = childrenByParent.get(s.parentSignalId) ?? [];
+                  arr.push(s);
+                  childrenByParent.set(s.parentSignalId, arr);
+                }
+              }
+              const signalsForC = sigsInCollection
+                .filter((s) => s.parentSignalId === null) // top-level only
                 .map((s) => ({
                   id: s.id,
                   shortcode: s.shortcode,
@@ -193,6 +216,31 @@ export default async function BridgePage() {
                   source: s.source,
                   status: s.status,
                   updatedAt: s.updatedAt,
+                  decade: null,
+                  manifestations: (childrenByParent.get(s.id) ?? []).map(
+                    (m) => ({
+                      id: m.id,
+                      shortcode: m.shortcode,
+                      workingTitle: m.workingTitle,
+                      concept: m.concept,
+                      source: m.source,
+                      status: m.status,
+                      updatedAt: m.updatedAt,
+                      // CR nitpick on PR #8 — DB CHECK guarantees
+                      // children always have manifestationDecade SET,
+                      // but TypeScript doesn't see SQL constraints.
+                      // Defensive ?? "RCK" so a malformed row never
+                      // crashes the renderer; the fallback shouldn't
+                      // ever trigger in practice.
+                      decade:
+                        (m.manifestationDecade as
+                          | "RCK"
+                          | "RCL"
+                          | "RCD"
+                          | null) ?? "RCK",
+                      manifestations: [], // children don't have grandchildren
+                    }),
+                  ),
                 }));
               const latestRun = latestRunByCollection.get(c.id) ?? null;
               return (

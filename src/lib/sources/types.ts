@@ -14,10 +14,19 @@ import type { signalSource } from "@/db/schema";
 /** All possible source values (matches DB enum). */
 export type SourceKind = (typeof signalSource.enumValues)[number];
 
-/** Raw candidate yielded by a source, before BUNKER extraction. */
+/**
+ * Source kinds BUNKER can extract from. Excludes `stoker_manifestation`
+ * because manifestation child signals are produced by STOKER directly
+ * (Phase 9, Model 3) — they never flow through a BUNKER source
+ * connector. Narrowing here keeps BUNKER's input schema in sync without
+ * loosening it to accept manifestations.
+ */
+export type BunkerSourceKind = Exclude<SourceKind, "stoker_manifestation">;
+
+/** Raw candidate yielded by a BUNKER source connector, before extraction. */
 export interface RawCandidate {
   /** Which source produced this */
-  source: SourceKind;
+  source: BunkerSourceKind;
 
   /** Canonical URL where this content lives (used for dedup + provenance) */
   url?: string;

@@ -22,7 +22,10 @@ import {
   integer,
   numeric,
   uniqueIndex,
+  unique,
   index,
+  check,
+  foreignKey,
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
@@ -43,6 +46,13 @@ export const signalStatus = pgEnum("signal_status", [
   "DISMISSED",
   "BUNKER_FAILED",
   "EXTRACTION_FAILED",
+  // Phase 9 — STOKER terminal states for parent signals.
+  // FANNED_OUT: STOKER produced 1+ approved manifestation children;
+  //   the parent's pipeline ends here, children take over.
+  // STOKER_REFUSED: STOKER found no decade with resonance score >= 50
+  //   and refused to manifest. Founder may force-add via add_manifestation.
+  "FANNED_OUT",
+  "STOKER_REFUSED",
 ]);
 
 export const agentName = pgEnum("agent_name", [
@@ -92,6 +102,10 @@ export const signalSource = pgEnum("signal_source", [
   "upload",
   "llm_synthesis",
   "grounded_search", // Phase 6.6 — Gemini useSearchGrounding results
+  // Phase 9 — STOKER-produced manifestation child signals. A signal
+  // with this source MUST have parent_signal_id + manifestation_decade
+  // set (enforced by signals_manifestation_consistency CHECK).
+  "stoker_manifestation",
 ]);
 
 // Phase 6.5 — Collections replace the original `batches` concept.
@@ -225,6 +239,25 @@ export const signals = pgTable(
     collectionId: uuid("collection_id").references(() => collections.id, {
       onDelete: "set null",
     }),
+    // Phase 9 (Model 3) — STOKER fan-out is a parent → 1-3 manifestation
+    // children relationship. Both columns are nullable for raw signals,
+    // both are SET on manifestation children. Enforced by the
+    // signals_manifestation_consistency CHECK constraint at the SQL level.
+    //
+    // Phase 9 — parent_signal_id is part of a COMPOSITE FK that
+    // also pins the org_id, so a manifestation child in org A can't
+    // point at a parent in org B even via a malformed write that
+    // bypasses the app's getCurrentUserWithOrg scoping. The single-
+    // column .references() that originally lived here is replaced
+    // by a table-level foreignKey() declaration in the constraints
+    // array below. Cloud CR pass 3 on PR #8.
+    //
+    // ON DELETE RESTRICT (same as Phase 8L knowledge_documents
+    // author FKs): parent delete fails loudly until founder
+    // explicitly handles manifestation children. Forces deliberate
+    // cleanup, never silent-loses audit trail.
+    parentSignalId: uuid("parent_signal_id"),
+    manifestationDecade: decadeLens("manifestation_decade"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -238,6 +271,61 @@ export const signals = pgTable(
     index("signals_org_batch_idx").on(t.orgId, t.batchId),
     index("signals_org_collection_idx").on(t.orgId, t.collectionId),
     index("signals_org_created_idx").on(t.orgId, t.createdAt),
+    // Phase 9 — Bridge nested-children query path. The partial WHERE
+    // clause keeps the index small — raw signals (parent NULL) are the
+    // majority of rows and don't need to be indexed for the
+    // manifestation lookup. CR pass on PR #8: Drizzle declaration was
+    // missing the `.where()` so it was creating a full index in code
+    // even though the SQL migration shipped a partial one. Aligning
+    // the declaration with the actual production index.
+    index("signals_parent_signal_idx")
+      .on(t.parentSignalId)
+      .where(sql`${t.parentSignalId} IS NOT NULL`),
+    // Phase 9 — at most one manifestation per (parent, decade). STOKER
+    // never produces duplicates per run, but ORC's add_manifestation
+    // tool (Phase 9G) could insert one if asked twice. Schema-level
+    // guarantee. Partial so raw signals (parent NULL) don't collide.
+    uniqueIndex("signals_parent_decade_unique_idx")
+      .on(t.parentSignalId, t.manifestationDecade)
+      .where(sql`${t.parentSignalId} IS NOT NULL`),
+    // Phase 9 — parent_signal_id ↔ manifestation_decade co-nullability.
+    // The (both null OR both set) CHECK already shipped in migration
+    // 0006 but wasn't declared in Drizzle. Cloud CR pass 2 on PR #8
+    // caught the introspection drift between SQL and schema.ts. Adding
+    // the declaration so they match.
+    check(
+      "signals_manifestation_consistency",
+      sql`(${t.parentSignalId} IS NULL AND ${t.manifestationDecade} IS NULL)
+          OR (${t.parentSignalId} IS NOT NULL AND ${t.manifestationDecade} IS NOT NULL)`,
+    ),
+    // Phase 9 — manifestation_decade ↔ source consistency. Cloud CR
+    // on PR #8 caught that the (parent_signal_id ↔ manifestation_decade)
+    // CHECK alone didn't tie either column to the source enum. A
+    // malformed insert could have manifestation_decade SET but source
+    // != 'stoker_manifestation' — drifting out of the analytics
+    // guarantee the new source value is meant to provide. Bidirectional
+    // CHECK so the schema enforces what the application code maintains.
+    // SQL-side already shipped via migration 0008; this Drizzle
+    // declaration mirrors it so introspection + schema.ts as
+    // documentation stay aligned.
+    check(
+      "signals_manifestation_source_consistency",
+      sql`(${t.manifestationDecade} IS NOT NULL AND ${t.source} = 'stoker_manifestation')
+          OR (${t.manifestationDecade} IS NULL AND ${t.source} <> 'stoker_manifestation')`,
+    ),
+    // Phase 9 — composite UNIQUE on (id, org_id) so the parent FK
+    // can target it. id alone is the PK; this composite is the
+    // necessary backing for the cross-tenant-safe FK below.
+    unique("signals_id_org_id_key").on(t.id, t.orgId),
+    // Phase 9 — composite FK (parent_signal_id, org_id) →
+    // (id, org_id). Tenant isolation enforced at the DB layer,
+    // not just at the application boundary. Cloud CR pass 3 on
+    // PR #8.
+    foreignKey({
+      columns: [t.parentSignalId, t.orgId],
+      foreignColumns: [t.id, t.orgId],
+      name: "signals_parent_signal_id_fkey",
+    }).onDelete("restrict"),
   ],
 );
 
@@ -503,6 +591,14 @@ export const agentOutputs = pgTable(
       onDelete: "set null",
     }),
     approvedAt: timestamp("approved_at", { withTimezone: true }),
+    // Phase 9 — STOKER edit history. Each per-card edit appends an
+    // entry: { ts: ISO-8601, fields: {...changed fields},
+    //          editor: { authId, kind: 'founder'|'orc' }, reason?: string }.
+    // Empty array on creation; populated lazily as edits land. Used by the
+    // workspace renderer to show "this manifestation was edited 3 times by
+    // you on April 30" provenance, and by ORC's recall to learn
+    // edit-pattern data over time.
+    revisions: jsonb("revisions").notNull().default([]),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

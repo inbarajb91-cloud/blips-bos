@@ -33,7 +33,52 @@ const SOURCE_LABELS: Record<string, string> = {
   grounded_search: "Grounded Search · Gemini web search",
 };
 
-export function BunkerRetrospective({ signal }: RendererProps) {
+export function BunkerRetrospective({ signal, parentRef }: RendererProps) {
+  // Phase 9F — when this is a manifestation child, BUNKER content was
+  // produced for the PARENT, not this signal. Render an "inherited
+  // from parent" banner instead of running the full BUNKER retro.
+  // Keeps the 6-tab strip consistent (every signal workspace has the
+  // same shape) while making the data lineage visible.
+  if (signal.parentSignalId !== null && parentRef) {
+    return (
+      <div className="py-2">
+        <div className="text-[9px] font-mono tracking-[0.24em] uppercase text-t4 mb-1">
+          BUNKER · Inherited
+        </div>
+        <h2 className="font-display text-base font-semibold text-t1 mb-1">
+          This manifestation inherits its source from its parent signal
+        </h2>
+        <p className="font-editorial italic text-t3 text-sm mb-7 max-w-3xl">
+          The raw source content + extraction live on the parent. This
+          manifestation was produced by STOKER from that extraction —
+          its own pipeline starts at STOKER, not BUNKER.
+        </p>
+
+        <div className="bg-wash-1 border border-dashed border-rule-2 rounded-md px-6 py-5 flex items-center gap-5 max-w-3xl">
+          <div className="flex-1 min-w-0">
+            <div className="text-[9px] font-mono tracking-[0.22em] uppercase text-t4 mb-1.5">
+              BUNKER inherited from
+            </div>
+            <div className="flex items-baseline gap-3 mb-1">
+              <span className="font-display font-bold text-[14px] tracking-[0.08em] text-t1">
+                {parentRef.shortcode}
+              </span>
+              <a
+                href={`/engine-room/signals/${encodeURIComponent(parentRef.shortcode)}`}
+                className="font-mono text-[9px] tracking-[0.22em] uppercase text-t3 hover:text-t1 transition-colors"
+              >
+                Open ↗
+              </a>
+            </div>
+            <span className="font-editorial italic text-t3 text-sm">
+              {parentRef.workingTitle}
+            </span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const metadata = (signal.rawMetadata ?? {}) as Record<string, unknown>;
   const sourceContext =
     typeof metadata.source_context === "string"

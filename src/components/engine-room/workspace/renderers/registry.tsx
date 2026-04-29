@@ -2,6 +2,14 @@ import type { signals, collections } from "@/db/schema";
 import type { AgentKey, StageState } from "../types";
 import { BunkerRetrospective } from "./bunker-retrospective";
 import { StagePlaceholder } from "./placeholder";
+import {
+  StokerResonance,
+  type ParentStokerData,
+} from "./stoker-resonance";
+import type {
+  ParentReference,
+  ManifestationOwnDetail,
+} from "./types";
 
 /**
  * Renderer Registry — Phase 7.
@@ -26,6 +34,26 @@ export interface RendererProps {
   signal: typeof signals.$inferSelect;
   collection: typeof collections.$inferSelect | null;
   state: StageState;
+  /**
+   * Phase 9D — eagerly-loaded STOKER data for the parent's STOKER tab
+   * renderer. Null when STOKER hasn't run, or when the signal is a
+   * manifestation child (manifestation workspaces have a different
+   * STOKER tab — see Phase 9F).
+   */
+  stokerData: ParentStokerData | null;
+  /**
+   * Phase 9F — when the signal is a manifestation child, basic info
+   * about its parent for the inherited BUNKER banner + breadcrumbs.
+   * Null on raw signals.
+   */
+  parentRef: ParentReference | null;
+  /**
+   * Phase 9F — manifestation child's own STOKER agent_outputs row,
+   * used to render the manifestation's single-card STOKER tab detail
+   * (not the 3-card grid that lives on the parent's STOKER tab).
+   * Null on raw signals.
+   */
+  manifestationDetail: ManifestationOwnDetail | null;
 }
 
 export type Renderer = React.ComponentType<RendererProps>;
@@ -37,14 +65,7 @@ export type Renderer = React.ComponentType<RendererProps>;
  */
 export const RENDERERS: Record<AgentKey, Renderer> = {
   BUNKER: BunkerRetrospective,
-  STOKER: (props) => (
-    <StagePlaceholder
-      stage="STOKER"
-      phase="Phase 9"
-      description="STOKER will evaluate which decades this signal resonates with, produce manifestations for each matching decade, and wait at a human gate for you to approve the split before advancing to FURNACE."
-      {...props}
-    />
-  ),
+  STOKER: StokerResonance,
   FURNACE: (props) => (
     <StagePlaceholder
       stage="FURNACE"
