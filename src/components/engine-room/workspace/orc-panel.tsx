@@ -33,11 +33,23 @@ import type { LockStatus } from "@/lib/actions/signal-locks";
  *
  * The `activeStage` prop is stamped on each outgoing user message so
  * Phase 8 ORC knows which stage the user was on when they wrote it.
+ *
+ * Phase 9.5: open/closed state lifted up to WorkspaceFrame so the
+ * grid layout can swap between rail (36px) and full panel widths.
+ * When `isOpen=false`, the panel renders a thin vertical rail with
+ * just the breathing presence dot, the rotated "ORC" label, and the
+ * expand affordance — the conversation thread, header, and input row
+ * are skipped entirely. State (loaded conversation, in-flight stream,
+ * input draft) lives on regardless so reopen is instant, but the
+ * mount-time conversation load runs whether collapsed or open: by the
+ * time the user expands, the thread is ready to render.
  */
 export function OrcPanel({
   signal,
   activeStage,
   lockStatus,
+  isOpen,
+  onToggle,
 }: {
   signal: typeof signals.$inferSelect;
   activeStage: AgentKey;
@@ -45,6 +57,12 @@ export function OrcPanel({
    *  input is disabled so a read-only viewer can't send messages. Null
    *  while the acquire is in flight — treat as still-loading. */
   lockStatus: LockStatus | null;
+  /** Phase 9.5 — true when the panel is expanded to its full width;
+   *  false when it's collapsed to the rail. */
+  isOpen: boolean;
+  /** Phase 9.5 — toggles isOpen via the rail's expand button or the
+   *  collapse chevron in the open header. */
+  onToggle: () => void;
 }) {
   const canSend = lockStatus !== null && lockStatus.heldByMe;
   const [conversationId, setConversationId] = useState<string | null>(null);
@@ -345,25 +363,83 @@ export function OrcPanel({
     });
   }
 
+  // Rail mode (Phase 9.5) — when collapsed, render a thin vertical
+  // strip with a breathing presence dot, the rotated "ORC" label, and
+  // an expand chevron. The whole rail is one button: click anywhere
+  // expands the panel. Conversation state still lives in this
+  // component (loaded on mount), so reopen is a layout flip not a
+  // remount — the thread renders instantly with whatever was loaded.
+  if (!isOpen) {
+    return (
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-label="Expand ORC conversation panel"
+        aria-expanded={false}
+        className="w-full self-stretch min-h-[280px] flex flex-col items-center pt-5 pb-5 gap-4 hover:bg-wash-2 focus-visible:outline-none focus-visible:bg-wash-2 transition-colors group"
+      >
+        <span
+          className="breathe rounded-full shrink-0"
+          style={{
+            width: 6,
+            height: 6,
+            background: "rgba(var(--d), 0.9)",
+          }}
+          aria-hidden
+        />
+        <span
+          className="font-display font-semibold text-[11px] tracking-[0.28em] uppercase text-t3 group-hover:text-t1 transition-colors"
+          style={{
+            writingMode: "vertical-rl",
+            transform: "rotate(180deg)",
+          }}
+        >
+          ORC
+        </span>
+        <span
+          aria-hidden
+          className="mt-auto text-t4 group-hover:text-t1 text-[14px] transition-colors"
+          style={{ lineHeight: 1 }}
+        >
+          ›
+        </span>
+      </button>
+    );
+  }
+
   return (
     <div className="flex flex-col">
       {/* Head */}
-      <div className="p-[22px_24px_16px] border-b border-rule-1">
-        <div className="font-display font-semibold text-[12.5px] tracking-[0.22em] uppercase text-t1 flex items-center gap-[10px] mb-1">
-          <span
-            className="breathe rounded-full"
-            style={{
-              width: 6,
-              height: 6,
-              background: "rgba(var(--d), 0.9)",
-            }}
-            aria-hidden
-          />
-          ORC
+      <div className="p-[22px_24px_16px] border-b border-rule-1 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="font-display font-semibold text-[12.5px] tracking-[0.22em] uppercase text-t1 flex items-center gap-[10px] mb-1">
+            <span
+              className="breathe rounded-full"
+              style={{
+                width: 6,
+                height: 6,
+                background: "rgba(var(--d), 0.9)",
+              }}
+              aria-hidden
+            />
+            ORC
+          </div>
+          <div className="font-mono text-[10px] tracking-[0.18em] uppercase text-t5 truncate">
+            Signal · {signal.shortcode} · {activeStage}
+          </div>
         </div>
-        <div className="font-mono text-[10px] tracking-[0.18em] uppercase text-t5">
-          Signal · {signal.shortcode} · {activeStage}
-        </div>
+        {/* Collapse chevron — symmetric with the rail's expand chevron.
+            Lives in the head so the user can fold ORC away when they
+            want full canvas width without leaving the workspace. */}
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-label="Collapse ORC conversation panel"
+          aria-expanded={true}
+          className="w-7 h-7 shrink-0 rounded-full border border-rule-2 bg-ink flex items-center justify-center text-t3 text-[11px] hover:text-t1 hover:border-rule-3 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2"
+        >
+          <span style={{ lineHeight: 1 }}>‹</span>
+        </button>
       </div>
 
       {/* Thread */}

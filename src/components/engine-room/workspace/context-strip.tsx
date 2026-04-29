@@ -6,48 +6,48 @@ import type { signals, collections } from "@/db/schema";
 import type { LockStatus } from "@/lib/actions/signal-locks";
 
 /**
- * Horizontal collapsible context strip — Phase 7 architectural.
+ * Context strip — Phase 9.5 unified header.
  *
- * Replaces the vertical LeftRail. Lives between the signal title header
- * and the AgentTabStrip. Always renders in both states; the only thing
- * that changes is the amount of information it shows.
+ * Phase 7 introduced this as a horizontal collapsible strip riding
+ * BELOW the title section (which lived in WorkspaceFrame as its own
+ * `pl-7 pr-11 pt-5 pb-6` region). Phase 9.5 merges those two:
+ * shortcode + working title now live in the strip's collapsed row,
+ * and the collection identification (name + type + counts) gets
+ * pushed to the expanded body. Reasoning from Inba's walkthrough:
+ * two strips at the top read as visual clutter, and the collapsed-
+ * row collection line ("From Collection 9 to 5 is a joke · Scheduled
+ * · 8 pipeline · 2 triage") was carrying information the user only
+ * reaches for when they're orienting — perfect for one-click expand.
  *
- * Why horizontal instead of a left rail:
- *   - The rail stole ~300px of viewport from the canvas full-time to
- *     carry context the user glances at once and then mostly ignores
- *     (collection name, concept, signal shortcode, source). Not a fair
- *     trade.
- *   - The tab strip already carries pipeline progress, so the rail's
- *     "Pipeline Progress" row was redundant.
- *   - Horizontal-collapsed surfaces the two things the user DOES
- *     reach for mid-session — "what collection is this from?" and
- *     "am I holding the edit lock?" — in a single glance, with the
- *     richer context available via one click when wanted.
- *
- * End state: the workspace becomes a two-panel layout (canvas + ORC
- * conversation). The strip sits above both panels, spanning full width.
+ * Layout responsibility:
+ *   This is now THE workspace header. Nothing else sits above the
+ *   tab strip. WorkspaceFrame removes its own title section and
+ *   relies on this component as the top-of-page identity surface.
  *
  * Two states:
  *
- *   Collapsed (default, ~44px) — renders every page load:
- *     FROM COLLECTION · name · type · pipeline/triage counts
- *                                      lock: you · 30m · [Release] ‹
+ *   Collapsed (default, ~76px) — renders every page load:
+ *     [shortcode]  [working title]                       [lock] [chevron]
  *
- *   Expanded (user-expanded, ~140px):
- *     [collection mini-card with decade tint]   [concept pull-quote]
- *     [signal meta grid]                        [lock row]       ›
+ *   Expanded (user-expanded) — adds below the title row:
+ *     [collection mini-card with decade tint]
+ *     [concept pull-quote]
+ *     [signal meta: source / created / updated]
+ *     [read-only banner if locked by other user]
  *
- * Decade tint: the collection's type (instant/batch/scheduled) maps to
- * a decade color via the `t-{type}` class on the workspace root. This
- * component's accent surfaces read that via rgba(var(--d), …) so the
- * collection card's left border glows in decade color, matching the
- * tab strip's breathing underline and the resize handle's active state.
+ * Shortcode + title sizing:
+ *   - Title was 40px display medium in the old standalone strip.
+ *     Reduced to 28px to fit a single-row strip without making the
+ *     header dominate the viewport. Still display medium, still
+ *     reads as identity-anchor weight.
+ *   - Shortcode kept at 12.5px display bold tracked uppercase —
+ *     the orientation marker, not the eye-anchor. Lives to the
+ *     left of the title at baseline alignment.
  *
- * Lock toggle moves inside this strip. The LeftRail's LockToggle
- * component was ported in-place rather than re-exported — the shape
- * is the same (timer + Release button when held, "unlocked" +
- * Lock button when self-released, warning text when held by someone
- * else). Same underlying handlers from the parent WorkspaceFrame.
+ * Decade tint: still flows from the workspace root's `t-{type}`
+ * class (set in WorkspaceFrame). The strip reads `var(--d)` for
+ * the lock-toggle hover border, the chevron focus ring, and the
+ * expanded collection mini-card's left border.
  */
 export function ContextStrip({
   signal,
@@ -74,64 +74,23 @@ export function ContextStrip({
 
   return (
     <section
-      aria-label="Signal context"
-      className="px-11 border-y border-rule-1 bg-wash-1"
+      aria-label="Signal header"
+      className="pl-7 pr-11 border-b border-rule-1 bg-wash-1"
     >
-      {/* Collapsed row — single-line summary. Always visible, even when
-          the strip is expanded (the expanded body sits beneath it, same
-          row just taller). Keeping the collapsed row visible in both
-          states gives the chevron a stable perch and makes the
-          collapse/expand affordance feel like a disclosure, not a
-          page-shift.
-          Alignment (post-walkthrough fix):
-            - Outer flex keeps `items-center` so the lock toggle +
-              chevron button stay vertically centered with the text.
-            - Inner left group uses `items-baseline` so the
-              uppercase-mono FROM COLLECTION label shares a typographic
-              baseline with the display-font collection name and the
-              mono type/counts chips. Without this, the stacked-layout
-              `Label` component's bottom margin pushed the label up
-              relative to its siblings and the row read as two rows
-              glued together.
-            - The collapsed row uses inline label markup (not the
-              `<Label>` helper) because `<Label>` carries `mb-[10px]`
-              for the expanded column layout. Reusing it inline would
-              re-introduce the same misalignment. */}
-      <div className="flex items-center justify-between gap-6 h-[44px]">
-        <div className="flex items-baseline gap-5 min-w-0">
-          {collection ? (
-            <>
-              <InlineLabel>From Collection</InlineLabel>
-              <Link
-                href="/engine-room"
-                className="inline-flex items-baseline gap-[10px] min-w-0 group"
-              >
-                <span className="font-display font-medium text-[14px] -tracking-[0.005em] text-t1 truncate group-hover:text-off-white transition-colors">
-                  {collection.name}
-                </span>
-                <span
-                  className="font-mono text-[9.5px] tracking-[0.22em] uppercase font-medium"
-                  style={{ color: "rgba(var(--d), 0.9)" }}
-                >
-                  {collection.type.charAt(0).toUpperCase() +
-                    collection.type.slice(1)}
-                </span>
-                <span className="font-mono text-[9.5px] tracking-[0.18em] uppercase text-t4 truncate">
-                  {collectionCountsText(
-                    collection.signalCount,
-                    collection.candidateCount,
-                  )}
-                </span>
-              </Link>
-            </>
-          ) : (
-            <>
-              <InlineLabel>Signal origin</InlineLabel>
-              <span className="font-editorial italic text-[13.5px] text-t4 truncate">
-                Direct submission · no parent collection
-              </span>
-            </>
-          )}
+      {/* Collapsed row — identity. Shortcode + working title on the
+          left; lock toggle + expand chevron on the right. The full
+          row sits at min-h-[76px] with py-4 to give the 28px title
+          enough breathing room above and below. items-baseline keeps
+          the shortcode tracking-uppercase glyphs sharing the title's
+          baseline for an editorial-newspaper read. */}
+      <div className="flex items-center justify-between gap-6 min-h-[76px] py-4">
+        <div className="flex items-baseline gap-7 min-w-0">
+          <span className="font-display font-bold text-[12.5px] tracking-[0.18em] uppercase text-t1 shrink-0">
+            {signal.shortcode}
+          </span>
+          <h1 className="font-display font-medium text-[28px] -tracking-[0.012em] leading-[1.1] text-t1 truncate">
+            {signal.workingTitle}
+          </h1>
         </div>
 
         <div className="flex items-center gap-5 shrink-0">
@@ -177,12 +136,15 @@ export function ContextStrip({
           <div
             className={`grid gap-8 pt-2 pb-6 ${collection ? `t-${collection.type}` : ""}`}
             style={{
-              gridTemplateColumns: "minmax(240px, 340px) 1fr minmax(240px, 320px)",
+              gridTemplateColumns:
+                "minmax(240px, 340px) 1fr minmax(240px, 320px)",
             }}
           >
-            {/* Collection mini-card — links back to Bridge. Decade tint on
-                the left border reads as a subtle identity marker; the
-                concept-level thinking is carried in the middle column. */}
+            {/* Collection mini-card — links back to Bridge. Decade tint
+                on the left border reads as a subtle identity marker;
+                full collection identity (name + type + counts) lives
+                here in expanded body, not in the collapsed row.
+                Collapsed row stays focused on signal identity alone. */}
             {collection ? (
               <Link
                 href="/engine-room"
@@ -192,6 +154,7 @@ export function ContextStrip({
                   borderLeftColor: accentBorder,
                 }}
               >
+                <Label>From Collection</Label>
                 <div className="font-display font-medium text-[14px] -tracking-[0.005em] text-t1 leading-[1.3] mb-[6px]">
                   {collection.name}
                 </div>
@@ -212,6 +175,7 @@ export function ContextStrip({
               </Link>
             ) : (
               <div className="p-[14px_16px] border border-rule-1 rounded-sm bg-wash-1">
+                <Label>Origin</Label>
                 <div className="font-editorial italic text-[13.5px] text-t4">
                   Direct submission · no parent collection
                 </div>
@@ -232,13 +196,13 @@ export function ContextStrip({
               ) : null}
             </div>
 
-            {/* Signal meta grid — shortcode, source, created, updated.
-                Monospace keys on the left, values on the right; same
-                two-column row pattern as the old LeftRail so the
-                muscle-memory carries over. */}
+            {/* Signal meta grid — source, created, updated.
+                Phase 9.5 dropped the Shortcode row from this grid: it's
+                now in the collapsed-row identity strip above, so showing
+                it again here was redundant and made the meta grid feel
+                top-heavy with a duplicated key glyph. */}
             <div>
               <Label>Signal</Label>
-              <MetaRow k="Shortcode" v={signal.shortcode} />
               <MetaRow k="Source" v={signal.source} />
               <MetaRow k="Created" v={formatDate(signal.createdAt)} />
               <MetaRow k="Updated" v={formatDate(signal.updatedAt)} />
@@ -382,20 +346,6 @@ function Label({ children }: { children: React.ReactNode }) {
     <div className="font-mono text-[10px] tracking-[0.28em] uppercase text-t5 mb-[10px] shrink-0">
       {children}
     </div>
-  );
-}
-
-/**
- * `<InlineLabel>` — inline variant used in the collapsed row where
- * the label sits next to its content on the same text baseline. No
- * bottom margin (would break baseline alignment); keeps `shrink-0`
- * so the label stays intact if the sibling content truncates.
- */
-function InlineLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <span className="font-mono text-[10px] tracking-[0.28em] uppercase text-t5 shrink-0">
-      {children}
-    </span>
   );
 }
 
