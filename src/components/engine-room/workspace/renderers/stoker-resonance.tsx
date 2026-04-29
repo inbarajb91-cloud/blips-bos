@@ -445,16 +445,77 @@ function DecadeCard({
         ? "rgba(var(--d), 0.7)"
         : undefined; // weak/none falls through to t-class border-rule-2
 
+  const showFurnaceStrip =
+    child && childStatus === "APPROVED" && onSwitchToManifestation;
+
   return (
     <div
-      className={`${tint} rounded-md border ${
+      className={`${tint} rounded-md border overflow-hidden ${
         band === "weak" ? "border-rule-2" : ""
-      } p-[22px] flex flex-col`}
+      } flex flex-col`}
       style={{
         background: cardBackground,
         ...(cardBorder ? { borderColor: cardBorder } : {}),
       }}
     >
+      {/* Approved → FURNACE strip — Phase 9.5 polish round 3.
+          Pricing-card-style top banner. Spans the card's full width
+          (no inner padding), rests above the content with its own
+          horizontal padding, doesn't compress the head/hook/angle
+          below. The whole strip is the click target — text on the
+          left ("APPROVED · ADVANCE TO FURNACE"), drifting arrow on
+          the right (drift-right keyframe in globals.css, same 2.8s
+          cadence as everywhere else in the workspace).
+
+          Replaces the bottom ApprovedBadge entirely on cards that
+          carry the strip — surface duplication of "Approved · advancing
+          to FURNACE" in two places confused the read. The bottom badge
+          still lives in the JSX below and renders ONLY when there's
+          no workspace callback (read-only audit surface).
+          overflow-hidden on the card outer is critical: the strip
+          extends to the card's outer border, but without overflow-
+          hidden the rounded-md corners would clip the strip's
+          background unevenly. */}
+      {showFurnaceStrip && (
+        <button
+          type="button"
+          onClick={() => onSwitchToManifestation(child.decade, "FURNACE")}
+          aria-label={`Open ${child.decade} manifestation in FURNACE`}
+          className="px-[22px] py-2.5 flex items-center justify-between gap-3 transition-colors hover:bg-[rgba(242,239,233,0.18)] focus-visible:outline-none focus-visible:bg-[rgba(242,239,233,0.18)] cursor-pointer"
+          style={{
+            color: "rgba(242,239,233,0.95)",
+            background: "rgba(242,239,233,0.10)",
+            borderBottom: "1px solid rgba(242,239,233,0.30)",
+          }}
+        >
+          <span className="font-mono text-[9.5px] tracking-[0.22em] uppercase">
+            Approved · advance to FURNACE
+          </span>
+          <span className="flex items-center gap-2">
+            <span className="font-mono text-[9.5px] tracking-[0.22em] uppercase">
+              FURNACE
+            </span>
+            <span
+              aria-hidden
+              className="drift-right"
+              style={{
+                lineHeight: 1,
+                fontSize: "12px",
+                display: "inline-block",
+              }}
+            >
+              →
+            </span>
+          </span>
+        </button>
+      )}
+
+      {/* Card content — wraps everything below the strip in the card's
+          original 22px padding. Phase 9.5 round 3 split this from the
+          outer so the strip can full-bleed to the card edges. flex-1
+          lets the content fill remaining card height (so mt-auto on
+          bottom badges still pushes them to the card bottom). */}
+      <div className="p-[22px] flex flex-col flex-1">
       {/* Card head: decade label + score. Text on filled cards is
           cream (--t1) — high contrast against the saturated decade
           background. Score gets a slightly muted off-white so it
@@ -479,47 +540,6 @@ function DecadeCard({
           {row.resonanceScore}
         </span>
       </div>
-
-      {/* "→ FURNACE" open pill — Phase 9.5 polish round 2. Lives in
-          the natural flow on its own right-aligned row beneath the
-          decade-label/score head, so it doesn't fight the score for
-          the corner. Founder asked for the pill to be horizontal +
-          animated to communicate "click here to advance the
-          manifestation" — the drift-right keyframe nudges the arrow
-          on the same 2.8s breathing cadence the workspace uses
-          everywhere else, so the pill reads as live without
-          screaming. Renders only on APPROVED cards with a workspace
-          callback wired (i.e., not on read-only audit surfaces). */}
-      {child && childStatus === "APPROVED" && onSwitchToManifestation && (
-        <div className="flex justify-end mb-3 -mt-1">
-          <button
-            type="button"
-            onClick={() => onSwitchToManifestation(child.decade, "FURNACE")}
-            aria-label={`Open ${child.decade} manifestation in FURNACE`}
-            className="px-3.5 py-1.5 rounded-full flex items-center gap-2 transition-all hover:bg-[rgba(242,239,233,0.20)] hover:border-[rgba(242,239,233,0.78)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[rgba(242,239,233,0.6)] cursor-pointer"
-            style={{
-              color: "rgba(242,239,233,0.95)",
-              border: "1px solid rgba(242,239,233,0.55)",
-              background: "rgba(242,239,233,0.10)",
-            }}
-          >
-            <span
-              aria-hidden
-              className="drift-right"
-              style={{
-                lineHeight: 1,
-                fontSize: "12px",
-                display: "inline-block",
-              }}
-            >
-              →
-            </span>
-            <span className="font-mono text-[9.5px] tracking-[0.22em] uppercase">
-              FURNACE
-            </span>
-          </button>
-        </div>
-      )}
 
       {/* Decade rule — cream-tinted divider on the saturated cards
           rather than the decade color (it's already the background). */}
@@ -583,10 +603,15 @@ function DecadeCard({
           {/* Status badge or actions. The isApproved / isRejected
               checks are computed from child.outputStatus, but TS can't
               see through the optional chain — so we narrow on `child`
-              first, then branch on status. */}
+              first, then branch on status.
+              Phase 9.5 round 3: ApprovedBadge skipped when the top
+              FURNACE strip is rendering — the strip already carries
+              the same status text, no point doubling it. The badge
+              still renders for read-only audit surfaces (no
+              workspace callback) so they stay informative. */}
           {child ? (
             isApproved ? (
-              <ApprovedBadge child={child} />
+              showFurnaceStrip ? null : <ApprovedBadge child={child} />
             ) : isRejected ? (
               <RejectedBadge child={child} />
             ) : (
@@ -602,6 +627,7 @@ function DecadeCard({
           )}
         </>
       )}
+      </div>
     </div>
   );
 }
