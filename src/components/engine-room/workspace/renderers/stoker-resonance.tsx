@@ -60,6 +60,39 @@ export interface ParentStokerData {
   }>;
 }
 
+// ─── Shared button styles for the saturated-decade-background context ─
+
+/**
+ * Cream-on-decade button styles. The strong-band card surface is a
+ * saturated decade color (rgba(var(--d), 0.92)); buttons rendered on
+ * top need to NOT use decade-color borders/text or they'd vanish.
+ * These three tiers (primary/secondary/tertiary) are used by both
+ * CardActions and EditForm so the visual language stays consistent.
+ *
+ * The RGB triplet matches --cream in globals.css (242, 239, 233).
+ * Inline styles rather than CSS-variable references to keep the
+ * components portable (no globals.css dependency for testing /
+ * Storybook isolation later).
+ *
+ * CR pass on PR #9 (cc99e80) extracted from inline duplication in
+ * CardActions and EditForm.
+ */
+const CREAM_BUTTON_STYLES = {
+  primary: {
+    border: "1px solid rgba(242,239,233,0.85)",
+    color: "rgb(242,239,233)",
+    background: "rgba(242,239,233,0.08)",
+  },
+  secondary: {
+    border: "1px solid rgba(242,239,233,0.4)",
+    color: "rgba(242,239,233,0.85)",
+  },
+  tertiary: {
+    border: "1px solid rgba(242,239,233,0.25)",
+    color: "rgba(242,239,233,0.65)",
+  },
+} as const;
+
 // ─── Decade order for stable card ordering ───────────────────────
 
 const DECADE_ORDER: Array<"RCK" | "RCL" | "RCD"> = ["RCK", "RCL", "RCD"];
@@ -486,11 +519,7 @@ function CardActions({
           onClick={handleApprove}
           disabled={pending}
           className="flex-1 font-mono text-[9px] tracking-[0.22em] uppercase px-3 py-2 disabled:opacity-50 transition-colors rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2"
-          style={{
-            border: "1px solid rgba(242,239,233,0.85)",
-            color: "rgb(242,239,233)",
-            background: "rgba(242,239,233,0.08)",
-          }}
+          style={CREAM_BUTTON_STYLES.primary}
         >
           Approve
         </button>
@@ -499,10 +528,7 @@ function CardActions({
           onClick={onEdit}
           disabled={pending}
           className="flex-1 font-mono text-[9px] tracking-[0.22em] uppercase px-3 py-2 disabled:opacity-50 transition-colors rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2"
-          style={{
-            border: "1px solid rgba(242,239,233,0.4)",
-            color: "rgba(242,239,233,0.85)",
-          }}
+          style={CREAM_BUTTON_STYLES.secondary}
         >
           Edit
         </button>
@@ -511,10 +537,7 @@ function CardActions({
           onClick={handleDismiss}
           disabled={pending}
           className="flex-1 font-mono text-[9px] tracking-[0.22em] uppercase px-3 py-2 disabled:opacity-50 transition-colors rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2"
-          style={{
-            border: "1px solid rgba(242,239,233,0.25)",
-            color: "rgba(242,239,233,0.65)",
-          }}
+          style={CREAM_BUTTON_STYLES.tertiary}
         >
           Dismiss
         </button>
@@ -694,11 +717,7 @@ function EditForm({
           onClick={() => persist(true)}
           disabled={pending}
           className="flex-1 font-mono text-[9px] tracking-[0.22em] uppercase px-3 py-2 disabled:opacity-50 transition-colors rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2"
-          style={{
-            border: "1px solid rgba(242,239,233,0.85)",
-            color: "rgb(242,239,233)",
-            background: "rgba(242,239,233,0.08)",
-          }}
+          style={CREAM_BUTTON_STYLES.primary}
         >
           Save &amp; Approve
         </button>
@@ -707,10 +726,7 @@ function EditForm({
           onClick={() => persist(false)}
           disabled={pending}
           className="flex-1 font-mono text-[9px] tracking-[0.22em] uppercase px-3 py-2 disabled:opacity-50 transition-colors rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2"
-          style={{
-            border: "1px solid rgba(242,239,233,0.4)",
-            color: "rgba(242,239,233,0.85)",
-          }}
+          style={CREAM_BUTTON_STYLES.secondary}
         >
           Save Draft
         </button>
@@ -719,10 +735,7 @@ function EditForm({
           onClick={onCancel}
           disabled={pending}
           className="flex-1 font-mono text-[9px] tracking-[0.22em] uppercase px-3 py-2 disabled:opacity-50 transition-colors rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2"
-          style={{
-            border: "1px solid rgba(242,239,233,0.25)",
-            color: "rgba(242,239,233,0.65)",
-          }}
+          style={CREAM_BUTTON_STYLES.tertiary}
         >
           Cancel
         </button>

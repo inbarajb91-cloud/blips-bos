@@ -169,6 +169,24 @@
   --d-rck:       var(--d-batch);     /* The Reckoning · 28-38 — Raw Industrial  */
   --d-rcl:       var(--d-instant);   /* The Recalibration · 38-48 — Cold Cosmic */
   --d-rcd:       var(--d-scheduled); /* The Reckoned · 48-58 — Warm Reckoning   */
+
+  /*
+    Cream tokens — semantic naming for the off-white triplet used in
+    text/border/button treatments on saturated decade backgrounds. Same
+    RGB as the default --d (off-white), but separated semantically so
+    cream usage doesn't compete with --d's role as the active decade.
+    CR pass on PR #9 — extracted to centralize the value used ~20 times
+    across the STOKER renderer.
+  */
+  --cream:              242, 239, 233;
+  --cream-on-decade:    rgb(var(--cream));
+  --cream-muted:        rgba(var(--cream), 0.85);
+  --cream-text-muted:   rgba(var(--cream), 0.7);
+  --cream-text-faint:   rgba(var(--cream), 0.55);
+  --cream-border:       rgba(var(--cream), 0.85);
+  --cream-border-soft:  rgba(var(--cream), 0.4);
+  --cream-border-faint: rgba(var(--cream), 0.25);
+  --cream-fill-soft:    rgba(var(--cream), 0.08);
 }
 .t-instant   { --d: var(--d-instant); }
 .t-batch     { --d: var(--d-batch); }
