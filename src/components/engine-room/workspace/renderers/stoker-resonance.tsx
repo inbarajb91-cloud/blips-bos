@@ -643,10 +643,16 @@ function EditForm({
         onChange={(e) => setFramingHook(e.target.value)}
         className="bg-black/30 border border-rule-2 text-t1 font-display text-[17px] font-medium -tracking-[0.005em] px-3 py-2.5 rounded-sm outline-none focus:border-[rgba(var(--d),0.7)]"
       />
+      {/* Phase 9 polish — labels and buttons styled in cream tones to
+          read against the saturated decade-color card background.
+          CodeRabbit out-of-diff finding on PR #9 caught these — same
+          decade-on-decade invisibility issue I'd already fixed for
+          CardActions but missed for the EditForm. Now consistent. */}
       <div>
         <label
           htmlFor={`stoker-edit-tension-${child.id}`}
-          className="font-mono text-[9px] tracking-[0.22em] uppercase text-[rgba(var(--d),0.85)] mb-1 block"
+          className="font-mono text-[9px] tracking-[0.22em] uppercase mb-1 block"
+          style={{ color: "rgba(242,239,233,0.7)" }}
         >
           Tension
         </label>
@@ -661,7 +667,8 @@ function EditForm({
       <div>
         <label
           htmlFor={`stoker-edit-angle-${child.id}`}
-          className="font-mono text-[9px] tracking-[0.22em] uppercase text-[rgba(var(--d),0.85)] mb-1 block"
+          className="font-mono text-[9px] tracking-[0.22em] uppercase mb-1 block"
+          style={{ color: "rgba(242,239,233,0.7)" }}
         >
           Angle
         </label>
@@ -674,7 +681,10 @@ function EditForm({
         />
       </div>
       {error && (
-        <div className="font-mono text-[10px] text-[rgba(var(--d-rck),0.95)]">
+        <div
+          className="font-mono text-[10px]"
+          style={{ color: "rgba(255,200,200,0.95)" }}
+        >
           {error}
         </div>
       )}
@@ -683,7 +693,12 @@ function EditForm({
           type="button"
           onClick={() => persist(true)}
           disabled={pending}
-          className="flex-1 font-mono text-[9px] tracking-[0.22em] uppercase px-3 py-2 border border-[rgba(var(--d),0.7)] text-[rgba(var(--d),1)] hover:bg-[rgba(var(--d),0.1)] disabled:opacity-50 transition-colors rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2"
+          className="flex-1 font-mono text-[9px] tracking-[0.22em] uppercase px-3 py-2 disabled:opacity-50 transition-colors rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2"
+          style={{
+            border: "1px solid rgba(242,239,233,0.85)",
+            color: "rgb(242,239,233)",
+            background: "rgba(242,239,233,0.08)",
+          }}
         >
           Save &amp; Approve
         </button>
@@ -691,7 +706,11 @@ function EditForm({
           type="button"
           onClick={() => persist(false)}
           disabled={pending}
-          className="flex-1 font-mono text-[9px] tracking-[0.22em] uppercase px-3 py-2 border border-rule-2 text-t2 hover:text-t1 disabled:opacity-50 transition-colors rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2"
+          className="flex-1 font-mono text-[9px] tracking-[0.22em] uppercase px-3 py-2 disabled:opacity-50 transition-colors rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2"
+          style={{
+            border: "1px solid rgba(242,239,233,0.4)",
+            color: "rgba(242,239,233,0.85)",
+          }}
         >
           Save Draft
         </button>
@@ -699,7 +718,11 @@ function EditForm({
           type="button"
           onClick={onCancel}
           disabled={pending}
-          className="flex-1 font-mono text-[9px] tracking-[0.22em] uppercase px-3 py-2 border border-rule-1 text-t3 hover:text-t1 disabled:opacity-50 transition-colors rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2"
+          className="flex-1 font-mono text-[9px] tracking-[0.22em] uppercase px-3 py-2 disabled:opacity-50 transition-colors rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2"
+          style={{
+            border: "1px solid rgba(242,239,233,0.25)",
+            color: "rgba(242,239,233,0.65)",
+          }}
         >
           Cancel
         </button>
