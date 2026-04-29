@@ -279,50 +279,71 @@ function DecadeCard({
   const isApproved = childStatus === "APPROVED";
   const isRejected = childStatus === "REJECTED";
 
+  // Phase 9 polish — solid decade-color card surface with contrasting
+  // cream text, replacing the prior faint 8%-tint approach. All three
+  // RCK/RCL/RCD palette colors are dark enough that the off-white
+  // (--t1) text passes WCAG AA at 14px+. The strong-band card uses a
+  // 92% saturated decade color (a bit shy of full so the surface still
+  // feels "of the brand" rather than poster-loud); partial uses a
+  // dimmed 65%; weak retains the previous transparent dashed treatment
+  // for visual de-emphasis.
+  const cardBackground =
+    band === "strong"
+      ? "rgba(var(--d), 0.92)"
+      : band === "partial"
+        ? "rgba(var(--d), 0.65)"
+        : "rgba(242,239,233,0.022)";
+  const cardBorder =
+    band === "strong"
+      ? "rgba(var(--d), 1)"
+      : band === "partial"
+        ? "rgba(var(--d), 0.7)"
+        : undefined; // weak/none falls through to t-class border-rule-2
+
   return (
     <div
       className={`${tint} rounded-md border ${
-        band === "strong"
-          ? "border-[rgba(var(--d),0.55)]"
-          : "border-rule-2"
+        band === "weak" ? "border-rule-2" : ""
       } p-[22px] flex flex-col`}
       style={{
-        background:
-          band === "strong"
-            ? "rgba(var(--d), 0.08)"
-            : "rgba(242,239,233,0.022)",
-        opacity: band === "partial" ? 0.92 : 1,
+        background: cardBackground,
+        ...(cardBorder ? { borderColor: cardBorder } : {}),
       }}
     >
-      {/* Card head: decade label + score */}
+      {/* Card head: decade label + score. Text on filled cards is
+          cream (--t1) — high contrast against the saturated decade
+          background. Score gets a slightly muted off-white so it
+          recedes into the decade color rather than competing. */}
       <div className="flex items-center justify-between mb-3">
         <span className="font-display font-bold text-[13px] tracking-[0.16em] text-t1">
           {row.decade}
-          <span className="font-mono text-[9px] tracking-[0.2em] text-t4 ml-2">
+          <span
+            className="font-mono text-[9px] tracking-[0.2em] ml-2"
+            style={{ color: "rgba(242,239,233,0.65)" }}
+          >
             {DECADE_AGES[row.decade]}
           </span>
         </span>
         <span
-          className={`font-display font-bold text-[22px] -tracking-[0.01em] tabular-nums ${
-            band === "strong"
-              ? "text-[rgba(var(--d),1)]"
-              : band === "partial"
-                ? "text-t2"
-                : "text-t4"
-          }`}
+          className="font-display font-bold text-[22px] -tracking-[0.01em] tabular-nums text-t1"
+          style={{
+            color:
+              band === "weak" ? "rgba(242,239,233,0.5)" : "rgb(242,239,233)",
+          }}
         >
           {row.resonanceScore}
         </span>
       </div>
 
-      {/* Decade rule */}
+      {/* Decade rule — cream-tinted divider on the saturated cards
+          rather than the decade color (it's already the background). */}
       <div
         className="h-px mb-3"
         style={{
           background:
-            band === "strong"
-              ? "rgba(var(--d), 0.35)"
-              : "var(--color-rule-1)",
+            band === "weak"
+              ? "var(--color-rule-1)"
+              : "rgba(242,239,233,0.25)",
         }}
       />
 
@@ -342,7 +363,10 @@ function DecadeCard({
 
           {/* Tension */}
           <div className="mb-3">
-            <div className="font-mono text-[9px] tracking-[0.22em] uppercase text-t4 mb-1">
+            <div
+              className="font-mono text-[9px] tracking-[0.22em] uppercase mb-1"
+              style={{ color: "rgba(242,239,233,0.7)" }}
+            >
               Tension
             </div>
             <div className="font-mono text-[12px] leading-relaxed text-t1">
@@ -352,7 +376,10 @@ function DecadeCard({
 
           {/* Angle */}
           <div className="mb-4">
-            <div className="font-mono text-[9px] tracking-[0.22em] uppercase text-t4 mb-1">
+            <div
+              className="font-mono text-[9px] tracking-[0.22em] uppercase mb-1"
+              style={{ color: "rgba(242,239,233,0.7)" }}
+            >
               Angle
             </div>
             <div className="font-editorial text-[14px] leading-relaxed text-t1">
@@ -435,10 +462,21 @@ function CardActions({
     });
   }
 
+  // Phase 9 polish — buttons styled to read against the saturated
+  // decade-color card background. The previous "border-[var(--d)]" /
+  // "text-[var(--d)]" treatments would render decade-on-decade
+  // (invisible). Now: cream borders + cream text, with the Approve
+  // button getting a stronger fill on hover. Dismiss stays low-key.
   return (
-    <div className="mt-auto pt-3 border-t border-rule-1">
+    <div
+      className="mt-auto pt-3 border-t"
+      style={{ borderColor: "rgba(242,239,233,0.25)" }}
+    >
       {error && (
-        <div className="font-mono text-[10px] text-[rgba(var(--d-rck),0.95)] mb-2">
+        <div
+          className="font-mono text-[10px] mb-2"
+          style={{ color: "rgba(255,200,200,0.95)" }}
+        >
           {error}
         </div>
       )}
@@ -447,7 +485,12 @@ function CardActions({
           type="button"
           onClick={handleApprove}
           disabled={pending}
-          className="flex-1 font-mono text-[9px] tracking-[0.22em] uppercase px-3 py-2 border border-[rgba(var(--d),0.7)] text-[rgba(var(--d),1)] hover:bg-[rgba(var(--d),0.1)] disabled:opacity-50 transition-colors rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2"
+          className="flex-1 font-mono text-[9px] tracking-[0.22em] uppercase px-3 py-2 disabled:opacity-50 transition-colors rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2"
+          style={{
+            border: "1px solid rgba(242,239,233,0.85)",
+            color: "rgb(242,239,233)",
+            background: "rgba(242,239,233,0.08)",
+          }}
         >
           Approve
         </button>
@@ -455,7 +498,11 @@ function CardActions({
           type="button"
           onClick={onEdit}
           disabled={pending}
-          className="flex-1 font-mono text-[9px] tracking-[0.22em] uppercase px-3 py-2 border border-rule-2 text-t2 hover:text-t1 hover:border-rule-3 disabled:opacity-50 transition-colors rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2"
+          className="flex-1 font-mono text-[9px] tracking-[0.22em] uppercase px-3 py-2 disabled:opacity-50 transition-colors rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2"
+          style={{
+            border: "1px solid rgba(242,239,233,0.4)",
+            color: "rgba(242,239,233,0.85)",
+          }}
         >
           Edit
         </button>
@@ -463,7 +510,11 @@ function CardActions({
           type="button"
           onClick={handleDismiss}
           disabled={pending}
-          className="flex-1 font-mono text-[9px] tracking-[0.22em] uppercase px-3 py-2 border border-rule-1 text-t3 hover:text-t1 hover:border-rule-2 disabled:opacity-50 transition-colors rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2"
+          className="flex-1 font-mono text-[9px] tracking-[0.22em] uppercase px-3 py-2 disabled:opacity-50 transition-colors rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2"
+          style={{
+            border: "1px solid rgba(242,239,233,0.25)",
+            color: "rgba(242,239,233,0.65)",
+          }}
         >
           Dismiss
         </button>
@@ -479,14 +530,21 @@ function ApprovedBadge({
 }: {
   child: ParentStokerData["children"][number];
 }) {
+  // Cream text on the saturated decade background — previous
+  // text-[rgba(var(--d),1)] would have been invisible against the
+  // decade-colored card surface.
   return (
-    <div className="mt-auto pt-3 border-t border-rule-1 flex items-center justify-between">
-      <span className="font-mono text-[10px] tracking-[0.22em] uppercase text-[rgba(var(--d),1)]">
+    <div
+      className="mt-auto pt-3 border-t flex items-center justify-between"
+      style={{ borderColor: "rgba(242,239,233,0.25)" }}
+    >
+      <span className="font-mono text-[10px] tracking-[0.22em] uppercase text-t1">
         Approved · advancing to FURNACE
       </span>
       <a
         href={`/engine-room/signals/${child.shortcode}`}
-        className="font-mono text-[9px] tracking-[0.22em] uppercase text-t3 hover:text-t1 transition-colors"
+        className="font-mono text-[9px] tracking-[0.22em] uppercase transition-colors"
+        style={{ color: "rgba(242,239,233,0.7)" }}
       >
         Open ↗
       </a>
@@ -501,8 +559,14 @@ function RejectedBadge({
 }) {
   void child;
   return (
-    <div className="mt-auto pt-3 border-t border-rule-1">
-      <span className="font-mono text-[10px] tracking-[0.22em] uppercase text-t4">
+    <div
+      className="mt-auto pt-3 border-t"
+      style={{ borderColor: "rgba(242,239,233,0.25)" }}
+    >
+      <span
+        className="font-mono text-[10px] tracking-[0.22em] uppercase"
+        style={{ color: "rgba(242,239,233,0.55)" }}
+      >
         Dismissed
       </span>
     </div>

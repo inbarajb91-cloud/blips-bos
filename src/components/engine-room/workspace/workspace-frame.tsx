@@ -11,6 +11,7 @@ import type {
   ParentReference,
   ManifestationOwnDetail,
 } from "./renderers/types";
+import { WorkspaceRealtime } from "./workspace-realtime";
 import { computeStageStates, pickInitialTab, type AgentKey } from "./types";
 import type { SignalStatus } from "@/components/engine-room/stage-pips";
 import {
@@ -325,8 +326,18 @@ export function WorkspaceFrame({
   // stretch vertically to match each other; natural content height
   // everywhere. The resize handle stretches to row height (the max of
   // its siblings) so drag is grabbable along either cell's full extent.
+  // Phase 9 polish — drive auto-refresh while STOKER is mid-flight or
+  // its output is awaiting per-card founder review. Active = signal at
+  // IN_STOKER (BUNKER-just-approved parent running through STOKER, OR
+  // a manifestation child awaiting its per-card founder gate). The
+  // realtime listener catches the parent-side fan-out + per-card
+  // approve/dismiss transitions; the 2s poll fallback is the belt-
+  // and-suspenders for Realtime channel hiccups.
+  const hasActiveWork = signal.status === "IN_STOKER";
+
   return (
     <div className={`${typeClass} flex flex-col bg-ink`}>
+      <WorkspaceRealtime signalId={signal.id} hasActiveWork={hasActiveWork} />
       {/* Header — identity only: shortcode + working title.
           Phase 7.5 — pl-7 (28px) instead of the previous px-11 (44px)
           so the shortcode sits closer to the page edge, matching the

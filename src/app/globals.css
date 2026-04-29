@@ -150,16 +150,32 @@
     Instant    → S02 Cold Cosmic · storm   (cool, quick)
     Batch      → S01 Raw Industrial · signal (bold, drop-feeding)
     Scheduled  → S03 Warm Reckoning · rust  (warm, recurring)
+
+  Phase 9 — Same brand-identity-v3 RGB triplets aliased per cohort.
+  STOKER's manifestation cards apply .t-rck / .t-rcl / .t-rcd directly
+  (matching the Phase-7/v3 prototype convention). Aliased rather than
+  re-defining so the two layers (collection type + decade cohort)
+  share a single source of truth.
+
+    RCK → Raw Industrial (red)        — same as batch
+    RCL → Cold Cosmic (blue-grey)     — same as instant
+    RCD → Warm Reckoning (rust)       — same as scheduled
 */
 :root {
   --d: 242, 239, 233; /* default — off-white triplet */
   --d-instant:   94, 110, 130;  /* #5E6E82 */
   --d-batch:     160, 64, 64;   /* #A04040 */
   --d-scheduled: 140, 74, 40;   /* #8C4A28 */
+  --d-rck:       var(--d-batch);     /* The Reckoning · 28-38 — Raw Industrial  */
+  --d-rcl:       var(--d-instant);   /* The Recalibration · 38-48 — Cold Cosmic */
+  --d-rcd:       var(--d-scheduled); /* The Reckoned · 48-58 — Warm Reckoning   */
 }
 .t-instant   { --d: var(--d-instant); }
 .t-batch     { --d: var(--d-batch); }
 .t-scheduled { --d: var(--d-scheduled); }
+.t-rck       { --d: var(--d-rck); }
+.t-rcl       { --d: var(--d-rcl); }
+.t-rcd       { --d: var(--d-rcd); }
 
 /* Brightness slider thumb */
 .brightness-slider::-webkit-slider-thumb {
