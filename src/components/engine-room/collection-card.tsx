@@ -11,6 +11,7 @@ import {
   archiveCollection,
   runCollectionNow,
 } from "@/lib/actions/collections";
+import { POST_STOKER_VISIBLE } from "@/components/engine-room/workspace/manifestation-selector";
 import { StagePips, type SignalStatus } from "./stage-pips";
 
 /**
@@ -668,12 +669,16 @@ function SignalRow({
   parentHref: string;
 }) {
   const age = formatAge(s.updatedAt);
-  // Active = anything not dismissed. Pre-Phase-9.5 the page filtered
-  // dismissed signals upstream (?ne(status, "DISMISSED")?), but a
-  // belt-and-suspenders check here keeps the chip cluster correct in
-  // case the upstream filter changes.
-  const activeManifestations = s.manifestations.filter(
-    (m) => m.status !== "DISMISSED",
+  // Phase 9.5 polish — chip cluster only surfaces manifestations that
+  // have moved past STOKER (advancing through FURNACE+). Pending
+  // children (still IN_STOKER) belong on the parent's STOKER tab
+  // for per-card review, not on the Bridge — surfacing them here
+  // would invite a click that lands on FURNACE with nothing to show
+  // (selector falls back to first visible, URL ?m= is ignored). Same
+  // POST_STOKER_VISIBLE set the workspace's ManifestationSelector
+  // uses, kept in sync via the shared export.
+  const activeManifestations = s.manifestations.filter((m) =>
+    POST_STOKER_VISIBLE.has(m.status),
   );
   const hasManifestations = activeManifestations.length > 0;
   const router = useRouter();

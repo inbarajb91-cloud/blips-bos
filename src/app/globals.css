@@ -144,10 +144,24 @@
   .breathe-ring {
     animation: breathe-ring 2.8s ease-in-out infinite;
   }
+  /* Drift-right — Phase 9.5 polish. Used on the approved-card
+     "→ FURNACE" pill arrow to draw the eye toward the click target.
+     Same 2.8s breathing cadence as the dot pulse so the workspace's
+     motion language stays in sync (one rhythm across all live
+     elements, not five different timings). 4px nudge is small enough
+     to feel like breath rather than UI demand. */
+  .drift-right {
+    animation: drift-right 2.8s ease-in-out infinite;
+  }
   .chrome-brightness {
     opacity: var(--legibility, 1);
     transition: opacity 180ms ease-out;
   }
+}
+
+@keyframes drift-right {
+  0%, 100% { transform: translateX(0); }
+  50% { transform: translateX(4px); }
 }
 
 /* Legibility default — overridden at runtime by BrightnessSlider */

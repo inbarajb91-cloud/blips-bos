@@ -447,7 +447,7 @@ function DecadeCard({
 
   return (
     <div
-      className={`${tint} relative rounded-md border ${
+      className={`${tint} rounded-md border ${
         band === "weak" ? "border-rule-2" : ""
       } p-[22px] flex flex-col`}
       style={{
@@ -455,44 +455,10 @@ function DecadeCard({
         ...(cardBorder ? { borderColor: cardBorder } : {}),
       }}
     >
-      {/* Top-right "open in FURNACE" arrow — Phase 9.5 polish.
-          Renders only when the card is APPROVED and a workspace-level
-          switcher callback is wired. Replaces the previous "Open ↗"
-          link in the bottom approved-badge — the corner placement
-          gives the affordance a consistent home (always at the same
-          spot when approved) without competing with the score in the
-          card's content area. The arrow uses the corner-arrow glyph
-          (↗) rather than a plain right-arrow because "go elsewhere /
-          open in another view" is more accurate than "advance" — the
-          STOKER cards advance the manifestation by themselves on
-          approve; this button just navigates to that manifestation's
-          FURNACE tab in the same workspace.
-          Sits at top-right with a 12px inset, just outside the card's
-          22px content padding so it never collides with the score's
-          22px font. */}
-      {child && childStatus === "APPROVED" && onSwitchToManifestation && (
-        <button
-          type="button"
-          onClick={() => onSwitchToManifestation(child.decade, "FURNACE")}
-          aria-label={`Open ${child.decade} manifestation in FURNACE`}
-          className="absolute top-3 right-3 w-7 h-7 rounded-full flex items-center justify-center transition-all hover:bg-[rgba(242,239,233,0.15)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[rgba(242,239,233,0.6)]"
-          style={{
-            color: "rgba(242,239,233,0.95)",
-            border: "1px solid rgba(242,239,233,0.45)",
-            background: "rgba(242,239,233,0.06)",
-          }}
-        >
-          <span style={{ lineHeight: 1, fontSize: "11px" }}>↗</span>
-        </button>
-      )}
-
       {/* Card head: decade label + score. Text on filled cards is
           cream (--t1) — high contrast against the saturated decade
           background. Score gets a slightly muted off-white so it
-          recedes into the decade color rather than competing.
-          When the approved-state arrow renders above, the score
-          shifts left by 36px (arrow width 28px + 8px gap) via the
-          padding adjustment so it doesn't visually collide. */}
+          recedes into the decade color rather than competing. */}
       <div className="flex items-center justify-between mb-3">
         <span className="font-display font-bold text-[13px] tracking-[0.16em] text-t1">
           {row.decade}
@@ -504,11 +470,7 @@ function DecadeCard({
           </span>
         </span>
         <span
-          className={`font-display font-bold text-[22px] -tracking-[0.01em] tabular-nums text-t1 ${
-            child && childStatus === "APPROVED" && onSwitchToManifestation
-              ? "mr-9"
-              : ""
-          }`}
+          className="font-display font-bold text-[22px] -tracking-[0.01em] tabular-nums text-t1"
           style={{
             color:
               band === "weak" ? "rgba(242,239,233,0.5)" : "rgb(242,239,233)",
@@ -517,6 +479,47 @@ function DecadeCard({
           {row.resonanceScore}
         </span>
       </div>
+
+      {/* "→ FURNACE" open pill — Phase 9.5 polish round 2. Lives in
+          the natural flow on its own right-aligned row beneath the
+          decade-label/score head, so it doesn't fight the score for
+          the corner. Founder asked for the pill to be horizontal +
+          animated to communicate "click here to advance the
+          manifestation" — the drift-right keyframe nudges the arrow
+          on the same 2.8s breathing cadence the workspace uses
+          everywhere else, so the pill reads as live without
+          screaming. Renders only on APPROVED cards with a workspace
+          callback wired (i.e., not on read-only audit surfaces). */}
+      {child && childStatus === "APPROVED" && onSwitchToManifestation && (
+        <div className="flex justify-end mb-3 -mt-1">
+          <button
+            type="button"
+            onClick={() => onSwitchToManifestation(child.decade, "FURNACE")}
+            aria-label={`Open ${child.decade} manifestation in FURNACE`}
+            className="px-3.5 py-1.5 rounded-full flex items-center gap-2 transition-all hover:bg-[rgba(242,239,233,0.20)] hover:border-[rgba(242,239,233,0.78)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[rgba(242,239,233,0.6)] cursor-pointer"
+            style={{
+              color: "rgba(242,239,233,0.95)",
+              border: "1px solid rgba(242,239,233,0.55)",
+              background: "rgba(242,239,233,0.10)",
+            }}
+          >
+            <span
+              aria-hidden
+              className="drift-right"
+              style={{
+                lineHeight: 1,
+                fontSize: "12px",
+                display: "inline-block",
+              }}
+            >
+              →
+            </span>
+            <span className="font-mono text-[9.5px] tracking-[0.22em] uppercase">
+              FURNACE
+            </span>
+          </button>
+        </div>
+      )}
 
       {/* Decade rule — cream-tinted divider on the saturated cards
           rather than the decade color (it's already the background). */}

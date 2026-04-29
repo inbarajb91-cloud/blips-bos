@@ -66,6 +66,25 @@ export function decadeTintClass(decade: DecadeKey): string {
   return decade === "RCK" ? "t-rck" : decade === "RCL" ? "t-rcl" : "t-rcd";
 }
 
+/**
+ * SignalStatus values that mean "this manifestation has moved past
+ * STOKER and has post-STOKER work to render". Exported so other
+ * surfaces (Bridge chip cluster) filter on the same set — keeping
+ * the "what counts as advancing" definition in one place.
+ *
+ * Excluded: IN_STOKER (pending — still on the parent's STOKER tab
+ * awaiting per-card review), DISMISSED, BUNKER_FAILED (children
+ * never go through BUNKER, defensive guard), STOKER_REFUSED, and
+ * the parent-only terminal states.
+ */
+export const POST_STOKER_VISIBLE: ReadonlySet<SignalStatus> = new Set([
+  "IN_FURNACE",
+  "IN_BOILER",
+  "IN_ENGINE",
+  "AT_PROPELLER",
+  "DOCKED",
+]);
+
 export function ManifestationSelector({
   manifestations,
   active,
@@ -83,10 +102,21 @@ export function ManifestationSelector({
   const containerRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
 
-  // Filter out dismissed children. DISMISSED is the only terminal
-  // "this manifestation is gone" state for a child signal — see the
-  // component-level docblock above for the full reasoning.
-  const visible = manifestations.filter((m) => m.status !== "DISMISSED");
+  // Phase 9.5 polish — visible filter tightened. Original Phase 9.5
+  // filter was "anything except DISMISSED", which leaked PENDING
+  // (still IN_STOKER, awaiting parent-side per-card approval) into
+  // the FURNACE / BOILER / ENGINE dropdowns. That was wrong: a
+  // pending manifestation has no FURNACE work yet — there's nothing
+  // for those tabs' renderers to render. Founder reviewed and asked
+  // to surface only manifestations that have actually moved past
+  // STOKER. The positive-list approach (IN_FURNACE through DOCKED)
+  // is more defensive than negative-listing — any future intermediate
+  // status added to the SignalStatus enum will default to "hidden
+  // from selector" rather than "leaks in until someone notices",
+  // which is the safer fail mode.
+  const visible = manifestations.filter((m) =>
+    POST_STOKER_VISIBLE.has(m.status),
+  );
 
   // Close on outside click + Escape. Effect runs only when open so
   // we don't pay listener cost on every workspace render.

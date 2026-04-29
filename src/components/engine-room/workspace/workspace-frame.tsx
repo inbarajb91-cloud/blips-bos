@@ -7,6 +7,7 @@ import { ContextStrip } from "./context-strip";
 import { OrcPanel } from "./orc-panel";
 import {
   ManifestationSelector,
+  POST_STOKER_VISIBLE,
   type DecadeKey,
 } from "./manifestation-selector";
 import { POST_STOKER_STAGES, RENDERERS } from "./renderers/registry";
@@ -222,8 +223,18 @@ export function WorkspaceFrame({
   // entry. Keeps reload-resilience: refresh the page, you land on the
   // same manifestation. Also lets users share URLs that pre-select
   // a manifestation (e.g., a Linear ticket links to ?m=RCD).
+  // Visible = manifestations that have moved past STOKER. Pending
+  // (IN_STOKER) and dismissed (DISMISSED) are filtered out at this
+  // level so the selector and post-STOKER renderers all share the
+  // same definition of "actionable manifestation". A pending child
+  // belongs on the parent's STOKER tab (per-card review queue), not
+  // in the FURNACE/BOILER/ENGINE dropdown — there's nothing for
+  // those tabs' renderers to render on a child that hasn't been
+  // approved yet. Founder feedback Apr 30 — surfacing pending in
+  // the dropdown caused confusion ("I only approved 1 but the
+  // dropdown shows 2").
   const visibleManifestations = useMemo(
-    () => manifestations.filter((m) => m.status !== "DISMISSED"),
+    () => manifestations.filter((m) => POST_STOKER_VISIBLE.has(m.status)),
     [manifestations],
   );
 
