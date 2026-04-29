@@ -5,11 +5,17 @@ import type { signals, collections } from "@/db/schema";
 import { AgentTabStrip } from "./agent-tab-strip";
 import { ContextStrip } from "./context-strip";
 import { OrcPanel } from "./orc-panel";
-import { RENDERERS } from "./renderers/registry";
+import {
+  ManifestationSelector,
+  POST_STOKER_VISIBLE,
+  type DecadeKey,
+} from "./manifestation-selector";
+import { POST_STOKER_STAGES, RENDERERS } from "./renderers/registry";
 import type { ParentStokerData } from "./renderers/stoker-resonance";
 import type {
   ParentReference,
   ManifestationOwnDetail,
+  ManifestationSummary,
 } from "./renderers/types";
 import { WorkspaceRealtime } from "./workspace-realtime";
 import { computeStageStates, pickInitialTab, type AgentKey } from "./types";
@@ -20,6 +26,32 @@ import {
   releaseSignalLock,
   type LockStatus,
 } from "@/lib/actions/signal-locks";
+
+const VALID_DECADES: ReadonlySet<DecadeKey> = new Set(["RCK", "RCL", "RCD"]);
+
+function readDecadeFromUrl(): DecadeKey | null {
+  if (typeof window === "undefined") return null;
+  const param = new URLSearchParams(window.location.search).get("m");
+  if (param && VALID_DECADES.has(param as DecadeKey)) {
+    return param as DecadeKey;
+  }
+  return null;
+}
+
+function writeDecadeToUrl(decade: DecadeKey | null) {
+  if (typeof window === "undefined") return;
+  const url = new URL(window.location.href);
+  if (decade) {
+    url.searchParams.set("m", decade);
+  } else {
+    url.searchParams.delete("m");
+  }
+  // replaceState (not pushState) — manifestation switching shouldn't
+  // pollute the back-button history. The user's mental model is
+  // "I'm on this signal's workspace and toggling between its
+  // manifestations", not "I navigated to a new page."
+  window.history.replaceState(window.history.state, "", url);
+}
 
 /**
  * WorkspaceFrame — Phase 7 signal workspace.
@@ -66,12 +98,29 @@ const DEFAULT_PANEL = 380;
 const MIN_PANEL = 300;
 const MAX_PANEL = 620;
 
+// Phase 9.5 — ORC defaults COLLAPSED. The walkthrough surfaced that
+// users open the workspace to look at the canvas first; ORC is a
+// thinking partner you reach for, not a default surface. Collapsing
+// gives the canvas the full viewport on first paint, with a thin
+// rail (RAIL_WIDTH px) on the left as the persistent reopen affordance.
+//
+// Open/closed state lives in its own storage key so it's independent
+// of the panel-width preference — a user who likes ORC at 540px when
+// they open it doesn't lose that preference just because they kept
+// it collapsed last session. Storage key versioned `-v2` so existing
+// users get the new default-collapsed behaviour on first reload after
+// the Phase 9.5 deploy (the absence of the new key triggers the
+// default-false codepath, regardless of any stale `-v1` value).
+const ORC_OPEN_KEY = "ws.orcOpen-v2";
+const RAIL_WIDTH = 36;
+
 export function WorkspaceFrame({
   signal,
   collection,
   stokerData,
   parentRef,
   manifestationDetail,
+  manifestations,
 }: {
   signal: typeof signals.$inferSelect;
   collection: typeof collections.$inferSelect | null;
@@ -81,6 +130,11 @@ export function WorkspaceFrame({
   parentRef: ParentReference | null;
   /** Phase 9F — manifestation's own STOKER agent_outputs detail. */
   manifestationDetail: ManifestationOwnDetail | null;
+  /** Phase 9.5 — full manifestation children for this parent, fetched
+   *  once server-side so the canvas can swap between them without
+   *  another network round-trip. Empty on pre-STOKER and on
+   *  manifestation children themselves (they redirect to the parent). */
+  manifestations: ManifestationSummary[];
 }) {
   const states = useMemo(
     () => computeStageStates(signal.status as SignalStatus),
@@ -115,6 +169,156 @@ export function WorkspaceFrame({
       /* localStorage may be unavailable; use default */
     }
   }, []);
+
+  // ORC open/closed (Phase 9.5) — defaults to false. Users who
+  // explicitly opened it last session restore to open; first-time
+  // users and anyone who left it closed get the canvas-first layout.
+  // Persist on every toggle so the preference survives reloads.
+  //
+  // SSR-safety pattern (matches panelWidth above): initial state is
+  // the default (false) for both server and client first render, so
+  // hydration matches; the effect runs post-hydration to upgrade if
+  // the user previously chose open. The set-state-in-effect rule is
+  // suppressed because this IS the correct shape for browser-only
+  // state in a server-rendered client component.
+  const [isOrcOpen, setIsOrcOpen] = useState<boolean>(false);
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(ORC_OPEN_KEY);
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      if (raw === "true") setIsOrcOpen(true);
+    } catch {
+      /* localStorage may be unavailable; keep default */
+    }
+  }, []);
+
+  function toggleOrc() {
+    setIsOrcOpen((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(ORC_OPEN_KEY, next ? "true" : "false");
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  }
+
+  // ─── Active manifestation (Phase 9.5) ────────────────────────────
+  //
+  // The post-STOKER stages (FURNACE, BOILER, ENGINE, PROPELLER) all
+  // operate on a single manifestation child, not on the parent. The
+  // user picks WHICH child via the ManifestationSelector dropdown,
+  // and that selection persists across tab switches (you don't lose
+  // your "I'm working on RCD" focus when you click BOILER → ENGINE).
+  //
+  // Initial value: read `?m=DECADE` from the URL. If present and
+  // valid (RCK / RCL / RCD), use it. Otherwise fall back to the
+  // first non-dismissed manifestation, or null if there are none.
+  // The fallback is computed inline from the manifestations prop, so
+  // re-renders track the latest server data.
+  //
+  // On change: write the new decade to URL (?m=DECADE) via
+  // replaceState — switching manifestations shouldn't add a back-button
+  // entry. Keeps reload-resilience: refresh the page, you land on the
+  // same manifestation. Also lets users share URLs that pre-select
+  // a manifestation (e.g., a Linear ticket links to ?m=RCD).
+  // Visible = manifestations that have moved past STOKER. Pending
+  // (IN_STOKER) and dismissed (DISMISSED) are filtered out at this
+  // level so the selector and post-STOKER renderers all share the
+  // same definition of "actionable manifestation". A pending child
+  // belongs on the parent's STOKER tab (per-card review queue), not
+  // in the FURNACE/BOILER/ENGINE dropdown — there's nothing for
+  // those tabs' renderers to render on a child that hasn't been
+  // approved yet. Founder feedback Apr 30 — surfacing pending in
+  // the dropdown caused confusion ("I only approved 1 but the
+  // dropdown shows 2").
+  const visibleManifestations = useMemo(
+    () => manifestations.filter((m) => POST_STOKER_VISIBLE.has(m.status)),
+    [manifestations],
+  );
+
+  const [activeDecade, setActiveDecade] = useState<DecadeKey | null>(null);
+
+  // Resolve initial activeDecade once the visible list is known. The
+  // null initial state is a single-frame transient — this useEffect
+  // fires synchronously on first commit and resolves to URL or
+  // first-visible.
+  //
+  // CR pass on PR #10 (round 2): keep the URL `?m=` in sync with
+  // state on every transition. Previously, when the chosen decade
+  // disappeared (manifestation dismissed, status flipped past
+  // POST_STOKER_VISIBLE, etc.), state fell back to first-visible
+  // but the URL kept the stale decade. Reload would then bounce
+  // back to the dismissed decade, fall back again, and so on. Now
+  // we explicitly clear or replace the URL when the source-of-truth
+  // (server data) no longer matches what the URL claims.
+  //
+  // The set-state-in-effect rule is suppressed on the first
+  // setActiveDecade call — initial resolution from URL+server-data
+  // is genuinely client-only state that has to upgrade post-hydration.
+  useEffect(() => {
+    const fromUrl = readDecadeFromUrl();
+
+    if (visibleManifestations.length === 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setActiveDecade(null);
+      // Clear stale ?m= so the URL reflects the empty state.
+      if (fromUrl) writeDecadeToUrl(null);
+      return;
+    }
+    if (fromUrl && visibleManifestations.some((m) => m.decade === fromUrl)) {
+      setActiveDecade(fromUrl);
+      return;
+    }
+    // Fall back to first visible. If the URL had a stale decade,
+    // replace it with the fallback so reload-resilience holds. If
+    // the URL was clean (no ?m=), leave it clean — first-visible is
+    // the implicit default, no need to clutter the URL.
+    const fallback = visibleManifestations[0].decade;
+    setActiveDecade(fallback);
+    if (fromUrl && fromUrl !== fallback) writeDecadeToUrl(fallback);
+    // Run this resolution whenever visible manifestations change
+    // (e.g., a dismissal lands and the previously-active decade is
+    // no longer visible). visibleManifestations is itself memo'd
+    // off manifestations, so this only runs when server data shifts.
+  }, [visibleManifestations]);
+
+  function selectManifestation(decade: DecadeKey) {
+    setActiveDecade(decade);
+    writeDecadeToUrl(decade);
+  }
+
+  /**
+   * Phase 9.5 polish — atomic "switch to this manifestation on this
+   * stage" handler. Used by the STOKER renderer's approved-card
+   * top-right arrow + the FanOutPreview pills, both of which need to
+   * advance the workspace from "STOKER's 3-card grid" to "FURNACE on
+   * the chosen manifestation" in one click. Wraps both state flips
+   * (activeTab + activeDecade) so renderers don't have to know the
+   * shape of workspace state — they just say "open RCL in FURNACE"
+   * and we route accordingly.
+   */
+  function switchToManifestation(decade: DecadeKey, stage: AgentKey) {
+    setActiveTab(stage);
+    selectManifestation(decade);
+  }
+
+  // Active manifestation object — the one the post-STOKER renderers
+  // operate on. Null when:
+  //   - parent has no manifestations yet (pre-STOKER)
+  //   - all manifestations are dismissed (visibleManifestations.length=0)
+  //   - the active decade isn't in the visible list (transient, between
+  //     a dismiss and the resolution useEffect catching up)
+  // The fallback to first-visible covers the third case so renderers
+  // see a stable activeManifestation as long as visible.length > 0.
+  const activeManifestation = useMemo<ManifestationSummary | null>(() => {
+    if (visibleManifestations.length === 0) return null;
+    return (
+      visibleManifestations.find((m) => m.decade === activeDecade) ??
+      visibleManifestations[0]
+    );
+  }, [visibleManifestations, activeDecade]);
 
   // Remember the last-viewed signal so the Signal Workspace section tab
   // can return to it. Without this, clicking the section tab from another
@@ -315,12 +519,12 @@ export function WorkspaceFrame({
   // the whole workspace flow naturally and scroll as a document in the
   // engine-room layout's existing overflow container.
   //
-  // Order from top:
-  //   1. Signal identity header (shortcode + working title, hero weight)
-  //   2. ContextStrip (collapsed row riding above tab strip; expands on
-  //      click to reveal collection mini-card + concept + signal meta)
-  //   3. AgentTabStrip (sticky — stays visible as user scrolls canvas)
-  //   4. Two-column grid: canvas + ORC panel
+  // Order from top (Phase 9.5 — title section absorbed into the strip):
+  //   1. ContextStrip — unified header. Collapsed row carries shortcode
+  //      + working title + lock + chevron. Expands to reveal collection
+  //      mini-card, concept pull-quote, signal meta, read-only banner.
+  //   2. AgentTabStrip (sticky — stays visible as user scrolls canvas)
+  //   3. Two-column grid: ORC panel + canvas
   //
   // The canvas + ORC row uses `align-self: start` so panels don't
   // stretch vertically to match each other; natural content height
@@ -338,28 +542,13 @@ export function WorkspaceFrame({
   return (
     <div className={`${typeClass} flex flex-col bg-ink`}>
       <WorkspaceRealtime signalId={signal.id} hasActiveWork={hasActiveWork} />
-      {/* Header — identity only: shortcode + working title.
-          Phase 7.5 — pl-7 (28px) instead of the previous px-11 (44px)
-          so the shortcode sits closer to the page edge, matching the
-          tighter visual density Inba flagged ("empty space on the
-          left we don't need"). Right padding stays generous so the
-          title text breathes against the viewport edge. */}
-      <section className="pl-7 pr-11 pt-5 pb-6">
-        <div className="flex items-baseline gap-8">
-          <span className="font-display font-bold text-[13px] tracking-[0.16em] text-t1">
-            {signal.shortcode}
-          </span>
-          <h1 className="font-display font-medium text-[40px] -tracking-[0.012em] leading-[1.05] text-t1">
-            {signal.workingTitle}
-          </h1>
-        </div>
-      </section>
-
-      {/* Context strip — horizontal, collapsed by default. Shows
-          collection identity + lock state in the collapsed row; full
-          context (mini-card, concept pull-quote, meta grid, read-only
-          banner) via the expand chevron. Replaces the old vertical
-          LeftRail. */}
+      {/* Unified header strip — Phase 9.5.
+          The shortcode + working title that used to live in their own
+          `pl-7 pr-11 pt-5 pb-6` <section> above this strip have been
+          merged into the strip's collapsed row. Collection identity
+          (name + type + counts) moved to the expanded body. Result:
+          one strip at the top of the workspace instead of two, less
+          vertical chrome, more canvas above the fold. */}
       <ContextStrip
         signal={signal}
         collection={collection}
@@ -372,15 +561,41 @@ export function WorkspaceFrame({
           layout's overflow-auto). As the user scrolls through stage
           content, the strip stays visible so tab navigation remains
           reachable without scrolling back up. Sticky within the
-          document-scroll model; no internal-scroll nesting. */}
-      <div
-        className="sticky top-0 z-10 bg-ink border-b border-rule-1 px-11"
-      >
-        <AgentTabStrip
-          states={states}
-          activeTab={activeTab}
-          onTabChange={setActiveTab}
-        />
+          document-scroll model; no internal-scroll nesting.
+
+          Phase 9.5 — manifestation selector lives in its own thin
+          sub-row directly below the tab strip, conditional on a
+          post-STOKER tab AND the parent having at least one
+          non-dismissed manifestation child. Both rows share the same
+          sticky container so they travel together as the canvas
+          scrolls. Putting the selector on its own row (rather than
+          inline next to the tab strip) preserves the AgentTabStrip's
+          full-bleed `-mx-11` border treatment without surgery, and
+          gives the selector pill enough breathing room on the right
+          edge that it reads as the row's intentional anchor.
+          BUNKER/STOKER tabs skip the selector row entirely — those
+          stages render parent-side data, no manifestation to switch. */}
+      <div className="sticky top-0 z-10 bg-ink">
+        <div className="border-b border-rule-1 px-11">
+          <AgentTabStrip
+            states={states}
+            activeTab={activeTab}
+            onTabChange={setActiveTab}
+          />
+        </div>
+        {POST_STOKER_STAGES.has(activeTab) &&
+          visibleManifestations.length > 0 && (
+            <div className="border-b border-rule-1 bg-wash-1 px-11 py-2.5 flex justify-end items-center gap-3">
+              <span className="font-mono text-[10px] tracking-[0.22em] uppercase text-t5">
+                Manifestation
+              </span>
+              <ManifestationSelector
+                manifestations={manifestations}
+                active={activeDecade}
+                onSelect={selectManifestation}
+              />
+            </div>
+          )}
       </div>
 
       {/* Two-region grid — ORC panel + canvas. ORC pinned LEFT
@@ -392,11 +607,20 @@ export function WorkspaceFrame({
           Order in DOM: ORC first, then resize handle, then canvas —
           which also sets the natural keyboard tab order (ORC input
           before canvas content), matching the visual reading order
-          on LTR. */}
+          on LTR.
+
+          Phase 9.5 — collapsed-state layout:
+            When ORC is closed (default), the first column shrinks to
+            RAIL_WIDTH (36px) and the resize handle hides (0px column).
+            Canvas takes ~all of the row. The panel itself swaps to a
+            rail layout (vertical "ORC" label + breathing dot + expand
+            button), preserving its presence without consuming canvas. */}
       <div
         className="grid transition-[grid-template-columns] duration-300 ease-out"
         style={{
-          gridTemplateColumns: `${panelWidth}px 6px 1fr`,
+          gridTemplateColumns: isOrcOpen
+            ? `${panelWidth}px 6px 1fr`
+            : `${RAIL_WIDTH}px 0px 1fr`,
         }}
       >
         {/* Left panel — ORC conversation. align-self: start so it's
@@ -404,27 +628,38 @@ export function WorkspaceFrame({
             the canvas. Long conversations just grow the panel; no
             internal scroll to trap the user. */}
         <aside
-          className="border-r border-rule-1 bg-wash-1 flex flex-col self-start"
+          className="border-r border-rule-1 bg-wash-1 flex flex-col self-stretch"
           aria-label="ORC conversation"
         >
           <OrcPanel
             signal={signal}
             activeStage={activeTab}
             lockStatus={lockStatus}
+            isOpen={isOrcOpen}
+            onToggle={toggleOrc}
           />
         </aside>
 
         {/* Resize handle — drag right to widen ORC panel, drag left to
             narrow it. Double-click resets to the default width. Visual
             grip lights up in the parent collection's decade color on
-            hover/drag via the `group` hover-state pattern. */}
+            hover/drag via the `group` hover-state pattern.
+
+            When ORC is collapsed, the column has 0px width — the div
+            still renders but is visually absent. pointer-events-none
+            prevents stray hovers/clicks while collapsed. */}
         <div
           role="separator"
           aria-orientation="vertical"
           aria-label="Resize ORC panel"
-          className="cursor-col-resize relative border-r border-rule-1 hover:border-[rgba(var(--d),0.45)] group transition-colors"
-          onMouseDown={startResize}
-          onDoubleClick={resetPanelWidth}
+          aria-hidden={!isOrcOpen}
+          className={`relative border-r border-rule-1 group transition-colors ${
+            isOrcOpen
+              ? "cursor-col-resize hover:border-[rgba(var(--d),0.45)]"
+              : "pointer-events-none overflow-hidden border-transparent"
+          }`}
+          onMouseDown={isOrcOpen ? startResize : undefined}
+          onDoubleClick={isOrcOpen ? resetPanelWidth : undefined}
         >
           <div
             aria-hidden
@@ -459,6 +694,11 @@ export function WorkspaceFrame({
               stokerData={stokerData}
               parentRef={parentRef}
               manifestationDetail={manifestationDetail}
+              manifestations={manifestations}
+              activeManifestation={
+                POST_STOKER_STAGES.has(activeTab) ? activeManifestation : null
+              }
+              onSwitchToManifestation={switchToManifestation}
             />
           </div>
         </main>

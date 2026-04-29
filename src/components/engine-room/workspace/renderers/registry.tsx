@@ -9,6 +9,7 @@ import {
 import type {
   ParentReference,
   ManifestationOwnDetail,
+  ManifestationSummary,
 } from "./types";
 
 /**
@@ -54,6 +55,38 @@ export interface RendererProps {
    * Null on raw signals.
    */
   manifestationDetail: ManifestationOwnDetail | null;
+  /**
+   * Phase 9.5 — full set of manifestation children for this parent,
+   * pre-fetched so the canvas can switch between them without a
+   * network round-trip. Empty array on parents that haven't fanned
+   * out yet (pre-STOKER, COLD_BUNKER, STOKER_REFUSED) and on
+   * manifestation children (children don't get their own selector;
+   * direct child URLs redirect to the parent).
+   */
+  manifestations: ManifestationSummary[];
+  /**
+   * Phase 9.5 — the manifestation the user is currently focused on,
+   * for post-STOKER renderers (FURNACE / BOILER / ENGINE /
+   * PROPELLER). Null on the BUNKER and STOKER tabs (they render
+   * parent-side data only) and on parents with zero non-dismissed
+   * manifestations. Renderers that need it should guard against
+   * null with an empty state, not crash.
+   */
+  activeManifestation: ManifestationSummary | null;
+  /**
+   * Phase 9.5 polish — workspace-level callback for "switch the
+   * canvas to this manifestation, on this stage". Used by the STOKER
+   * renderer's per-card "open" arrow + the fan-out preview pills,
+   * which both need to (a) flip the active manifestation and (b)
+   * advance the active stage tab in one click. Renderers that don't
+   * need to drive workspace navigation should ignore this prop.
+   * The function flips both the activeTab state and the active
+   * manifestation URL param atomically.
+   */
+  onSwitchToManifestation?: (
+    decade: ManifestationSummary["decade"],
+    stage: AgentKey,
+  ) => void;
 }
 
 export type Renderer = React.ComponentType<RendererProps>;
@@ -99,3 +132,20 @@ export const RENDERERS: Record<AgentKey, Renderer> = {
     />
   ),
 };
+
+/**
+ * Stage keys whose renderers operate on a child manifestation rather
+ * than the parent signal. The post-STOKER stages all live on a
+ * manifestation: FURNACE scores brand fit per decade-card, BOILER
+ * concepts a single decade-card, ENGINE produces the tech pack
+ * for that decade-card, PROPELLER bundles the vendor brief.
+ *
+ * The workspace shows the ManifestationSelector when activeTab is
+ * one of these AND the parent has at least one non-dismissed child.
+ */
+export const POST_STOKER_STAGES: ReadonlySet<AgentKey> = new Set([
+  "FURNACE",
+  "BOILER",
+  "ENGINE",
+  "PROPELLER",
+]);

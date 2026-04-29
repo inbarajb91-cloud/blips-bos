@@ -136,6 +136,111 @@ interface StokerOutputContent {
   refusalRationale: string | null;
 }
 
+// ─── Prose-as-bullets ────────────────────────────────────────────
+//
+// Phase 9.5 polish — the STOKER agent emits Overall rationale + each
+// card's Angle as flowing prose, but the founder asked to read these
+// as bullets so multi-clause reasoning stops blurring into a wall of
+// editorial text. We don't change the agent's schema (no migration
+// pressure, no agent re-run on existing rows) — we just split the
+// returned prose at sentence boundaries client-side.
+//
+// Splitter heuristic: split on `.?!` followed by whitespace and an
+// uppercase letter. This catches normal prose (`"… first thought.
+// Second thought …"`) while leaving abbreviations like "U.S." and
+// decimal numbers intact (those don't have an uppercase letter
+// following a single space). Single-sentence prose falls through
+// to a plain paragraph render so short-form content doesn't get a
+// useless one-bullet list.
+//
+// CR pass on PR #10: the bare regex split miscategorises common
+// honorifics ("Dr. Smith arrived") + Latin abbreviations
+// ("e.g. tomatoes") as sentence boundaries, mangling otherwise
+// normal STOKER prose into broken bullets. We now scan the produced
+// segments for trailing-abbreviation tokens; if any segment ends in
+// a known abbreviation, the split was almost certainly wrong, so
+// we fall back to rendering the original prose as a single block.
+// This is a heuristic guard, not a full sentence segmenter — but it
+// covers the abbreviation classes STOKER actually emits, which is
+// what the user feedback was about.
+const ABBREVIATIONS_TRAILING_PERIOD: ReadonlySet<string> = new Set([
+  "Mr",
+  "Mrs",
+  "Ms",
+  "Dr",
+  "Prof",
+  "Sr",
+  "Jr",
+  "St",
+  "vs",
+  "Ave",
+  "Inc",
+  "Ltd",
+  "Co",
+  "Corp",
+  "etc",
+  // Latin abbreviations show up at end of phrases too.
+  "e.g",
+  "i.e",
+]);
+
+function splitSentences(text: string): string[] {
+  const segments = text
+    .split(/(?<=[.!?])\s+(?=[A-Z])/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  // Single segment — nothing to validate. Caller renders as plain
+  // paragraph anyway.
+  if (segments.length <= 1) return segments;
+  // Walk all segments except the last: a wrong-split symptom is
+  // segment[i] ending in an abbreviation token. The last segment
+  // legitimately ends in `.`/`?`/`!` so we don't validate it.
+  for (let i = 0; i < segments.length - 1; i++) {
+    const trailingToken = segments[i].match(/(\S+?)\.$/)?.[1];
+    if (trailingToken && ABBREVIATIONS_TRAILING_PERIOD.has(trailingToken)) {
+      return [text.trim()];
+    }
+  }
+  return segments;
+}
+
+function ProseAsBullets({
+  text,
+  bulletColor,
+  textClassName,
+}: {
+  text: string;
+  /** CSS color for the bullet dot. Defaults to currentColor at 60%
+   *  opacity, which reads correctly on both ink and saturated decade
+   *  card backgrounds. Pass an explicit rgba to override. */
+  bulletColor?: string;
+  /** Tailwind className applied to each li's text span. Lets the call
+   *  site keep its existing typography (editorial 14px / 15px etc.). */
+  textClassName: string;
+}) {
+  const sentences = splitSentences(text);
+  if (sentences.length <= 1) {
+    return <p className={textClassName}>{text}</p>;
+  }
+  return (
+    <ul className="space-y-2">
+      {sentences.map((sentence, i) => (
+        <li key={i} className="flex gap-2.5">
+          <span
+            aria-hidden
+            className="shrink-0 w-1 h-1 rounded-full mt-[10px]"
+            style={{
+              background: bulletColor ?? "currentColor",
+              opacity: bulletColor ? 1 : 0.6,
+            }}
+          />
+          <span className={textClassName}>{sentence}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 // ─── Renderer ─────────────────────────────────────────────────────
 
 export function StokerResonance({
@@ -143,6 +248,7 @@ export function StokerResonance({
   stokerData,
   parentRef,
   manifestationDetail,
+  onSwitchToManifestation,
 }: RendererProps) {
   // Phase 9F — manifestation child's STOKER tab. Renders a single
   // detail card for THIS manifestation (not the 3-card grid), tinted
@@ -158,8 +264,43 @@ export function StokerResonance({
     );
   }
 
-  // No STOKER data yet — placeholder while the signal is pre-STOKER.
+  // No STOKER data yet — two distinct sub-states.
+  //   - signal.status === IN_STOKER: STOKER is actively running. Show
+  //     a live "running" state with a breathing dot. The
+  //     WorkspaceRealtime listener catches the agent_outputs insert
+  //     and triggers router.refresh(), so this state auto-flips to
+  //     the 3-card grid the moment STOKER lands its row — no manual
+  //     reload needed (Phase 9 polish).
+  //   - any other pre-output status (IN_BUNKER / COLD_BUNKER / etc.):
+  //     STOKER hasn't been kicked off yet. Show the explanatory copy.
   if (!stokerData) {
+    if (signal.status === "IN_STOKER") {
+      return (
+        <div className="py-8">
+          <div className="text-[9px] font-mono tracking-[0.24em] uppercase text-t4 mb-2">
+            DECADE RESONANCE
+          </div>
+          <div className="flex items-center gap-3 mb-3">
+            <span
+              aria-hidden
+              className="breathe rounded-full"
+              style={{
+                width: 8,
+                height: 8,
+                background: "rgba(var(--d), 0.92)",
+              }}
+            />
+            <span className="text-t1 font-display text-base font-semibold">
+              STOKER is running…
+            </span>
+          </div>
+          <p className="font-editorial italic text-t3 text-sm max-w-xl">
+            Scoring resonance across the three decade cohorts. The cards
+            land here as soon as STOKER finishes — no need to refresh.
+          </p>
+        </div>
+      );
+    }
     return (
       <div className="py-8">
         <div className="text-[9px] font-mono tracking-[0.24em] uppercase text-t4 mb-1">
@@ -216,15 +357,19 @@ export function StokerResonance({
         advance them to FURNACE. Edits stay on the card before approval.
       </p>
 
-      {/* Overall rationale strip */}
+      {/* Overall rationale strip — Phase 9.5 polish: rendered as
+          bullets when prose has 2+ sentences. Single-sentence inputs
+          stay as a plain paragraph (would be silly to bullet a one-
+          liner). */}
       {content.overallRationale && (
         <div className="bg-wash-1 border border-rule-1 rounded-md px-5 py-4 mb-7">
           <div className="text-[9px] font-mono tracking-[0.24em] uppercase text-t4 mb-2">
             Overall rationale
           </div>
-          <div className="font-editorial text-[15px] leading-relaxed text-t1">
-            {content.overallRationale}
-          </div>
+          <ProseAsBullets
+            text={content.overallRationale}
+            textClassName="font-editorial text-[15px] leading-relaxed text-t1"
+          />
         </div>
       )}
 
@@ -245,13 +390,17 @@ export function StokerResonance({
                   key={row.decade}
                   row={row}
                   child={child}
+                  onSwitchToManifestation={onSwitchToManifestation}
                 />
               );
             })}
           </div>
 
           {/* Fan-out preview strip */}
-          <FanOutPreview manifestations={stokerData.children} />
+          <FanOutPreview
+            manifestations={stokerData.children}
+            onSwitchToManifestation={onSwitchToManifestation}
+          />
         </>
       )}
     </div>
@@ -263,9 +412,16 @@ export function StokerResonance({
 function DecadeCard({
   row,
   child,
+  onSwitchToManifestation,
 }: {
   row: DecadeRow;
   child: ParentStokerData["children"][number] | null;
+  /** Phase 9.5 polish — workspace callback. When set on an APPROVED
+   *  card, a top-right corner arrow renders that flips active tab to
+   *  FURNACE + selects this manifestation. Optional — when undefined
+   *  the arrow is omitted (falls back to the card's bottom badge for
+   *  any future surface that renders cards without the workspace). */
+  onSwitchToManifestation?: RendererProps["onSwitchToManifestation"];
 }) {
   const band = bandFor(row.resonanceScore);
   const tint = DECADE_TINTS[row.decade];
@@ -300,9 +456,10 @@ function DecadeCard({
         <div className="font-mono text-[10px] tracking-[0.18em] uppercase text-t4 mb-2">
           STOKER didn&apos;t see strong fit
         </div>
-        <p className="font-editorial italic text-t3 text-[13px] leading-relaxed">
-          {row.rationale}
-        </p>
+        <ProseAsBullets
+          text={row.rationale}
+          textClassName="font-editorial italic text-t3 text-[13px] leading-relaxed"
+        />
       </div>
     );
   }
@@ -333,16 +490,77 @@ function DecadeCard({
         ? "rgba(var(--d), 0.7)"
         : undefined; // weak/none falls through to t-class border-rule-2
 
+  const showFurnaceStrip =
+    child && childStatus === "APPROVED" && onSwitchToManifestation;
+
   return (
     <div
-      className={`${tint} rounded-md border ${
+      className={`${tint} rounded-md border overflow-hidden ${
         band === "weak" ? "border-rule-2" : ""
-      } p-[22px] flex flex-col`}
+      } flex flex-col`}
       style={{
         background: cardBackground,
         ...(cardBorder ? { borderColor: cardBorder } : {}),
       }}
     >
+      {/* Approved → FURNACE strip — Phase 9.5 polish round 3.
+          Pricing-card-style top banner. Spans the card's full width
+          (no inner padding), rests above the content with its own
+          horizontal padding, doesn't compress the head/hook/angle
+          below. The whole strip is the click target — text on the
+          left ("APPROVED · ADVANCE TO FURNACE"), drifting arrow on
+          the right (drift-right keyframe in globals.css, same 2.8s
+          cadence as everywhere else in the workspace).
+
+          Replaces the bottom ApprovedBadge entirely on cards that
+          carry the strip — surface duplication of "Approved · advancing
+          to FURNACE" in two places confused the read. The bottom badge
+          still lives in the JSX below and renders ONLY when there's
+          no workspace callback (read-only audit surface).
+          overflow-hidden on the card outer is critical: the strip
+          extends to the card's outer border, but without overflow-
+          hidden the rounded-md corners would clip the strip's
+          background unevenly. */}
+      {showFurnaceStrip && (
+        <button
+          type="button"
+          onClick={() => onSwitchToManifestation(child.decade, "FURNACE")}
+          aria-label={`Open ${child.decade} manifestation in FURNACE`}
+          className="px-[22px] py-2.5 flex items-center justify-between gap-3 transition-colors hover:bg-[rgba(242,239,233,0.18)] focus-visible:outline-none focus-visible:bg-[rgba(242,239,233,0.18)] cursor-pointer"
+          style={{
+            color: "rgba(242,239,233,0.95)",
+            background: "rgba(242,239,233,0.10)",
+            borderBottom: "1px solid rgba(242,239,233,0.30)",
+          }}
+        >
+          <span className="font-mono text-[9.5px] tracking-[0.22em] uppercase">
+            Approved · advance to FURNACE
+          </span>
+          <span className="flex items-center gap-2">
+            <span className="font-mono text-[9.5px] tracking-[0.22em] uppercase">
+              FURNACE
+            </span>
+            <span
+              aria-hidden
+              className="drift-right"
+              style={{
+                lineHeight: 1,
+                fontSize: "12px",
+                display: "inline-block",
+              }}
+            >
+              →
+            </span>
+          </span>
+        </button>
+      )}
+
+      {/* Card content — wraps everything below the strip in the card's
+          original 22px padding. Phase 9.5 round 3 split this from the
+          outer so the strip can full-bleed to the card edges. flex-1
+          lets the content fill remaining card height (so mt-auto on
+          bottom badges still pushes them to the card bottom). */}
+      <div className="p-[22px] flex flex-col flex-1">
       {/* Card head: decade label + score. Text on filled cards is
           cream (--t1) — high contrast against the saturated decade
           background. Score gets a slightly muted off-white so it
@@ -407,7 +625,12 @@ function DecadeCard({
             </div>
           </div>
 
-          {/* Angle */}
+          {/* Angle — Phase 9.5 polish: bullets when multi-sentence.
+              Bullet color set explicitly to cream (off-white) instead
+              of currentColor because currentColor would resolve to the
+              decade-saturated card text and disappear against the same
+              background. The cream tinted at 70% gives a faint dot
+              that's visible but doesn't compete with the prose. */}
           <div className="mb-4">
             <div
               className="font-mono text-[9px] tracking-[0.22em] uppercase mb-1"
@@ -415,18 +638,25 @@ function DecadeCard({
             >
               Angle
             </div>
-            <div className="font-editorial text-[14px] leading-relaxed text-t1">
-              {row.manifestation.narrativeAngle}
-            </div>
+            <ProseAsBullets
+              text={row.manifestation.narrativeAngle}
+              bulletColor="rgba(242,239,233,0.7)"
+              textClassName="font-editorial text-[14px] leading-relaxed text-t1"
+            />
           </div>
 
           {/* Status badge or actions. The isApproved / isRejected
               checks are computed from child.outputStatus, but TS can't
               see through the optional chain — so we narrow on `child`
-              first, then branch on status. */}
+              first, then branch on status.
+              Phase 9.5 round 3: ApprovedBadge skipped when the top
+              FURNACE strip is rendering — the strip already carries
+              the same status text, no point doubling it. The badge
+              still renders for read-only audit surfaces (no
+              workspace callback) so they stay informative. */}
           {child ? (
             isApproved ? (
-              <ApprovedBadge child={child} />
+              showFurnaceStrip ? null : <ApprovedBadge child={child} />
             ) : isRejected ? (
               <RejectedBadge child={child} />
             ) : (
@@ -442,6 +672,7 @@ function DecadeCard({
           )}
         </>
       )}
+      </div>
     </div>
   );
 }
@@ -553,24 +784,20 @@ function ApprovedBadge({
 }: {
   child: ParentStokerData["children"][number];
 }) {
-  // Cream text on the saturated decade background — previous
-  // text-[rgba(var(--d),1)] would have been invisible against the
-  // decade-colored card surface.
+  // Phase 9.5 polish — the previous "Open ↗" link in this badge moved
+  // to a top-right corner arrow on the card itself (more discoverable,
+  // doesn't compete with the bottom action area). The badge here just
+  // surfaces the status text now. The `child` prop is still required
+  // (for parity with sibling badges + future audit data on hover).
+  void child;
   return (
     <div
-      className="mt-auto pt-3 border-t flex items-center justify-between"
+      className="mt-auto pt-3 border-t"
       style={{ borderColor: "rgba(242,239,233,0.25)" }}
     >
       <span className="font-mono text-[10px] tracking-[0.22em] uppercase text-t1">
         Approved · advancing to FURNACE
       </span>
-      <a
-        href={`/engine-room/signals/${child.shortcode}`}
-        className="font-mono text-[9px] tracking-[0.22em] uppercase transition-colors"
-        style={{ color: "rgba(242,239,233,0.7)" }}
-      >
-        Open ↗
-      </a>
     </div>
   );
 }
@@ -803,12 +1030,21 @@ function RefusalBanner({
 
 function FanOutPreview({
   manifestations,
+  onSwitchToManifestation,
 }: {
   // CR on PR #8: prop was named `children` which collides with React's
   // special children semantics + ESLint react/no-children-prop. The
   // values are data (filtered, mapped), not React nodes — `manifestations`
   // is the correct semantic name.
   manifestations: ParentStokerData["children"];
+  /** Phase 9.5 polish — workspace callback. When set, the
+   *  per-manifestation pills become buttons that flip active tab to
+   *  FURNACE + select this manifestation (instead of a same-page
+   *  redirect to the parent that just bounced back to itself).
+   *  Optional — when undefined the pills fall back to plain
+   *  shortcode display, preserving render parity for future
+   *  read-only surfaces. */
+  onSwitchToManifestation?: RendererProps["onSwitchToManifestation"];
 }) {
   const advancing = manifestations.filter(
     (c) => c.outputStatus === "APPROVED",
@@ -843,12 +1079,25 @@ function FanOutPreview({
         advancing.map((c, i) => (
           <span key={c.id} className="flex items-center gap-2">
             {i > 0 && <span className="text-t4">·</span>}
-            <a
-              href={`/engine-room/signals/${c.shortcode}`}
-              className="font-display font-semibold text-[13px] tracking-[0.08em] text-t1 hover:underline"
-            >
-              {c.shortcode}
-            </a>
+            {onSwitchToManifestation ? (
+              <button
+                type="button"
+                onClick={() =>
+                  onSwitchToManifestation(c.decade, "FURNACE")
+                }
+                aria-label={`Open ${c.decade} manifestation in FURNACE`}
+                className="font-display font-semibold text-[13px] tracking-[0.08em] text-t1 hover:underline focus-visible:outline-none focus-visible:underline cursor-pointer"
+              >
+                {c.shortcode}
+              </button>
+            ) : (
+              // Read-only fallback — used when the renderer is mounted
+              // outside the WorkspaceFrame (e.g., admin / audit views
+              // post-Phase-12). Plain text, no navigation.
+              <span className="font-display font-semibold text-[13px] tracking-[0.08em] text-t1">
+                {c.shortcode}
+              </span>
+            )}
             <span className={`${DECADE_TINTS[c.decade]} font-mono text-[9px] tracking-[0.2em] uppercase text-[rgba(var(--d),0.95)] px-2 py-0.5 border border-[rgba(var(--d),0.4)] rounded-sm`}>
               {c.decade}
             </span>

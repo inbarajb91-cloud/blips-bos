@@ -25,12 +25,25 @@
   /* Phase 6.5 tonal ladder — 5-stop alpha scale on off-white.
      Use these in new components to get a calibrated hierarchy.
      t1 = body · t2 = strong · t3 = mid · t4 = secondary · t5 = tertiary.
-     All stops clear WCAG AA on ink background. */
+     All stops clear WCAG AA on ink background.
+
+     Phase 9.5 polish — alphas bumped on t2/t3/t4/t5 (Inba flagged he
+     was at slider 100% but body content still read as too dim; the
+     slider only governs chrome via .chrome-brightness, not body
+     content, so a baseline bump was the only thing that touches
+     workspace prose / labels / mono captions). The new ladder still
+     descends in roughly the same proportions, just shifted brighter:
+        old → new
+        t2: 0.82 → 0.92  (strong body — paragraphs, edit form text)
+        t3: 0.68 → 0.80  (mid — italic concept / source quotes)
+        t4: 0.50 → 0.62  (secondary — muted mono labels)
+        t5: 0.34 → 0.48  (tertiary — captions, inline meta)
+     t1 stays at #f2efe9 (pure cream) — already maxed. */
   --color-t1: #f2efe9;
-  --color-t2: rgba(242, 239, 233, 0.82);
-  --color-t3: rgba(242, 239, 233, 0.68);
-  --color-t4: rgba(242, 239, 233, 0.50);
-  --color-t5: rgba(242, 239, 233, 0.34);
+  --color-t2: rgba(242, 239, 233, 0.92);
+  --color-t3: rgba(242, 239, 233, 0.80);
+  --color-t4: rgba(242, 239, 233, 0.62);
+  --color-t5: rgba(242, 239, 233, 0.48);
 
   /* Divider weights — three stops. Use in place of deep-divider for hierarchy.
      rule-1 = hairline (row separators) · rule-2 = standard (section edges) · rule-3 = heavy (emphasized boundary). */
@@ -131,10 +144,24 @@
   .breathe-ring {
     animation: breathe-ring 2.8s ease-in-out infinite;
   }
+  /* Drift-right — Phase 9.5 polish. Used on the approved-card
+     "→ FURNACE" pill arrow to draw the eye toward the click target.
+     Same 2.8s breathing cadence as the dot pulse so the workspace's
+     motion language stays in sync (one rhythm across all live
+     elements, not five different timings). 4px nudge is small enough
+     to feel like breath rather than UI demand. */
+  .drift-right {
+    animation: drift-right 2.8s ease-in-out infinite;
+  }
   .chrome-brightness {
     opacity: var(--legibility, 1);
     transition: opacity 180ms ease-out;
   }
+}
+
+@keyframes drift-right {
+  0%, 100% { transform: translateX(0); }
+  50% { transform: translateX(4px); }
 }
 
 /* Legibility default — overridden at runtime by BrightnessSlider */
@@ -180,13 +207,13 @@
   */
   --cream:              242, 239, 233;
   --cream-on-decade:    rgb(var(--cream));
-  --cream-muted:        rgba(var(--cream), 0.85);
-  --cream-text-muted:   rgba(var(--cream), 0.7);
-  --cream-text-faint:   rgba(var(--cream), 0.55);
-  --cream-border:       rgba(var(--cream), 0.85);
-  --cream-border-soft:  rgba(var(--cream), 0.4);
-  --cream-border-faint: rgba(var(--cream), 0.25);
-  --cream-fill-soft:    rgba(var(--cream), 0.08);
+  --cream-muted:        rgba(var(--cream), 0.92);
+  --cream-text-muted:   rgba(var(--cream), 0.82);
+  --cream-text-faint:   rgba(var(--cream), 0.68);
+  --cream-border:       rgba(var(--cream), 0.92);
+  --cream-border-soft:  rgba(var(--cream), 0.48);
+  --cream-border-faint: rgba(var(--cream), 0.32);
+  --cream-fill-soft:    rgba(var(--cream), 0.10);
 }
 .t-instant   { --d: var(--d-instant); }
 .t-batch     { --d: var(--d-batch); }

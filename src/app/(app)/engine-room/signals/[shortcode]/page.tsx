@@ -8,11 +8,14 @@ import {
 } from "@/db";
 import { getCurrentUserWithOrg } from "@/lib/auth/current-user";
 import { WorkspaceFrame } from "@/components/engine-room/workspace/workspace-frame";
+import type { DecadeKey } from "@/components/engine-room/workspace/manifestation-selector";
 import type { ParentStokerData } from "@/components/engine-room/workspace/renderers/stoker-resonance";
 import type {
   ParentReference,
   ManifestationOwnDetail,
+  ManifestationSummary,
 } from "@/components/engine-room/workspace/renderers/types";
+import type { SignalStatus } from "@/components/engine-room/stage-pips";
 
 export const metadata = { title: "Signal · Engine Room · BLIPS BOS" };
 
@@ -58,6 +61,41 @@ export default async function SignalPage({
 
   if (!signal) notFound();
 
+  // Phase 9.5 — manifestation children no longer have their own
+  // workspace. When the URL points at a child, redirect to the parent's
+  // workspace with `?m=DECADE` so the manifestation selector lands on
+  // the right child. This keeps old links from chat / email / Linear /
+  // Bridge-decade-chips flowing to the right place after the Phase 9.5
+  // architecture flip — and avoids ghost workspaces with broken header
+  // strips for users who bookmarked a child URL.
+  //
+  // The redirect is server-side via next/navigation.redirect (throws,
+  // never returns), so anything below this point only runs for parent
+  // signals + raw signals that aren't post-STOKER children. Composite
+  // (parent_signal_id, org_id) FK guarantees the parent is in the same
+  // org, so we can trust signal.parentSignalId to be a valid same-org id.
+  if (signal.parentSignalId !== null && signal.manifestationDecade) {
+    const [parent] = await db
+      .select({ shortcode: signalsTable.shortcode })
+      .from(signalsTable)
+      .where(
+        and(
+          eq(signalsTable.id, signal.parentSignalId),
+          eq(signalsTable.orgId, user.orgId),
+        ),
+      )
+      .limit(1);
+    if (parent) {
+      redirect(
+        `/engine-room/signals/${encodeURIComponent(parent.shortcode)}?m=${signal.manifestationDecade}`,
+      );
+    }
+    // If we somehow reach here (parent not found within same org —
+    // should be impossible given the composite FK), fall through to the
+    // raw-signal render path. The workspace will render the child
+    // directly as a fallback rather than showing a 404.
+  }
+
   // Load the parent collection if the signal came from one (older signals
   // pre-Phase-6.5 may not have a collection_id — nullable FK).
   let collection: typeof collectionsTable.$inferSelect | null = null;
@@ -94,6 +132,14 @@ export default async function SignalPage({
       "DISMISSED",
     ].includes(signal.status);
 
+  // Phase 9.5 — manifestation summaries for the parent workspace's
+  // ManifestationSelector + post-STOKER renderers. We compute these
+  // alongside stokerData so a single children query feeds both views.
+  // Empty array on pre-STOKER signals and on manifestation children
+  // (children get an empty list because they redirect to parent in 9.5i,
+  // but we leave the empty default here so the prop contract is total).
+  let manifestations: ManifestationSummary[] = [];
+
   if (stokerHasRun) {
     const [parentStokerOutputRow] = await db
       .select({
@@ -113,12 +159,17 @@ export default async function SignalPage({
       .limit(1);
 
     if (parentStokerOutputRow) {
+      // Phase 9.5 — `workingTitle` added so the ManifestationSelector
+      // dropdown can show "Title · Shortcode" per option. The same
+      // children fetch feeds both stokerData (parent's STOKER 3-card
+      // grid) and manifestations (selector + post-STOKER renderers).
       const children = await db
         .select({
           id: signalsTable.id,
           shortcode: signalsTable.shortcode,
           status: signalsTable.status,
           manifestationDecade: signalsTable.manifestationDecade,
+          workingTitle: signalsTable.workingTitle,
         })
         .from(signalsTable)
         .where(
@@ -142,6 +193,7 @@ export default async function SignalPage({
       const childOutputs = childIds.length
         ? await db
             .select({
+              id: agentOutputsTable.id,
               signalId: agentOutputsTable.signalId,
               status: agentOutputsTable.status,
               content: agentOutputsTable.content,
@@ -191,6 +243,40 @@ export default async function SignalPage({
           };
         }),
       };
+
+      // Phase 9.5 — same children, transformed into the shape the
+      // ManifestationSelector + post-STOKER renderers consume. The
+      // STOKER agent_outputs row is exposed as `outputs.STOKER` so
+      // future renderers can read `activeManifestation.outputs.FURNACE`
+      // once Phase 10 ships, without changing the schema. STOKER_DISMISSED
+      // is filtered at the SELECTOR level (not here), so the renderers
+      // can still surface a dismissed-state banner if needed.
+      // CR pass 1 on PR #10: stokerDetail was previously populated
+      // with sentinel values (`id: ""`, `revisionsCount: 0`) which
+      // made the shared ManifestationOwnDetail contract lie. The
+      // detail row's real id and revisions count are now threaded
+      // through from the agent_outputs row.
+      manifestations = children.map((c) => {
+        const out = outputBySignal.get(c.id);
+        const stokerDetail: ManifestationOwnDetail | null = out
+          ? {
+              id: out.id,
+              content: (out.content ?? {}) as Record<string, unknown>,
+              status: out.status,
+              revisionsCount: Array.isArray(out.revisions)
+                ? out.revisions.length
+                : 0,
+            }
+          : null;
+        return {
+          id: c.id,
+          shortcode: c.shortcode,
+          title: c.workingTitle,
+          decade: c.manifestationDecade as DecadeKey,
+          status: c.status as SignalStatus,
+          outputs: { STOKER: stokerDetail },
+        };
+      });
     }
   }
 
@@ -257,6 +343,7 @@ export default async function SignalPage({
       stokerData={stokerData}
       parentRef={parentRef}
       manifestationDetail={manifestationDetail}
+      manifestations={manifestations}
     />
   );
 }

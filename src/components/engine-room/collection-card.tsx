@@ -2,6 +2,7 @@
 
 import { useState, useTransition, useRef, useEffect } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   approveCandidate,
   dismissCandidate,
@@ -10,6 +11,7 @@ import {
   archiveCollection,
   runCollectionNow,
 } from "@/lib/actions/collections";
+import { POST_STOKER_VISIBLE } from "@/components/engine-room/workspace/manifestation-selector";
 import { StagePips, type SignalStatus } from "./stage-pips";
 
 /**
@@ -476,7 +478,11 @@ export function CollectionCard({
                 </SectionLabel>
                 <div className="flex flex-col">
                   {signals.map((s) => (
-                    <SignalRow key={s.id} s={s} />
+                    <SignalRow
+                      key={s.id}
+                      s={s}
+                      parentHref={`/engine-room/signals/${encodeURIComponent(s.shortcode)}`}
+                    />
                   ))}
                 </div>
               </section>
@@ -628,78 +634,118 @@ function CandidateRow({ c }: { c: CandidateForCard }) {
 
 /** Pipeline signal row — stage pips + Open → workspace link.
  *
- * Phase 9E: when the signal has manifestation children (top-level
- * parents), render each child as a nested row beneath. Children carry
- * a decade chip (RCK/RCL/RCD) and visually indent. Connector glyphs
- * (├─ / └─) make the parent-child relationship obvious.
+ * Phase 9.5: Bridge flatten. Manifestation children no longer render
+ * as their own nested rows under the parent. Instead, the parent row
+ * gains an inline decade-chip cluster (RCK / RCL / RCD) showing
+ * which non-dismissed manifestations exist. Each chip is a separate
+ * navigation target — clicking a chip jumps to the parent workspace
+ * with `?m=DECADE` so the manifestation selector pre-selects that
+ * decade. Clicking the rest of the row falls through to the parent's
+ * default workspace (no `?m=`, first-visible manifestation chosen by
+ * the workspace itself).
  *
- * Children themselves never have manifestations (STOKER doesn't
- * recurse), so this nesting is single-level only.
+ * Why flat: with the nested-row layout, a single STOKER fan-out
+ * tripled a collection's visible row count, and post-STOKER each
+ * child evolved its own pipeline status — making the Bridge feel
+ * crowded with secondary information. The decade chips carry the
+ * "this signal has 3 manifestations" weight in a fraction of the
+ * vertical space, with full per-manifestation detail one click away.
+ *
+ * Implementation note: the chips sit inside the same <Link> that wraps
+ * the row, but call e.preventDefault() + e.stopPropagation() in their
+ * own onClick to navigate via router.push. This is the cleanest way
+ * to keep the row a real <a> (so middle-click / cmd-click open in new
+ * tab still work) while letting the chips override navigation when
+ * clicked directly.
  */
 function SignalRow({
   s,
-  isManifestation = false,
-  isLastSibling = false,
+  parentHref,
 }: {
   s: SignalForCard;
-  /** True when this row is itself a nested manifestation child. */
-  isManifestation?: boolean;
-  /** Whether this child is the last in its parent's manifestation
-   *  list — drives the └─ vs ├─ connector glyph. Ignored on parents. */
-  isLastSibling?: boolean;
+  /** Resolved href for the parent navigation — same shortcode, no
+   *  `?m=`. Computed once by the caller and reused for both the row
+   *  Link and the chip onClick handlers below. */
+  parentHref: string;
 }) {
   const age = formatAge(s.updatedAt);
-  const hasManifestations = s.manifestations.length > 0;
-
-  const connector = isManifestation ? (isLastSibling ? "└─" : "├─") : null;
-
-  const decadeTintClass =
-    s.decade === "RCK"
-      ? "t-rck"
-      : s.decade === "RCL"
-        ? "t-rcl"
-        : s.decade === "RCD"
-          ? "t-rcd"
-          : "";
+  // Phase 9.5 polish — chip cluster only surfaces manifestations that
+  // have moved past STOKER (advancing through FURNACE+). Pending
+  // children (still IN_STOKER) belong on the parent's STOKER tab
+  // for per-card review, not on the Bridge — surfacing them here
+  // would invite a click that lands on FURNACE with nothing to show
+  // (selector falls back to first visible, URL ?m= is ignored). Same
+  // POST_STOKER_VISIBLE set the workspace's ManifestationSelector
+  // uses, kept in sync via the shared export.
+  const activeManifestations = s.manifestations.filter((m) =>
+    POST_STOKER_VISIBLE.has(m.status),
+  );
+  const hasManifestations = activeManifestations.length > 0;
+  const router = useRouter();
 
   return (
-    <>
+    // Outer wrapper carries the row hover + border. Two <Link>s span
+    // the non-chip cells via `display: contents` so they participate
+    // in the parent grid as normal children but don't introduce
+    // nested-anchor markup. Chip cluster sits as a sibling between
+    // them — the Bridge's previous Link-wrapping-buttons layout was
+    // invalid HTML (interactive content inside <a>) and broke
+    // keyboard/AT navigation; CR pass on PR #10 caught it.
+    //
+    // Two-Link split (vs. one Link covering everything via more
+    // exotic display tricks): keeps each Link's purpose clear, both
+    // resolve to the same parentHref, and keyboard tab order stays
+    // intuitive (shortcode/title → chips → stage-pips/label/age).
+    // The outer <div> carries the row's hover+focus-within state so
+    // the row still highlights as a single unit.
+    <div className="grid grid-cols-[72px_1fr_auto_auto_auto_auto] gap-4 items-center py-3.5 border-b border-rule-1 last:border-b-0 hover:bg-wash-1 focus-within:bg-wash-1 transition-colors rounded-sm">
       <Link
-        href={`/engine-room/signals/${encodeURIComponent(s.shortcode)}`}
-        className={`${decadeTintClass} grid grid-cols-[72px_1fr_auto_auto_auto] gap-4 items-center py-3.5 border-b border-rule-1 last:border-b-0 hover:bg-wash-1 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2 rounded-sm ${isManifestation ? "pl-9 relative" : ""}`}
+        href={parentHref}
+        className="contents focus-visible:outline-none"
       >
-        {isManifestation && connector && (
-          <span
-            aria-hidden
-            className="absolute left-3 top-3.5 font-mono text-[11px] text-t5"
-          >
-            {connector}
-          </span>
-        )}
-        <span
-          className={`font-display font-bold text-[11.5px] tracking-[0.16em] flex items-center gap-2 ${
-            isManifestation ? "text-t2" : "text-t1"
-          }`}
-        >
+        <span className="font-display font-bold text-[11.5px] tracking-[0.16em] text-t1">
           {s.shortcode}
-          {s.decade && (
-            <span className="font-mono text-[9px] tracking-[0.18em] uppercase text-[rgba(var(--d),0.95)] px-1.5 py-0.5 border border-[rgba(var(--d),0.4)] rounded-sm">
-              {s.decade}
-            </span>
-          )}
         </span>
         <div className="min-w-0 flex flex-col gap-0.5">
-          <span
-            className={`font-display font-medium ${isManifestation ? "text-[13px] text-t3" : "text-[14.5px] text-t1"} -tracking-[0.005em] leading-[1.3]`}
-          >
+          <span className="font-display font-medium text-[14.5px] text-t1 -tracking-[0.005em] leading-[1.3]">
             {s.workingTitle}
           </span>
-          {s.concept && !isManifestation && (
+          {s.concept && (
             <span className="font-editorial italic text-[14px] leading-[1.5] text-t3 line-clamp-1">
               {s.concept}
             </span>
           )}
         </div>
+      </Link>
+      {/* Decade chip cluster — Phase 9.5. One chip per non-dismissed
+          manifestation child, color-coded by decade. Empty div when
+          the parent has no manifestations so the grid track collapses
+          cleanly. CR pass on PR #10: chips moved out of the Link to
+          fix nested-anchor invalid markup; using m.id (not m.decade)
+          as the React key, and skipping any child whose decade is
+          missing (defensive — DB CHECK keeps decades present). */}
+      <div className="flex items-center gap-1.5">
+        {hasManifestations &&
+          activeManifestations
+            .filter((m): m is typeof m & { decade: "RCK" | "RCL" | "RCD" } =>
+              m.decade != null,
+            )
+            .map((m) => (
+              <DecadeChip
+                key={m.id}
+                decade={m.decade}
+                onClick={() => {
+                  router.push(
+                    `/engine-room/signals/${encodeURIComponent(s.shortcode)}?m=${m.decade}`,
+                  );
+                }}
+              />
+            ))}
+      </div>
+      <Link
+        href={parentHref}
+        className="contents focus-visible:outline-none"
+      >
         <StagePips status={s.status} size={5} showLabel={false} />
         <span className="font-mono text-[10.5px] tracking-[0.18em] uppercase text-t2 whitespace-nowrap">
           {currentStageLabel(s.status)}
@@ -708,19 +754,41 @@ function SignalRow({
           {age} &rsaquo;
         </span>
       </Link>
-      {/* Nested manifestation children rendered immediately after the
-          parent row. Each child gets isLastSibling=true on the final
-          row so the connector flips from ├─ to └─. */}
-      {hasManifestations &&
-        s.manifestations.map((m, i) => (
-          <SignalRow
-            key={m.id}
-            s={m}
-            isManifestation={true}
-            isLastSibling={i === s.manifestations.length - 1}
-          />
-        ))}
-    </>
+    </div>
+  );
+}
+
+/**
+ * Decade chip — small colored pill rendered in the parent row for each
+ * non-dismissed manifestation. Renders as a sibling of the row's
+ * <Link>s (CR pass on PR #10 — was previously nested inside the Link
+ * which was invalid HTML and broke keyboard/AT navigation). Plain
+ * <button> with onClick for navigation; no preventDefault dance
+ * needed now that it's not under an anchor.
+ */
+function DecadeChip({
+  decade,
+  onClick,
+}: {
+  decade: "RCK" | "RCL" | "RCD";
+  onClick: () => void;
+}) {
+  const tint =
+    decade === "RCK" ? "t-rck" : decade === "RCL" ? "t-rcl" : "t-rcd";
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={`Open the ${decade} manifestation`}
+      className={`${tint} font-mono text-[9px] tracking-[0.18em] uppercase font-medium px-1.5 py-0.5 border rounded-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2`}
+      style={{
+        color: "rgba(var(--d), 0.95)",
+        borderColor: "rgba(var(--d), 0.4)",
+        background: "rgba(var(--d), 0.06)",
+      }}
+    >
+      {decade}
+    </button>
   );
 }
 
