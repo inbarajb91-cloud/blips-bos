@@ -285,6 +285,16 @@ export const signals = pgTable(
     uniqueIndex("signals_parent_decade_unique_idx")
       .on(t.parentSignalId, t.manifestationDecade)
       .where(sql`${t.parentSignalId} IS NOT NULL`),
+    // Phase 9 — parent_signal_id ↔ manifestation_decade co-nullability.
+    // The (both null OR both set) CHECK already shipped in migration
+    // 0006 but wasn't declared in Drizzle. Cloud CR pass 2 on PR #8
+    // caught the introspection drift between SQL and schema.ts. Adding
+    // the declaration so they match.
+    check(
+      "signals_manifestation_consistency",
+      sql`(${t.parentSignalId} IS NULL AND ${t.manifestationDecade} IS NULL)
+          OR (${t.parentSignalId} IS NOT NULL AND ${t.manifestationDecade} IS NOT NULL)`,
+    ),
     // Phase 9 — manifestation_decade ↔ source consistency. Cloud CR
     // on PR #8 caught that the (parent_signal_id ↔ manifestation_decade)
     // CHECK alone didn't tie either column to the source enum. A

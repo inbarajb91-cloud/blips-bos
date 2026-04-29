@@ -283,6 +283,21 @@ export const stokerProcess = inngest.createFunction(
       ? "STOKER_REFUSED"
       : "FANNED_OUT";
 
+    // Defensive observability: the skill's Zod schema enforces
+    // `refused iff all scores < 50` via refine(), but if that
+    // invariant ever drifts (skill rewrite, schema regression, etc.)
+    // we could end up at FANNED_OUT with zero children — a silent
+    // data integrity issue. Surface it in the Inngest function logs
+    // so the dashboard catches it. Cloud CR pass 2 on PR #8.
+    if (
+      finalParentStatus === "FANNED_OUT" &&
+      childCreations.length === 0
+    ) {
+      console.warn(
+        `[STOKER] Invariant violation: refused=false but no children created for parent ${parent.shortcode} (${parent.id}). Proceeding with FANNED_OUT status — review the skill output for malformed decades array.`,
+      );
+    }
+
     await step.run("flip-parent-terminal", async () => {
       await db
         .update(signalsTable)

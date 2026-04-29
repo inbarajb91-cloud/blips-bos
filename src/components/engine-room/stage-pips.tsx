@@ -77,10 +77,15 @@ function progressFor(status: SignalStatus): StageProgress {
       // label communicates the terminal nature.
       return { completedThrough: 2, activeStage: null, label: "FANNED OUT" };
     case "STOKER_REFUSED":
-      // BUNKER complete + STOKER ran-but-refused. One pip filled (BUNKER
-      // succeeded), no breathing pip, explicit refusal label.
+      // BUNKER complete + STOKER ran-and-refused. STOKER itself
+      // succeeded (produced an agent_outputs row with refused=true);
+      // refusal is a valid STOKER outcome, not a failure. So both pips
+      // light up to reflect "this signal completed STOKER's review."
+      // This matches workspace/types.ts computeStageStates which marks
+      // BUNKER + STOKER as 'completed' for this status. Cloud CR pass
+      // 2 on PR #8 caught the disagreement between the two renderers.
       return {
-        completedThrough: 1,
+        completedThrough: 2,
         activeStage: null,
         label: "STOKER REFUSED",
       };
