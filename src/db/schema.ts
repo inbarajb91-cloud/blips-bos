@@ -23,6 +23,7 @@ import {
   numeric,
   uniqueIndex,
   index,
+  check,
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
@@ -284,6 +285,21 @@ export const signals = pgTable(
     uniqueIndex("signals_parent_decade_unique_idx")
       .on(t.parentSignalId, t.manifestationDecade)
       .where(sql`${t.parentSignalId} IS NOT NULL`),
+    // Phase 9 — manifestation_decade ↔ source consistency. Cloud CR
+    // on PR #8 caught that the (parent_signal_id ↔ manifestation_decade)
+    // CHECK alone didn't tie either column to the source enum. A
+    // malformed insert could have manifestation_decade SET but source
+    // != 'stoker_manifestation' — drifting out of the analytics
+    // guarantee the new source value is meant to provide. Bidirectional
+    // CHECK so the schema enforces what the application code maintains.
+    // SQL-side already shipped via migration 0008; this Drizzle
+    // declaration mirrors it so introspection + schema.ts as
+    // documentation stay aligned.
+    check(
+      "signals_manifestation_source_consistency",
+      sql`(${t.manifestationDecade} IS NOT NULL AND ${t.source} = 'stoker_manifestation')
+          OR (${t.manifestationDecade} IS NULL AND ${t.source} <> 'stoker_manifestation')`,
+    ),
   ],
 );
 
