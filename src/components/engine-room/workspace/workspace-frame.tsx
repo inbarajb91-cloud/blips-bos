@@ -265,6 +265,21 @@ export function WorkspaceFrame({
     writeDecadeToUrl(decade);
   }
 
+  /**
+   * Phase 9.5 polish — atomic "switch to this manifestation on this
+   * stage" handler. Used by the STOKER renderer's approved-card
+   * top-right arrow + the FanOutPreview pills, both of which need to
+   * advance the workspace from "STOKER's 3-card grid" to "FURNACE on
+   * the chosen manifestation" in one click. Wraps both state flips
+   * (activeTab + activeDecade) so renderers don't have to know the
+   * shape of workspace state — they just say "open RCL in FURNACE"
+   * and we route accordingly.
+   */
+  function switchToManifestation(decade: DecadeKey, stage: AgentKey) {
+    setActiveTab(stage);
+    selectManifestation(decade);
+  }
+
   // Active manifestation object — the one the post-STOKER renderers
   // operate on. Null when:
   //   - parent has no manifestations yet (pre-STOKER)
@@ -659,6 +674,7 @@ export function WorkspaceFrame({
               activeManifestation={
                 POST_STOKER_STAGES.has(activeTab) ? activeManifestation : null
               }
+              onSwitchToManifestation={switchToManifestation}
             />
           </div>
         </main>

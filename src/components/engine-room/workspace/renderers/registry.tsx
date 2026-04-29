@@ -73,6 +73,20 @@ export interface RendererProps {
    * null with an empty state, not crash.
    */
   activeManifestation: ManifestationSummary | null;
+  /**
+   * Phase 9.5 polish — workspace-level callback for "switch the
+   * canvas to this manifestation, on this stage". Used by the STOKER
+   * renderer's per-card "open" arrow + the fan-out preview pills,
+   * which both need to (a) flip the active manifestation and (b)
+   * advance the active stage tab in one click. Renderers that don't
+   * need to drive workspace navigation should ignore this prop.
+   * The function flips both the activeTab state and the active
+   * manifestation URL param atomically.
+   */
+  onSwitchToManifestation?: (
+    decade: ManifestationSummary["decade"],
+    stage: AgentKey,
+  ) => void;
 }
 
 export type Renderer = React.ComponentType<RendererProps>;
