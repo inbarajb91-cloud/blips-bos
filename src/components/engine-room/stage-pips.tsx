@@ -84,11 +84,19 @@ function progressFor(status: SignalStatus): StageProgress {
         activeStage: null,
         label: "STOKER REFUSED",
       };
+    // CR pass on PR #8 — collection-card.tsx's currentStageLabel uses
+    // human-readable display labels for these states ("COLD" / "FAILED").
+    // The previous `label: status` would surface raw enum values
+    // (COLD_BUNKER / EXTRACTION_FAILED) anywhere StagePips renders the
+    // label. Mirror collection-card's mapping so the visual stays
+    // consistent across both renderers.
     case "COLD_BUNKER":
+      return { completedThrough: 0, activeStage: null, label: "COLD" };
     case "DISMISSED":
+      return { completedThrough: 0, activeStage: null, label: "DISMISSED" };
     case "BUNKER_FAILED":
     case "EXTRACTION_FAILED":
-      return { completedThrough: 0, activeStage: null, label: status };
+      return { completedThrough: 0, activeStage: null, label: "FAILED" };
     default:
       return { completedThrough: 0, activeStage: 0, label: "BUNKER" };
   }

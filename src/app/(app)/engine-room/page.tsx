@@ -226,7 +226,18 @@ export default async function BridgePage() {
                       source: m.source,
                       status: m.status,
                       updatedAt: m.updatedAt,
-                      decade: m.manifestationDecade as "RCK" | "RCL" | "RCD",
+                      // CR nitpick on PR #8 — DB CHECK guarantees
+                      // children always have manifestationDecade SET,
+                      // but TypeScript doesn't see SQL constraints.
+                      // Defensive ?? "RCK" so a malformed row never
+                      // crashes the renderer; the fallback shouldn't
+                      // ever trigger in practice.
+                      decade:
+                        (m.manifestationDecade as
+                          | "RCK"
+                          | "RCL"
+                          | "RCD"
+                          | null) ?? "RCK",
                       manifestations: [], // children don't have grandchildren
                     }),
                   ),

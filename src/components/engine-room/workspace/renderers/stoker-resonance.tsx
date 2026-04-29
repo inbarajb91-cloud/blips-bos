@@ -151,9 +151,15 @@ export function StokerResonance({
     stokerData.children.map((c) => [c.decade, c]),
   );
 
+  // CR nitpick on PR #8 — the `content` cast trusts the JSONB shape;
+  // a malformed agent_outputs row could have content.decades undefined
+  // or non-array. Defensive guard so the renderer falls back to empty
+  // decade rows rather than crashing on `.find` undefined.
+  const decadesArray = Array.isArray(content.decades) ? content.decades : [];
+
   // Decades pulled in canonical order so the grid is stable
   const orderedDecades: DecadeRow[] = DECADE_ORDER.map((d) => {
-    const row = content.decades?.find((r) => r.decade === d);
+    const row = decadesArray.find((r) => r.decade === d);
     return (
       row ?? {
         decade: d,
@@ -212,7 +218,7 @@ export function StokerResonance({
           </div>
 
           {/* Fan-out preview strip */}
-          <FanOutPreview children={stokerData.children} />
+          <FanOutPreview manifestations={stokerData.children} />
         </>
       )}
     </div>
@@ -559,6 +565,11 @@ function EditForm({
 
   return (
     <div className="flex flex-col gap-3">
+      {/* CR nitpick on PR #8 — `<label htmlFor>` already provides the
+          accessible name; aria-label is redundant and (per WCAG) when
+          both are set the aria-label wins which can desync the visible
+          label from the announced one. Keeping the htmlFor association
+          alone. Same fix applied to the textareas below. */}
       <label className="sr-only" htmlFor={`stoker-edit-hook-${child.id}`}>
         Framing hook
       </label>
@@ -566,7 +577,6 @@ function EditForm({
         id={`stoker-edit-hook-${child.id}`}
         value={framingHook}
         onChange={(e) => setFramingHook(e.target.value)}
-        aria-label="Framing hook"
         className="bg-black/30 border border-rule-2 text-t1 font-display text-[17px] font-medium -tracking-[0.005em] px-3 py-2.5 rounded-sm outline-none focus:border-[rgba(var(--d),0.7)]"
       />
       <div>
@@ -581,7 +591,6 @@ function EditForm({
           value={tensionAxis}
           onChange={(e) => setTensionAxis(e.target.value)}
           rows={2}
-          aria-label="Tension axis"
           className="w-full bg-black/30 border border-rule-2 text-t1 font-mono text-[12px] px-3 py-2.5 rounded-sm outline-none focus:border-[rgba(var(--d),0.7)] resize-vertical"
         />
       </div>
@@ -597,7 +606,6 @@ function EditForm({
           value={narrativeAngle}
           onChange={(e) => setNarrativeAngle(e.target.value)}
           rows={4}
-          aria-label="Narrative angle"
           className="w-full bg-black/30 border border-rule-2 text-t1 font-editorial text-[14px] leading-relaxed px-3 py-2.5 rounded-sm outline-none focus:border-[rgba(var(--d),0.7)] resize-vertical"
         />
       </div>
@@ -694,12 +702,20 @@ function RefusalBanner({
 // ─── Fan-out preview ──────────────────────────────────────────────
 
 function FanOutPreview({
-  children,
+  manifestations,
 }: {
-  children: ParentStokerData["children"];
+  // CR on PR #8: prop was named `children` which collides with React's
+  // special children semantics + ESLint react/no-children-prop. The
+  // values are data (filtered, mapped), not React nodes — `manifestations`
+  // is the correct semantic name.
+  manifestations: ParentStokerData["children"];
 }) {
-  const advancing = children.filter((c) => c.outputStatus === "APPROVED");
-  const dismissed = children.filter((c) => c.outputStatus === "REJECTED");
+  const advancing = manifestations.filter(
+    (c) => c.outputStatus === "APPROVED",
+  );
+  const dismissed = manifestations.filter(
+    (c) => c.outputStatus === "REJECTED",
+  );
 
   if (advancing.length === 0 && dismissed.length === 0) {
     return (

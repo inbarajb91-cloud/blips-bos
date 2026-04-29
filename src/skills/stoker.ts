@@ -154,6 +154,26 @@ const outputSchema = z
     decades: z
       .array(decadeRowSchema)
       .length(3)
+      .superRefine((rows, ctx) => {
+        // Cloud CR on PR #8 — `length(3)` alone accepts [RCK, RCK, RCD]
+        // or out-of-order outputs. The downstream UI assumes the
+        // canonical order [RCK, RCL, RCD], and the new (parent_signal_id,
+        // manifestation_decade) UNIQUE INDEX would reject duplicate
+        // decades at insert time but only AFTER STOKER's structured
+        // output has been accepted as valid. Rejecting at the schema
+        // boundary surfaces malformed model output as a clean validation
+        // error before the orchestrator tries to fan out.
+        const expected = ["RCK", "RCL", "RCD"] as const;
+        expected.forEach((decade, i) => {
+          if (rows[i]?.decade !== decade) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: [i, "decade"],
+              message: `decades[${i}].decade must be ${decade} (canonical order).`,
+            });
+          }
+        });
+      })
       .describe(
         "Exactly 3 entries — one per decade (RCK, RCL, RCD), in that order. Even decades you decline to manifest must be present (with manifestation: null).",
       ),

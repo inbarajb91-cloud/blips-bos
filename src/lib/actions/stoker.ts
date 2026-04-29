@@ -315,6 +315,15 @@ export async function dismissStokerManifestation(opts: {
       .update(agentOutputs)
       .set({
         status: "REJECTED",
+        // CR nitpick on PR #8 — `approvedBy` / `approvedAt` are
+        // semantically misleading on a dismissal path; they're really
+        // "decidedBy" / "decidedAt" (audit fields for any terminal
+        // action, not just approvals). Schema already shipped with
+        // these names; the right longer-term fix is renaming them in a
+        // schema migration. For now, repurposing them for both approve
+        // and dismiss keeps the audit trail coherent in one place. If
+        // the rename happens, both this and approveStokerManifestation
+        // change in parallel.
         approvedBy: user.authId,
         approvedAt: new Date(),
       })

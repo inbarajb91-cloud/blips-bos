@@ -106,6 +106,26 @@ export function computeStageStates(
       states.BUNKER = "completed";
       // Later stages stay 'future' (dormant) — no active stage.
       break;
+    // Phase 9 — STOKER terminal states for parent signals. Cloud CR
+    // pass on PR #8 caught these missing branches: parent signals at
+    // FANNED_OUT or STOKER_REFUSED would fall through to default with
+    // every stage 'future', so the workspace agent-tab strip would
+    // incorrectly highlight BUNKER as active.
+    case "FANNED_OUT":
+      // STOKER fanned the parent out into 1-3 manifestation children.
+      // Parent's pipeline ends here — both stages complete, no active.
+      states.BUNKER = "completed";
+      states.STOKER = "completed";
+      // FURNACE+ stay 'future' (dormant) — children live their own
+      // pipeline lives, parent's job is done.
+      break;
+    case "STOKER_REFUSED":
+      // BUNKER landed cleanly, STOKER ran but produced no manifestation.
+      // No active stage — founder may force-add via ORC's tool (Phase 9G)
+      // OR dismiss the parent. STOKER tab shows the refusal banner.
+      states.BUNKER = "completed";
+      states.STOKER = "completed";
+      break;
   }
 
   return states;

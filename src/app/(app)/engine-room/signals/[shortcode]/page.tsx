@@ -129,12 +129,15 @@ export default async function SignalPage({
         );
 
       // Map children's STOKER agent_outputs by signal id.
-      // CR pass on PR #8 caught this query was missing the
-      // inArray(signalId, childIds) filter — without it, this would
-      // fetch every STOKER agent_outputs row in the entire org and then
-      // map a tiny subset by id. Real performance + correctness bug at
-      // scale. With the filter, we only fetch this parent's children's
-      // outputs.
+      // CR pass 1 on PR #8 caught the missing inArray filter (was
+      // fetching every STOKER row in the org). CR pass 2 caught the
+      // determinism issue: a child can eventually have multiple STOKER
+      // outputs (e.g., post-Phase-9G restart_stoker creates a new
+      // journey + new agent_outputs rows). Without an explicit order,
+      // `new Map(rows.map(...))` keeps whichever row Postgres returned
+      // last per signal_id — non-deterministic. Adding an ORDER BY
+      // signal_id, created_at ASC and iterating to keep the EARLIEST
+      // (canonical first STOKER run) per signal makes this stable.
       const childIds = children.map((c) => c.id);
       const childOutputs = childIds.length
         ? await db
@@ -143,6 +146,7 @@ export default async function SignalPage({
               status: agentOutputsTable.status,
               content: agentOutputsTable.content,
               revisions: agentOutputsTable.revisions,
+              createdAt: agentOutputsTable.createdAt,
             })
             .from(agentOutputsTable)
             .where(
@@ -151,10 +155,20 @@ export default async function SignalPage({
                 inArray(agentOutputsTable.signalId, childIds),
               ),
             )
+            .orderBy(
+              asc(agentOutputsTable.signalId),
+              asc(agentOutputsTable.createdAt),
+            )
         : [];
-      const outputBySignal = new Map(
-        childOutputs.map((o) => [o.signalId, o]),
-      );
+      // Iterate forward and `Map.set` only on first sighting per signal
+      // — earliest createdAt wins because the rows come out in
+      // (signalId ASC, createdAt ASC) order.
+      const outputBySignal = new Map<string, (typeof childOutputs)[number]>();
+      for (const o of childOutputs) {
+        if (!outputBySignal.has(o.signalId)) {
+          outputBySignal.set(o.signalId, o);
+        }
+      }
 
       stokerData = {
         parentOutput: {

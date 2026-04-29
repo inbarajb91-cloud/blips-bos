@@ -7,14 +7,16 @@ import {
   knowledgeDocuments,
   signalStatus,
 } from "@/db";
-
-type SignalStatus = (typeof signalStatus.enumValues)[number];
 import { runSkill } from "@/lib/orc/orchestrator";
 import { resolveShortcode } from "@/lib/signals/resolve-shortcode";
 import { createInitialJourney } from "@/lib/orc/journey";
 import "@/skills"; // ensure skill registry is populated
 import type { StokerInput, StokerOutput } from "@/skills/stoker";
 
+// CR nitpick on PR #8: type aliases sit AFTER the import block so
+// there's a single contiguous import section. Prior shape had a type
+// declaration sandwiched between import groups.
+type SignalStatus = (typeof signalStatus.enumValues)[number];
 type DecadeKey = "RCK" | "RCL" | "RCD";
 
 /**
