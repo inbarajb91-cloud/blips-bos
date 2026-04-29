@@ -37,14 +37,16 @@ export type { DecadeKey };
  *     activeManifestation prop, popover closes, focus returns to
  *     trigger.
  *
- * Dismissed filtering: `status === "DISMISSED"` is the only excluded
- * state. Pre-STOKER and intermediate states (IN_STOKER waiting for
- * founder review, IN_FURNACE running through the next stage, etc.)
- * are all surfaced — the user reviews IN_STOKER cards on the parent's
- * STOKER tab grid, but might still want to peek at a card-in-flight's
- * data. Dismissal is the only "this manifestation is gone" terminal
- * state for a child signal in the current pipeline (Phase 9-11);
- * later phases may add more.
+ * Visibility filter: `POST_STOKER_VISIBLE` positive list (IN_FURNACE
+ * through DOCKED). Pending children (IN_STOKER, awaiting per-card
+ * approval on the parent's STOKER tab) and DISMISSED children are
+ * both hidden from the dropdown — pending has nothing for FURNACE+
+ * renderers to render, dismissed is gone. Founder feedback April 30
+ * caught the original "exclude DISMISSED only" filter leaking pending
+ * manifestations into the dropdown ("I only approved 1 but the
+ * dropdown shows 2"). Positive-list also fails safer than negative-
+ * listing — any future intermediate SignalStatus value defaults to
+ * hidden rather than leaks until someone notices.
  *
  * Decade colors come from var(--d), scoped via the .t-rck/.t-rcl/.t-rcd
  * classes on the rendered elements. The same classes globals.css
