@@ -503,42 +503,51 @@ function DecadeCard({
         ...(cardBorder ? { borderColor: cardBorder } : {}),
       }}
     >
-      {/* Approved → FURNACE strip — Phase 9.5 polish round 3.
-          Pricing-card-style top banner. Spans the card's full width
-          (no inner padding), rests above the content with its own
-          horizontal padding, doesn't compress the head/hook/angle
-          below. The whole strip is the click target — text on the
-          left ("APPROVED · ADVANCE TO FURNACE"), drifting arrow on
-          the right (drift-right keyframe in globals.css, same 2.8s
-          cadence as everywhere else in the workspace).
-
-          Replaces the bottom ApprovedBadge entirely on cards that
-          carry the strip — surface duplication of "Approved · advancing
-          to FURNACE" in two places confused the read. The bottom badge
-          still lives in the JSX below and renders ONLY when there's
-          no workspace callback (read-only audit surface).
-          overflow-hidden on the card outer is critical: the strip
-          extends to the card's outer border, but without overflow-
-          hidden the rounded-md corners would clip the strip's
-          background unevenly. */}
-      {showFurnaceStrip && (
+      {/* Card content — flex-1 lets content fill remaining card
+          height so mt-auto on bottom badges still pushes them to the
+          card bottom. p-22 padding wraps the head + body. */}
+      <div className="p-[22px] flex flex-col flex-1">
+      {/* Card head — Phase 9.5 polish round 4.
+          Round 3 stacked the FURNACE banner ABOVE the head row,
+          which pushed the score + hook + tension + angle of approved
+          cards down by ~38px relative to unapproved siblings. Founder
+          flagged the visual scan break (scores 65 / 90 / 85 no longer
+          aligned across the 3-card row).
+          Round 4 *absorbs* the banner into the head row. On approved
+          cards, the head row IS the banner — full-bleed via
+          -mx-[22px] -mt-[22px], cream lift background, cream bottom
+          border, contains decade label + age on the left, score +
+          drift-right arrow + FURNACE label on the right. The head row
+          stays at the same y-coordinate as siblings' heads. The
+          bottom-rule below the head is suppressed when the banner is
+          showing (the banner's own bottom border replaces it).
+          "ADVANCE TO" prefix dropped — "FURNACE →" is the call to
+          action; "APPROVED" is implicit from the banner styling. No
+          repeated FURNACE label in one row. */}
+      {showFurnaceStrip ? (
         <button
           type="button"
           onClick={() => onSwitchToManifestation(child.decade, "FURNACE")}
           aria-label={`Open ${child.decade} manifestation in FURNACE`}
-          className="px-[22px] py-2.5 flex items-center justify-between gap-3 transition-colors hover:bg-[rgba(242,239,233,0.18)] focus-visible:outline-none focus-visible:bg-[rgba(242,239,233,0.18)] cursor-pointer"
+          className="-mx-[22px] -mt-[22px] mb-3 px-[22px] py-3 flex items-center justify-between gap-4 transition-colors hover:bg-[rgba(242,239,233,0.18)] focus-visible:outline-none focus-visible:bg-[rgba(242,239,233,0.18)] cursor-pointer"
           style={{
             color: "rgba(242,239,233,0.95)",
             background: "rgba(242,239,233,0.10)",
             borderBottom: "1px solid rgba(242,239,233,0.30)",
           }}
         >
-          <span className="font-mono text-[9.5px] tracking-[0.22em] uppercase">
-            Approved · advance to FURNACE
+          <span className="font-display font-bold text-[13px] tracking-[0.16em] text-t1 shrink-0">
+            {row.decade}
+            <span
+              className="font-mono text-[9px] tracking-[0.2em] ml-2"
+              style={{ color: "rgba(242,239,233,0.65)" }}
+            >
+              {DECADE_AGES[row.decade]}
+            </span>
           </span>
-          <span className="flex items-center gap-2">
-            <span className="font-mono text-[9.5px] tracking-[0.22em] uppercase">
-              FURNACE
+          <span className="flex items-center gap-3 shrink-0">
+            <span className="font-display font-bold text-[22px] -tracking-[0.01em] tabular-nums text-t1">
+              {row.resonanceScore}
             </span>
             <span
               aria-hidden
@@ -551,52 +560,49 @@ function DecadeCard({
             >
               →
             </span>
+            <span className="font-mono text-[9.5px] tracking-[0.22em] uppercase">
+              FURNACE
+            </span>
           </span>
         </button>
+      ) : (
+        <div className="flex items-center justify-between mb-3">
+          <span className="font-display font-bold text-[13px] tracking-[0.16em] text-t1">
+            {row.decade}
+            <span
+              className="font-mono text-[9px] tracking-[0.2em] ml-2"
+              style={{ color: "rgba(242,239,233,0.65)" }}
+            >
+              {DECADE_AGES[row.decade]}
+            </span>
+          </span>
+          <span
+            className="font-display font-bold text-[22px] -tracking-[0.01em] tabular-nums text-t1"
+            style={{
+              color:
+                band === "weak" ? "rgba(242,239,233,0.5)" : "rgb(242,239,233)",
+            }}
+          >
+            {row.resonanceScore}
+          </span>
+        </div>
       )}
 
-      {/* Card content — wraps everything below the strip in the card's
-          original 22px padding. Phase 9.5 round 3 split this from the
-          outer so the strip can full-bleed to the card edges. flex-1
-          lets the content fill remaining card height (so mt-auto on
-          bottom badges still pushes them to the card bottom). */}
-      <div className="p-[22px] flex flex-col flex-1">
-      {/* Card head: decade label + score. Text on filled cards is
-          cream (--t1) — high contrast against the saturated decade
-          background. Score gets a slightly muted off-white so it
-          recedes into the decade color rather than competing. */}
-      <div className="flex items-center justify-between mb-3">
-        <span className="font-display font-bold text-[13px] tracking-[0.16em] text-t1">
-          {row.decade}
-          <span
-            className="font-mono text-[9px] tracking-[0.2em] ml-2"
-            style={{ color: "rgba(242,239,233,0.65)" }}
-          >
-            {DECADE_AGES[row.decade]}
-          </span>
-        </span>
-        <span
-          className="font-display font-bold text-[22px] -tracking-[0.01em] tabular-nums text-t1"
-          style={{
-            color:
-              band === "weak" ? "rgba(242,239,233,0.5)" : "rgb(242,239,233)",
-          }}
-        >
-          {row.resonanceScore}
-        </span>
-      </div>
-
       {/* Decade rule — cream-tinted divider on the saturated cards
-          rather than the decade color (it's already the background). */}
-      <div
-        className="h-px mb-3"
-        style={{
-          background:
-            band === "weak"
-              ? "var(--color-rule-1)"
-              : "rgba(242,239,233,0.25)",
-        }}
-      />
+          rather than the decade color (it's already the background).
+          Suppressed when the FURNACE banner is showing — the banner's
+          own bottom border already separates head from body. */}
+      {!showFurnaceStrip && (
+        <div
+          className="h-px mb-3"
+          style={{
+            background:
+              band === "weak"
+                ? "var(--color-rule-1)"
+                : "rgba(242,239,233,0.25)",
+          }}
+        />
+      )}
 
       {editing && child ? (
         <EditForm
