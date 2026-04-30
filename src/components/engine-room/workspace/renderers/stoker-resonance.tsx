@@ -494,8 +494,24 @@ function DecadeCard({
     child && childStatus === "APPROVED" && onSwitchToManifestation;
 
   return (
+    // Outer card — `relative` so the hanging FURNACE tag (when
+    // approved) can absolute-position relative to it. Phase 9.5 polish
+    // round 5 (founder vision: "hanging out icon starting from the end
+    // of the score and coming out of it -- so its clear like its been
+    // tagged"): the FURNACE pill no longer lives inside the card or
+    // above it. It hangs OFF the card's right edge at the score's
+    // vertical level, like a sticker tagged onto the card. The head
+    // row stays clean and aligned with siblings; the tag adds a
+    // visual "this card has been actioned" affordance without taking
+    // any internal real estate.
+    //
+    // overflow-visible (default; was `overflow-hidden` in rounds 3-4)
+    // because the tag extends past the card's bounding box. Inner
+    // border/rounded treatment still works fine without overflow
+    // clipping — there's no negative-margin content that would
+    // visibly bleed past the rounded corners now.
     <div
-      className={`${tint} rounded-md border overflow-hidden ${
+      className={`${tint} relative rounded-md border ${
         band === "weak" ? "border-rule-2" : ""
       } flex flex-col`}
       style={{
@@ -503,106 +519,99 @@ function DecadeCard({
         ...(cardBorder ? { borderColor: cardBorder } : {}),
       }}
     >
-      {/* Card content — flex-1 lets content fill remaining card
-          height so mt-auto on bottom badges still pushes them to the
-          card bottom. p-22 padding wraps the head + body. */}
-      <div className="p-[22px] flex flex-col flex-1">
-      {/* Card head — Phase 9.5 polish round 4.
-          Round 3 stacked the FURNACE banner ABOVE the head row,
-          which pushed the score + hook + tension + angle of approved
-          cards down by ~38px relative to unapproved siblings. Founder
-          flagged the visual scan break (scores 65 / 90 / 85 no longer
-          aligned across the 3-card row).
-          Round 4 *absorbs* the banner into the head row. On approved
-          cards, the head row IS the banner — full-bleed via
-          -mx-[22px] -mt-[22px], cream lift background, cream bottom
-          border, contains decade label + age on the left, score +
-          drift-right arrow + FURNACE label on the right. The head row
-          stays at the same y-coordinate as siblings' heads. The
-          bottom-rule below the head is suppressed when the banner is
-          showing (the banner's own bottom border replaces it).
-          "ADVANCE TO" prefix dropped — "FURNACE →" is the call to
-          action; "APPROVED" is implicit from the banner styling. No
-          repeated FURNACE label in one row. */}
-      {showFurnaceStrip ? (
+      {/* Hanging FURNACE tag — round 5. Absolute-positioned relative
+          to the outer card so it can extend past the right edge.
+          `top` aligned to the score row's vertical center (p-[22px]
+          + ~10px to land on the score baseline). `left: 100%` butts
+          the tag's left edge against the card's right edge with no
+          gap, so the tag visually attaches to the card.
+          Border treatment: top + right + bottom + no left, with
+          rounded right-side corners only — reads as a label/sticker
+          fused to the card. Drift-right arrow + FURNACE label on
+          the same 2.8s breathing cadence used everywhere else.
+          The tag overlaps the gap between cards (and slightly into
+          the next card's left edge on middle cards). On the
+          rightmost card it extends into the workspace canvas
+          padding. Acceptable — the design's intent is the
+          "hanging tag" affordance, and this is the most truthful
+          implementation of that. */}
+      {showFurnaceStrip && (
         <button
           type="button"
           onClick={() => onSwitchToManifestation(child.decade, "FURNACE")}
           aria-label={`Open ${child.decade} manifestation in FURNACE`}
-          className="-mx-[22px] -mt-[22px] mb-3 px-[22px] py-3 flex items-center justify-between gap-4 transition-colors hover:bg-[rgba(242,239,233,0.18)] focus-visible:outline-none focus-visible:bg-[rgba(242,239,233,0.18)] cursor-pointer"
+          className="absolute z-10 flex items-center gap-2 px-3 py-1.5 transition-colors hover:bg-[rgba(242,239,233,0.20)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[rgba(242,239,233,0.6)] cursor-pointer"
           style={{
+            top: "26px", // aligned to score row vertical center
+            left: "100%", // butts against card right edge
             color: "rgba(242,239,233,0.95)",
-            background: "rgba(242,239,233,0.10)",
-            borderBottom: "1px solid rgba(242,239,233,0.30)",
+            background: "rgba(242,239,233,0.12)",
+            borderTop: "1px solid rgba(242,239,233,0.40)",
+            borderRight: "1px solid rgba(242,239,233,0.40)",
+            borderBottom: "1px solid rgba(242,239,233,0.40)",
+            borderLeft: "none",
+            borderTopRightRadius: "4px",
+            borderBottomRightRadius: "4px",
           }}
         >
-          <span className="font-display font-bold text-[13px] tracking-[0.16em] text-t1 shrink-0">
-            {row.decade}
-            <span
-              className="font-mono text-[9px] tracking-[0.2em] ml-2"
-              style={{ color: "rgba(242,239,233,0.65)" }}
-            >
-              {DECADE_AGES[row.decade]}
-            </span>
-          </span>
-          <span className="flex items-center gap-3 shrink-0">
-            <span className="font-display font-bold text-[22px] -tracking-[0.01em] tabular-nums text-t1">
-              {row.resonanceScore}
-            </span>
-            <span
-              aria-hidden
-              className="drift-right"
-              style={{
-                lineHeight: 1,
-                fontSize: "12px",
-                display: "inline-block",
-              }}
-            >
-              →
-            </span>
-            <span className="font-mono text-[9.5px] tracking-[0.22em] uppercase">
-              FURNACE
-            </span>
-          </span>
-        </button>
-      ) : (
-        <div className="flex items-center justify-between mb-3">
-          <span className="font-display font-bold text-[13px] tracking-[0.16em] text-t1">
-            {row.decade}
-            <span
-              className="font-mono text-[9px] tracking-[0.2em] ml-2"
-              style={{ color: "rgba(242,239,233,0.65)" }}
-            >
-              {DECADE_AGES[row.decade]}
-            </span>
-          </span>
           <span
-            className="font-display font-bold text-[22px] -tracking-[0.01em] tabular-nums text-t1"
+            aria-hidden
+            className="drift-right"
             style={{
-              color:
-                band === "weak" ? "rgba(242,239,233,0.5)" : "rgb(242,239,233)",
+              lineHeight: 1,
+              fontSize: "12px",
+              display: "inline-block",
             }}
           >
-            {row.resonanceScore}
+            →
           </span>
-        </div>
+          <span className="font-mono text-[9.5px] tracking-[0.22em] uppercase">
+            FURNACE
+          </span>
+        </button>
       )}
 
-      {/* Decade rule — cream-tinted divider on the saturated cards
-          rather than the decade color (it's already the background).
-          Suppressed when the FURNACE banner is showing — the banner's
-          own bottom border already separates head from body. */}
-      {!showFurnaceStrip && (
-        <div
-          className="h-px mb-3"
+      {/* Card content — flex-1 lets content fill remaining card
+          height so mt-auto on bottom badges still pushes them to the
+          card bottom. p-22 padding wraps the head + body. */}
+      <div className="p-[22px] flex flex-col flex-1">
+      {/* Card head: decade label + score. Round 5 — head row is the
+          same shape on both approved and unapproved cards (the
+          approval state lives entirely in the hanging tag above).
+          This restores horizontal alignment of head rows + scores
+          across the 3-card grid that round 3's stacked banner broke. */}
+      <div className="flex items-center justify-between mb-3">
+        <span className="font-display font-bold text-[13px] tracking-[0.16em] text-t1">
+          {row.decade}
+          <span
+            className="font-mono text-[9px] tracking-[0.2em] ml-2"
+            style={{ color: "rgba(242,239,233,0.65)" }}
+          >
+            {DECADE_AGES[row.decade]}
+          </span>
+        </span>
+        <span
+          className="font-display font-bold text-[22px] -tracking-[0.01em] tabular-nums text-t1"
           style={{
-            background:
-              band === "weak"
-                ? "var(--color-rule-1)"
-                : "rgba(242,239,233,0.25)",
+            color:
+              band === "weak" ? "rgba(242,239,233,0.5)" : "rgb(242,239,233)",
           }}
-        />
-      )}
+        >
+          {row.resonanceScore}
+        </span>
+      </div>
+
+      {/* Decade rule — cream-tinted divider on the saturated cards
+          rather than the decade color (it's already the background). */}
+      <div
+        className="h-px mb-3"
+        style={{
+          background:
+            band === "weak"
+              ? "var(--color-rule-1)"
+              : "rgba(242,239,233,0.25)",
+        }}
+      />
 
       {editing && child ? (
         <EditForm
