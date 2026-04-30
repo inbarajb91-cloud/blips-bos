@@ -382,7 +382,14 @@ export function StokerResonance({
       ) : (
         <>
           {/* Card grid */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-[18px] mb-8">
+          {/* Card grid — round 6 adds mt-12 (48px) of breathing
+              room above so the up-hanging FURNACE tag on approved
+              cards has somewhere to live without overlapping the
+              Overall rationale section above. The gap is uniform
+              across the row whether or not any cards are approved
+              — keeps the visual rhythm consistent (rationale →
+              breathing space → card row). */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-[18px] mb-8 mt-12">
             {orderedDecades.map((row) => {
               const child = childByDecade.get(row.decade) ?? null;
               return (
@@ -519,39 +526,33 @@ function DecadeCard({
         ...(cardBorder ? { borderColor: cardBorder } : {}),
       }}
     >
-      {/* Hanging FURNACE tag — round 5. Absolute-positioned relative
-          to the outer card so it can extend past the right edge.
-          `top` aligned to the score row's vertical center (p-[22px]
-          + ~10px to land on the score baseline). `left: 100%` butts
-          the tag's left edge against the card's right edge with no
-          gap, so the tag visually attaches to the card.
-          Border treatment: top + right + bottom + no left, with
-          rounded right-side corners only — reads as a label/sticker
-          fused to the card. Drift-right arrow + FURNACE label on
-          the same 2.8s breathing cadence used everywhere else.
-          The tag overlaps the gap between cards (and slightly into
-          the next card's left edge on middle cards). On the
-          rightmost card it extends into the workspace canvas
-          padding. Acceptable — the design's intent is the
-          "hanging tag" affordance, and this is the most truthful
-          implementation of that. */}
+      {/* FURNACE tag, hanging UP — round 6. Absolute-positioned
+          relative to the outer card so it can extend ABOVE the
+          card's top edge into the gap between the Overall rationale
+          section and the card grid (mt-12 on the grid wrapper
+          carves out 48px of breathing room for this).
+          Round 5's right-extending hang ran the tag into the next
+          card's content area on middle cards (and into the canvas
+          padding on the rightmost card). Up-hanging avoids both:
+          the gap above the cards is ~uniform across the grid row,
+          all 3 cards' tags would sit in the same horizontal band
+          if all 3 were approved.
+          `right: 22px` aligns the tag's right edge with the score's
+          right edge (both at card-right minus the p-22 padding).
+          Reads as "this score has been tagged" — visually anchored
+          to the score column, just lifted up out of the card. */}
       {showFurnaceStrip && (
         <button
           type="button"
           onClick={() => onSwitchToManifestation(child.decade, "FURNACE")}
           aria-label={`Open ${child.decade} manifestation in FURNACE`}
-          className="absolute z-10 flex items-center gap-2 px-3 py-1.5 transition-colors hover:bg-[rgba(242,239,233,0.20)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[rgba(242,239,233,0.6)] cursor-pointer"
+          className="absolute z-10 flex items-center gap-2 px-3 py-1.5 rounded-md transition-colors hover:bg-[rgba(242,239,233,0.22)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[rgba(242,239,233,0.6)] cursor-pointer"
           style={{
-            top: "26px", // aligned to score row vertical center
-            left: "100%", // butts against card right edge
+            top: "-38px", // hangs 38px above the card top
+            right: "22px", // tag's right edge aligns with score's right edge
             color: "rgba(242,239,233,0.95)",
             background: "rgba(242,239,233,0.12)",
-            borderTop: "1px solid rgba(242,239,233,0.40)",
-            borderRight: "1px solid rgba(242,239,233,0.40)",
-            borderBottom: "1px solid rgba(242,239,233,0.40)",
-            borderLeft: "none",
-            borderTopRightRadius: "4px",
-            borderBottomRightRadius: "4px",
+            border: "1px solid rgba(242,239,233,0.45)",
           }}
         >
           <span
