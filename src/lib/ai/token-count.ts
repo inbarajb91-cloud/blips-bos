@@ -100,13 +100,29 @@ export function estimatePromptTokens(
  * overBudgetAfterSummarization. Per-bucket caps are soft and don't
  * have to sum to ≤ total_input — only the actual per-turn total does,
  * and steady-state usage is well under 3k.
+ *
+ * 2026-04-30: bumped system_brand_signal 2500 → 3500 + total_input
+ * 5000 → 6500. Phase 9G added the 4 STOKER manifestation tools
+ * (edit_manifestation_framing, dismiss_manifestation, add_manifestation,
+ * restart_stoker) + propose_action chip tool + the hallucination-
+ * guard NEVER rules + the bullet-default RESPONSE FORMAT rule —
+ * collectively ~900 new tokens of prompt content the system prefix
+ * has to carry. With system_brand_signal at 2500, the prefix
+ * occasionally pushed past the cap and triggered overBudgetAfter-
+ * Summarization (which can't recover, since the system prefix is
+ * non-compressible). Bumped to 3500 (~700 token headroom over the
+ * current ~2800-token prefix); total_input bumped to 6500 to keep
+ * the verbatim + summary + current_message room intact.
+ *
+ * Cost impact: at Gemini Flash $0.0003/1k tokens, +1500 tokens of
+ * worst-case headroom is +$0.00045/turn. Negligible. Caps stay soft.
  */
 export const ORC_BUDGET = {
-  system_brand_signal: 2_500,
+  system_brand_signal: 3_500,
   summary: 800,
   verbatim: 2_000,
   current_message: 500,
-  total_input: 5_000,
+  total_input: 6_500,
   total_output_target: 1_000,
 } as const;
 
