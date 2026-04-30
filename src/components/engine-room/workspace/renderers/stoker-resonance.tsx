@@ -385,9 +385,16 @@ export function StokerResonance({
           {/* Card grid — round 7 bumps to mt-14 (56px) so the
               attached FURNACE tag (34px tall, sits above the card
               with bottom touching the card top) has ~22px of
-              breathing room above it. Without enough mt the tag
-              would crowd the Overall rationale section above. */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-[18px] mb-8 mt-14">
+              breathing room above it.
+              CR pass on round 7: on grid-cols-1 (mobile / narrow
+              viewports), cards stack vertically with the row gap.
+              An 18px row gap leaves no room for the 34px tag of a
+              lower approved card — it would overlap into the card
+              above. Vertical gap bumped to 52px on small screens
+              (covers the 34px tag + ~18px breathing); desktop md+
+              keeps the original 18px since cards sit side-by-side
+              there and the tag-above-card stays in its own column. */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-x-[18px] gap-y-[52px] md:gap-[18px] mb-8 mt-14">
             {orderedDecades.map((row) => {
               const child = childByDecade.get(row.decade) ?? null;
               return (
