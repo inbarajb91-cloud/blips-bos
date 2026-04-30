@@ -382,7 +382,19 @@ export function StokerResonance({
       ) : (
         <>
           {/* Card grid */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-[18px] mb-8">
+          {/* Card grid — round 7 bumps to mt-14 (56px) so the
+              attached FURNACE tag (34px tall, sits above the card
+              with bottom touching the card top) has ~22px of
+              breathing room above it.
+              CR pass on round 7: on grid-cols-1 (mobile / narrow
+              viewports), cards stack vertically with the row gap.
+              An 18px row gap leaves no room for the 34px tag of a
+              lower approved card — it would overlap into the card
+              above. Vertical gap bumped to 52px on small screens
+              (covers the 34px tag + ~18px breathing); desktop md+
+              keeps the original 18px since cards sit side-by-side
+              there and the tag-above-card stays in its own column. */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-x-[18px] gap-y-[52px] md:gap-[18px] mb-8 mt-14">
             {orderedDecades.map((row) => {
               const child = childByDecade.get(row.decade) ?? null;
               return (
@@ -494,8 +506,24 @@ function DecadeCard({
     child && childStatus === "APPROVED" && onSwitchToManifestation;
 
   return (
+    // Outer card — `relative` so the hanging FURNACE tag (when
+    // approved) can absolute-position relative to it. Phase 9.5 polish
+    // round 5 (founder vision: "hanging out icon starting from the end
+    // of the score and coming out of it -- so its clear like its been
+    // tagged"): the FURNACE pill no longer lives inside the card or
+    // above it. It hangs OFF the card's right edge at the score's
+    // vertical level, like a sticker tagged onto the card. The head
+    // row stays clean and aligned with siblings; the tag adds a
+    // visual "this card has been actioned" affordance without taking
+    // any internal real estate.
+    //
+    // overflow-visible (default; was `overflow-hidden` in rounds 3-4)
+    // because the tag extends past the card's bounding box. Inner
+    // border/rounded treatment still works fine without overflow
+    // clipping — there's no negative-margin content that would
+    // visibly bleed past the rounded corners now.
     <div
-      className={`${tint} rounded-md border overflow-hidden ${
+      className={`${tint} relative rounded-md border ${
         band === "weak" ? "border-rule-2" : ""
       } flex flex-col`}
       style={{
@@ -503,68 +531,60 @@ function DecadeCard({
         ...(cardBorder ? { borderColor: cardBorder } : {}),
       }}
     >
-      {/* Approved → FURNACE strip — Phase 9.5 polish round 3.
-          Pricing-card-style top banner. Spans the card's full width
-          (no inner padding), rests above the content with its own
-          horizontal padding, doesn't compress the head/hook/angle
-          below. The whole strip is the click target — text on the
-          left ("APPROVED · ADVANCE TO FURNACE"), drifting arrow on
-          the right (drift-right keyframe in globals.css, same 2.8s
-          cadence as everywhere else in the workspace).
-
-          Replaces the bottom ApprovedBadge entirely on cards that
-          carry the strip — surface duplication of "Approved · advancing
-          to FURNACE" in two places confused the read. The bottom badge
-          still lives in the JSX below and renders ONLY when there's
-          no workspace callback (read-only audit surface).
-          overflow-hidden on the card outer is critical: the strip
-          extends to the card's outer border, but without overflow-
-          hidden the rounded-md corners would clip the strip's
-          background unevenly. */}
+      {/* FURNACE tag, attached to top — round 7 (founder vision):
+          full card width, sits flush on top of the card with no gap,
+          rounded top corners only (bottom corners square so they
+          merge into the card's top edge). Reads as a hat / banner /
+          envelope-flap stuck onto the card. Tag border color matches
+          the card's so the seam at the bottom looks continuous; no
+          bottom border on the tag (the card's top border IS the
+          divider). Tag content is right-aligned (drift arrow +
+          FURNACE label) so it sits in the same vertical column as
+          the score below it — the eye reads action → score down the
+          right side of the unit. The mt-14 (56px) above the grid
+          carves the breathing room the tag lives in. */}
       {showFurnaceStrip && (
         <button
           type="button"
           onClick={() => onSwitchToManifestation(child.decade, "FURNACE")}
           aria-label={`Open ${child.decade} manifestation in FURNACE`}
-          className="px-[22px] py-2.5 flex items-center justify-between gap-3 transition-colors hover:bg-[rgba(242,239,233,0.18)] focus-visible:outline-none focus-visible:bg-[rgba(242,239,233,0.18)] cursor-pointer"
+          className="absolute z-10 left-0 right-0 flex items-center justify-end gap-2 px-[22px] py-2.5 rounded-t-md transition-colors hover:bg-[rgba(242,239,233,0.22)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[rgba(242,239,233,0.6)] cursor-pointer"
           style={{
+            top: "-34px", // tag bottom touches card top (height ~34px = py-2.5 20px + content 14px)
             color: "rgba(242,239,233,0.95)",
             background: "rgba(242,239,233,0.10)",
-            borderBottom: "1px solid rgba(242,239,233,0.30)",
+            borderTop: `1px solid ${cardBorder ?? "rgba(242,239,233,0.40)"}`,
+            borderLeft: `1px solid ${cardBorder ?? "rgba(242,239,233,0.40)"}`,
+            borderRight: `1px solid ${cardBorder ?? "rgba(242,239,233,0.40)"}`,
+            borderBottom: "none",
           }}
         >
-          <span className="font-mono text-[9.5px] tracking-[0.22em] uppercase">
-            Approved · advance to FURNACE
+          <span
+            aria-hidden
+            className="drift-right"
+            style={{
+              lineHeight: 1,
+              fontSize: "12px",
+              display: "inline-block",
+            }}
+          >
+            →
           </span>
-          <span className="flex items-center gap-2">
-            <span className="font-mono text-[9.5px] tracking-[0.22em] uppercase">
-              FURNACE
-            </span>
-            <span
-              aria-hidden
-              className="drift-right"
-              style={{
-                lineHeight: 1,
-                fontSize: "12px",
-                display: "inline-block",
-              }}
-            >
-              →
-            </span>
+          <span className="font-mono text-[9.5px] tracking-[0.22em] uppercase">
+            FURNACE
           </span>
         </button>
       )}
 
-      {/* Card content — wraps everything below the strip in the card's
-          original 22px padding. Phase 9.5 round 3 split this from the
-          outer so the strip can full-bleed to the card edges. flex-1
-          lets the content fill remaining card height (so mt-auto on
-          bottom badges still pushes them to the card bottom). */}
+      {/* Card content — flex-1 lets content fill remaining card
+          height so mt-auto on bottom badges still pushes them to the
+          card bottom. p-22 padding wraps the head + body. */}
       <div className="p-[22px] flex flex-col flex-1">
-      {/* Card head: decade label + score. Text on filled cards is
-          cream (--t1) — high contrast against the saturated decade
-          background. Score gets a slightly muted off-white so it
-          recedes into the decade color rather than competing. */}
+      {/* Card head: decade label + score. Round 5 — head row is the
+          same shape on both approved and unapproved cards (the
+          approval state lives entirely in the hanging tag above).
+          This restores horizontal alignment of head rows + scores
+          across the 3-card grid that round 3's stacked banner broke. */}
       <div className="flex items-center justify-between mb-3">
         <span className="font-display font-bold text-[13px] tracking-[0.16em] text-t1">
           {row.decade}
