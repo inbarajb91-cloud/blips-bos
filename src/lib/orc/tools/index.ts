@@ -7,6 +7,10 @@ import { flagConcern } from "./flag-concern";
 import { requestReRun } from "./request-re-run";
 import { dismissSignal } from "./dismiss";
 import { approveAndAdvance } from "./approve-and-advance";
+import { editManifestationFraming } from "./edit-manifestation-framing";
+import { dismissManifestation } from "./dismiss-manifestation";
+import { addManifestation } from "./add-manifestation";
+import { restartStoker } from "./restart-stoker";
 
 /**
  * Build the ORC tool set, bound to a specific turn's context.
@@ -46,6 +50,14 @@ export function buildOrcTools(ctx: OrcToolContext) {
     ...(ctx.allowMutation && {
       approve_and_advance: approveAndAdvance(ctx),
       dismiss: dismissSignal(ctx),
+      // Phase 9G — STOKER mutation tools. Same allowMutation gate as
+      // approve/dismiss; the route-level regex includes the new
+      // intent stems (edit, restart, force, add, etc.) so these only
+      // bind when the user said one of those words in this turn.
+      edit_manifestation_framing: editManifestationFraming(ctx),
+      dismiss_manifestation: dismissManifestation(ctx),
+      add_manifestation: addManifestation(ctx),
+      restart_stoker: restartStoker(ctx),
     }),
   };
 }
