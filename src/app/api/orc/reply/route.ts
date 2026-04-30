@@ -316,7 +316,7 @@ export async function POST(req: Request) {
   // task to the docs") only make tools AVAILABLE — they don't fire
   // anything on their own. ORC still has to choose to call.
   const allowMutation =
-    /\b(approv|dismiss|reject|advanc|ship|edit|modif|chang|restart|re-?run|forc|add)/i.test(
+    /\b(approv|dismiss|reject|advanc|ship|edit|modif|chang|restart|re-?run|forc|add|decline|cancel)/i.test(
       userMessage,
     );
 

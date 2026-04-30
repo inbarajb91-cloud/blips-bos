@@ -152,9 +152,18 @@ export function OrcPanel({
     };
   }, [signal.id]);
 
-  function handleSend() {
+  /**
+   * Send a message to ORC. By default uses the live input value;
+   * pass `overrideText` to send arbitrary text (used by the action-
+   * chip Approve / Decline buttons in Phase 9G — they fire synthetic
+   * "Approved." / "Decline." messages so ORC's mutation gate fires
+   * + the correct tool gets called on the next turn). When override
+   * is used, the input value is NOT cleared (the user might be mid-
+   * draft typing something else).
+   */
+  function handleSend(overrideText?: string) {
     if (!conversationId) return;
-    const text = inputValue.trim();
+    const text = (overrideText ?? inputValue).trim();
     if (text.length === 0) return;
 
     setSendError(null);
@@ -197,7 +206,12 @@ export function OrcPanel({
     const prevMessages = messages ?? [];
     const withPlaceholder = [...prevMessages, optimisticUser, streamingOrc];
     setMessages(withPlaceholder);
-    setInputValue("");
+    // Only clear the typed-input field when the user actually submitted
+    // from the input. For synthetic sends (chip Approve / Decline) the
+    // input may hold an unrelated draft we shouldn't wipe.
+    if (overrideText === undefined) {
+      setInputValue("");
+    }
 
     // Index of the streaming ORC message — we'll mutate this slot
     // in the messages array as tokens arrive.
@@ -408,9 +422,17 @@ export function OrcPanel({
   }
 
   return (
-    <div className="flex flex-col">
+    // Phase 9G fix (April 30) — ORC panel chat-app layout: head pins
+    // top, input pins bottom, thread scrolls between them. The aside
+    // wrapper in WorkspaceFrame caps overall height + provides
+    // overflow-hidden, so the thread's own overflow-y-auto handles
+    // long conversations without dragging the page. h-full + min-h-0
+    // is the standard flex chat-shell pattern: the inner flex-1
+    // section can scroll because min-h-0 lets it shrink below its
+    // content height (the default min-h: auto would prevent that).
+    <div className="flex flex-col h-full min-h-0">
       {/* Head */}
-      <div className="p-[22px_24px_16px] border-b border-rule-1 flex items-start justify-between gap-3">
+      <div className="p-[22px_24px_16px] border-b border-rule-1 flex items-start justify-between gap-3 shrink-0">
         <div className="min-w-0">
           <div className="font-display font-semibold text-[12.5px] tracking-[0.22em] uppercase text-t1 flex items-center gap-[10px] mb-1">
             <span
@@ -442,8 +464,12 @@ export function OrcPanel({
         </button>
       </div>
 
-      {/* Thread */}
-      <div className="p-[18px_24px] flex flex-col gap-[22px]">
+      {/* Thread — flex-1 + overflow-y-auto + min-h-0 so it scrolls
+          within the panel's max-height without dragging the page.
+          The min-h-0 is critical: without it, flex children default
+          to min-h: auto which means the thread can't shrink below
+          its content height, defeating the overflow-y. */}
+      <div className="flex-1 overflow-y-auto min-h-0 p-[18px_24px] flex flex-col gap-[22px]">
         {loadError ? (
           <div
             role="alert"
@@ -472,6 +498,8 @@ export function OrcPanel({
                 key={`${msg.ts}-${i}`}
                 msg={msg}
                 chips={clientId ? chipsByClientId[clientId] : undefined}
+                onChipApprove={() => handleSend("Approved.")}
+                onChipDecline={() => handleSend("Decline.")}
               />
             );
           })
@@ -479,12 +507,12 @@ export function OrcPanel({
       </div>
 
       {/* Input row */}
-      <div className="p-[16px_24px] border-t border-rule-1 flex flex-col gap-2">
+      <div className="p-[16px_24px] border-t border-rule-1 flex flex-col gap-2 shrink-0">
         <div className="flex items-center gap-3">
           <OrcInput
             value={inputValue}
             onChange={setInputValue}
-            onSend={handleSend}
+            onSend={() => handleSend()}
             disabled={conversationId === null || pending || !canSend}
             signalShortcode={signal.shortcode}
             disabledReason={
@@ -515,7 +543,7 @@ export function OrcPanel({
           />
           <button
             type="button"
-            onClick={handleSend}
+            onClick={() => handleSend()}
             disabled={
               conversationId === null ||
               pending ||
@@ -561,12 +589,18 @@ export function OrcPanel({
   );
 }
 
-/** Chip payload — emitted by ORC's flag_concern / request_re_run tools. */
+/** Chip payload — emitted by ORC's flag_concern / request_re_run /
+ *  propose_action tools. propose_action chips render with
+ *  Approve / Decline / Say-something-else buttons; the others are
+ *  informational. */
 export interface OrcChip {
-  type: "flag_concern" | "request_re_run";
+  type: "flag_concern" | "request_re_run" | "propose_action";
   reason: string;
   /** Only set for request_re_run chips. */
   stage?: string;
+  /** Only set for propose_action chips — short summary above the
+   *  buttons. */
+  summary?: string;
 }
 
 /**
@@ -641,23 +675,28 @@ async function consumeStream(
           chunk.output &&
           typeof chunk.output === "object"
         ) {
-          // Our chip tools return { type: "flag_concern", reason }
-          // or { type: "request_re_run", stage, reason }. Anything
-          // else (data tool output, side-effect confirmation) we
-          // ignore — text-delta carries the reply copy for those.
+          // Our chip tools return { type: "flag_concern", reason },
+          // { type: "request_re_run", stage, reason }, or
+          // { type: "propose_action", summary, reason }. Anything else
+          // (data tool output, side-effect confirmation) we ignore —
+          // text-delta carries the reply copy for those.
           const out = chunk.output as {
             type?: string;
             reason?: string;
             stage?: string;
+            summary?: string;
           };
           if (
-            (out.type === "flag_concern" || out.type === "request_re_run") &&
+            (out.type === "flag_concern" ||
+              out.type === "request_re_run" ||
+              out.type === "propose_action") &&
             typeof out.reason === "string"
           ) {
             onChip?.({
               type: out.type,
               reason: out.reason,
               stage: out.stage,
+              summary: out.summary,
             });
           }
         } else if (chunk.type === "error") {
@@ -673,9 +712,17 @@ async function consumeStream(
 function MessageRow({
   msg,
   chips,
+  onChipApprove,
+  onChipDecline,
 }: {
   msg: Message & { streaming?: boolean };
   chips?: OrcChip[];
+  /** Phase 9G — fires when the user clicks Approve on a propose_action
+   *  chip. Threaded down to ChipCard. */
+  onChipApprove?: () => void;
+  /** Phase 9G — fires when the user clicks Decline on a propose_action
+   *  chip. */
+  onChipDecline?: () => void;
 }) {
   const isStreaming = msg.streaming === true;
   const isEmptyStreaming = isStreaming && msg.content.length === 0;
@@ -734,16 +781,21 @@ function MessageRow({
         )}
       </div>
 
-      {/* Chips — flag_concern / request_re_run payloads from tool
-          calls. Rendered as decade-tinted cards under the reply text.
-          Not clickable yet (Phase 9 wires reset action for re-run
-          chips; flag_concern is informational until we add a "keep
-          in journal" side panel). Ephemeral — chip state clears on
-          reload since it lives in component memory, not persisted. */}
+      {/* Chips — flag_concern / request_re_run / propose_action
+          payloads from tool calls. Rendered as decade-tinted cards
+          under the reply text. propose_action chips render with
+          Approve / Decline / Say-something-else buttons (Phase 9G).
+          Ephemeral — chip state clears on reload since it lives in
+          component memory, not persisted. */}
       {chips && chips.length > 0 && (
         <div className="mt-[10px] flex flex-col gap-[8px]">
           {chips.map((chip, i) => (
-            <ChipCard key={i} chip={chip} />
+            <ChipCard
+              key={i}
+              chip={chip}
+              onApprove={onChipApprove}
+              onDecline={onChipDecline}
+            />
           ))}
         </div>
       )}
@@ -751,11 +803,34 @@ function MessageRow({
   );
 }
 
-function ChipCard({ chip }: { chip: OrcChip }) {
-  const label =
-    chip.type === "flag_concern"
+function ChipCard({
+  chip,
+  onApprove,
+  onDecline,
+}: {
+  chip: OrcChip;
+  /** Phase 9G — only fires for propose_action chips. Click sends a
+   *  synthetic "Approved." message to ORC; the next ORC turn calls
+   *  the side-effect tool it proposed (mutation gate fires on the
+   *  word, conversation context disambiguates which tool). */
+  onApprove?: () => void;
+  /** Phase 9G — only fires for propose_action chips. Click sends a
+   *  synthetic "Decline." message; ORC moves on. */
+  onDecline?: () => void;
+}) {
+  // Local "responded" state — once the user clicks any of the three
+  // buttons on a propose_action chip, the buttons hide and a small
+  // "responded" line takes their place. Prevents accidental double-
+  // approves and gives a visual ack that the click landed.
+  const [responded, setResponded] = useState(false);
+
+  const isAction = chip.type === "propose_action";
+  const label = isAction
+    ? "ORC proposes"
+    : chip.type === "flag_concern"
       ? "ORC flags"
       : `ORC suggests re-run · ${chip.stage ?? "stage"}`;
+
   return (
     <div
       className="p-[10px_12px] border rounded-sm"
@@ -772,9 +847,64 @@ function ChipCard({ chip }: { chip: OrcChip }) {
       >
         {label}
       </div>
+      {isAction && chip.summary && (
+        <div className="font-display font-medium text-[13.5px] leading-[1.4] text-t1 mb-[4px]">
+          {chip.summary}
+        </div>
+      )}
       <div className="font-editorial text-[13px] leading-[1.45] text-t2">
         {chip.reason}
       </div>
+      {/* Action buttons — only on propose_action chips, hidden once
+          the user has responded. Approve fires the synthetic message
+          to ORC; Decline does the same with the opposite intent;
+          Say-something-else just dismisses the chip's interactive UI
+          so the user can type freely in the input below. */}
+      {isAction && !responded && (onApprove || onDecline) && (
+        <div className="mt-[10px] flex flex-wrap gap-[6px]">
+          {onApprove && (
+            <button
+              type="button"
+              onClick={() => {
+                setResponded(true);
+                onApprove();
+              }}
+              className="font-mono text-[9.5px] tracking-[0.22em] uppercase px-[10px] py-[5px] rounded-sm border transition-colors hover:brightness-110 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2"
+              style={{
+                borderColor: "rgba(var(--d), 0.7)",
+                background: "rgba(var(--d), 0.18)",
+                color: "rgba(var(--d), 1)",
+              }}
+            >
+              Approve
+            </button>
+          )}
+          {onDecline && (
+            <button
+              type="button"
+              onClick={() => {
+                setResponded(true);
+                onDecline();
+              }}
+              className="font-mono text-[9.5px] tracking-[0.22em] uppercase px-[10px] py-[5px] rounded-sm border border-rule-2 text-t3 transition-colors hover:text-t1 hover:border-rule-3 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2"
+            >
+              Decline
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setResponded(true)}
+            className="font-mono text-[9.5px] tracking-[0.22em] uppercase px-[10px] py-[5px] rounded-sm text-t4 transition-colors hover:text-t2 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2"
+          >
+            Say something else
+          </button>
+        </div>
+      )}
+      {isAction && responded && (
+        <div className="mt-[8px] font-mono text-[9px] tracking-[0.22em] uppercase text-t5">
+          Responded
+        </div>
+      )}
     </div>
   );
 }

@@ -623,12 +623,18 @@ export function WorkspaceFrame({
             : `${RAIL_WIDTH}px 0px 1fr`,
         }}
       >
-        {/* Left panel — ORC conversation. align-self: start so it's
-            its natural content height and doesn't stretch to match
-            the canvas. Long conversations just grow the panel; no
-            internal scroll to trap the user. */}
+        {/* Left panel — ORC conversation. Phase 9G fix (April 30):
+            ORC panel now has its own internal scroll axis so a long
+            conversation doesn't drag the whole page. `sticky top-0`
+            anchors the panel to the top of the scrolling container
+            below the sticky tab strip, `max-h` caps it at viewport
+            minus the chrome above (~140px = ContextStrip 76 + tab
+            strip 56 + a buffer). The chat thread inside OrcPanel
+            uses flex-1 + overflow-y-auto + min-h-0 to scroll within
+            this height. Head + input stay pinned at top + bottom of
+            the panel. */}
         <aside
-          className="border-r border-rule-1 bg-wash-1 flex flex-col self-stretch"
+          className="border-r border-rule-1 bg-wash-1 flex flex-col self-start sticky top-0 max-h-[calc(100vh-140px)] overflow-hidden"
           aria-label="ORC conversation"
         >
           <OrcPanel

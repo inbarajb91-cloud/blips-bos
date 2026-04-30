@@ -11,6 +11,7 @@ import { editManifestationFraming } from "./edit-manifestation-framing";
 import { dismissManifestation } from "./dismiss-manifestation";
 import { addManifestation } from "./add-manifestation";
 import { restartStoker } from "./restart-stoker";
+import { proposeAction } from "./propose-action";
 
 /**
  * Build the ORC tool set, bound to a specific turn's context.
@@ -47,6 +48,11 @@ export function buildOrcTools(ctx: OrcToolContext) {
     recall: recall(ctx),
     flag_concern: flagConcern(ctx),
     request_re_run: requestReRun(ctx),
+    // Phase 9G — propose_action emits a chip with Approve / Decline /
+    // Say-something-else buttons. Bound regardless of allowMutation
+    // (it's a suggestion, not a side-effect — the actual side-effect
+    // lands on the NEXT turn after Approve click).
+    propose_action: proposeAction(ctx),
     ...(ctx.allowMutation && {
       approve_and_advance: approveAndAdvance(ctx),
       dismiss: dismissSignal(ctx),
