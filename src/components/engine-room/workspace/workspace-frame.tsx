@@ -623,18 +623,30 @@ export function WorkspaceFrame({
             : `${RAIL_WIDTH}px 0px 1fr`,
         }}
       >
-        {/* Left panel — ORC conversation. Phase 9G fix (April 30):
-            ORC panel now has its own internal scroll axis so a long
+        {/* Left panel — ORC conversation. Phase 9G fix (May 1):
+            ORC panel has its own internal scroll axis so a long
             conversation doesn't drag the whole page. `sticky top-0`
-            anchors the panel to the top of the scrolling container
-            below the sticky tab strip, `max-h` caps it at viewport
-            minus the chrome above (~140px = ContextStrip 76 + tab
-            strip 56 + a buffer). The chat thread inside OrcPanel
+            anchors the panel to the top of the scrolling container,
+            `h-` (NOT max-h — see below) gives it a fixed viewport-
+            relative height so the OrcPanel's `h-full` resolves
+            correctly, and `overflow-hidden` clips overflow into the
+            internal scroll axis. The chat thread inside OrcPanel
             uses flex-1 + overflow-y-auto + min-h-0 to scroll within
-            this height. Head + input stay pinned at top + bottom of
-            the panel. */}
+            this height. Head + input stay pinned top + bottom.
+            Why `h-[calc(100dvh-140px)]` and not `max-h-`: the
+            previous attempt used max-h, but `h-full` on a child
+            requires an explicit `height` on its parent — max-height
+            alone doesn't count, so h-full collapses to content
+            height, the thread never gets constrained, and
+            overflow-y-auto never engages. Switching to fixed h-
+            with dvh (dynamic viewport height — accounts for mobile
+            browser chrome) makes the chat-shell pattern work. The
+            "extra space below input when chat is short" is the
+            standard chat-app pattern (Slack / Discord / ChatGPT all
+            do this) — input pinned at bottom of a fixed-height
+            panel. */}
         <aside
-          className="border-r border-rule-1 bg-wash-1 flex flex-col self-start sticky top-0 max-h-[calc(100vh-140px)] overflow-hidden"
+          className="border-r border-rule-1 bg-wash-1 flex flex-col self-start sticky top-0 h-[calc(100dvh-140px)] overflow-hidden"
           aria-label="ORC conversation"
         >
           <OrcPanel
