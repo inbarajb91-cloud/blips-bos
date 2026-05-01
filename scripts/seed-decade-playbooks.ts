@@ -147,6 +147,9 @@ async function main() {
       .select({
         id: knowledgeDocuments.id,
         currentVersion: knowledgeDocuments.currentVersion,
+        content: knowledgeDocuments.content,
+        tags: knowledgeDocuments.tags,
+        supermemoryId: knowledgeDocuments.supermemoryId,
       })
       .from(knowledgeDocuments)
       .where(
@@ -158,10 +161,75 @@ async function main() {
       .limit(1);
 
     if (existing) {
+      // Existing doc — but check whether its supermemory sync ever
+      // landed. CR pass on PR #12: a first run without SUPERMEMORY_API_KEY
+      // would create the postgres rows with supermemoryId=null. A
+      // second run (after the env var is set) used to skip and leave
+      // the doc unfindable through STOKER's recall(container='knowledge').
+      // Backfill now: sync the existing content + version, write the
+      // returned id, and report.
+      if (existing.supermemoryId) {
+        console.log(
+          `⊝ ${pb.decade}: doc "${pb.title}" already exists with supermemoryId=${existing.supermemoryId} (id=${existing.id}, v${existing.currentVersion}); skipping`,
+        );
+        skippedCount++;
+        continue;
+      }
+
+      if (!process.env.SUPERMEMORY_API_KEY) {
+        console.log(
+          `⊝ ${pb.decade}: doc "${pb.title}" exists but supermemoryId is null AND SUPERMEMORY_API_KEY not set — postgres-only, skipping. Set the key and re-run to backfill.`,
+        );
+        skippedCount++;
+        continue;
+      }
+
       console.log(
-        `⊝ ${pb.decade}: doc "${pb.title}" already exists (id=${existing.id}, v${existing.currentVersion}); skipping`,
+        `↻ ${pb.decade}: doc "${pb.title}" exists (id=${existing.id}, v${existing.currentVersion}) but supermemoryId is null — backfilling sync`,
       );
-      skippedCount++;
+
+      try {
+        if (!memoryBackendPromise) {
+          const { getMemoryBackend } = await import("../src/lib/orc/memory");
+          memoryBackendPromise = getMemoryBackend();
+        }
+        const memory = await memoryBackendPromise;
+        const result = await memory.remember({
+          orgId: org.id,
+          container: "knowledge",
+          kind: "note",
+          // Use the existing doc's actual content + tags, not the file
+          // — the founder may have edited the doc post-seed.
+          content: `# ${pb.title}\n\n${existing.content}`,
+          metadata: {
+            knowledgeDocumentId: existing.id,
+            knowledgeDocumentVersion: existing.currentVersion,
+            knowledgeDocumentTitle: pb.title,
+            knowledgeDocumentTags: existing.tags,
+          },
+        });
+        if (result.id) {
+          await db
+            .update(knowledgeDocuments)
+            .set({ supermemoryId: result.id })
+            .where(eq(knowledgeDocuments.id, existing.id));
+          console.log(`  ↳ backfilled supermemory id=${result.id}`);
+          // Counted under "skipped" since no new doc was created — but
+          // the user-visible state has changed (sync now lands).
+          skippedCount++;
+        } else {
+          console.warn(
+            `  ⚠ supermemory remember() returned empty id — backfill silently failed. Re-save through the UI to retry.`,
+          );
+          skippedCount++;
+        }
+      } catch (err) {
+        console.error(
+          `  ✗ ${pb.decade}: supermemory backfill threw:`,
+          err,
+        );
+        skippedCount++;
+      }
       continue;
     }
 

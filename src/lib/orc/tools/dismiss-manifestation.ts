@@ -72,24 +72,34 @@ export function dismissManifestation(ctx: OrcToolContext) {
         .limit(1);
 
       if (child) {
-        const memory = await getMemoryBackend();
-        await memory.remember({
-          orgId: ctx.orgId,
-          container: "events",
-          kind: "decision",
-          content:
-            `Dismissed manifestation ${child.shortcode} (${child.decade}). ` +
-            (cascade ? "Past-gate dismissal with cascade. " : "Pre-gate dismissal. ") +
-            `Reason: ${reason}.`,
-          signalId: manifestationSignalId,
-          journeyId: ctx.journeyId,
-          metadata: {
-            decision: "dismiss_manifestation",
-            shortcode: child.shortcode,
-            decade: child.decade,
-            cascade: cascade === true,
-          },
-        });
+        // Best-effort memory write — see edit_manifestation_framing
+        // for rationale. Action already succeeded; transient
+        // supermemory errors must not surface as tool failures.
+        try {
+          const memory = await getMemoryBackend();
+          await memory.remember({
+            orgId: ctx.orgId,
+            container: "events",
+            kind: "decision",
+            content:
+              `Dismissed manifestation ${child.shortcode} (${child.decade}). ` +
+              (cascade ? "Past-gate dismissal with cascade. " : "Pre-gate dismissal. ") +
+              `Reason: ${reason}.`,
+            signalId: manifestationSignalId,
+            journeyId: ctx.journeyId,
+            metadata: {
+              decision: "dismiss_manifestation",
+              shortcode: child.shortcode,
+              decade: child.decade,
+              cascade: cascade === true,
+            },
+          });
+        } catch (err) {
+          console.warn(
+            "[dismiss_manifestation] memory write failed (best-effort, continuing):",
+            err,
+          );
+        }
       }
 
       return {

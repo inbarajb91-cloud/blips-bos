@@ -80,28 +80,38 @@ export function addManifestation(ctx: OrcToolContext) {
         reason,
       });
 
-      // Memory write — pattern recall: "we force-added RCD on
-      // caretaking signals 4 times last quarter — STOKER may need
-      // playbook tuning for that decade." High-signal data for the
-      // founder.
-      const memory = await getMemoryBackend();
-      await memory.remember({
-        orgId: ctx.orgId,
-        container: "events",
-        kind: "decision",
-        content:
-          `Force-added ${decade} manifestation on parent (created child ${result.childShortcode}). ` +
-          `Hook: "${framingHook}". ` +
-          `Reason STOKER missed it: ${reason}.`,
-        signalId: parentSignalId,
-        journeyId: ctx.journeyId,
-        metadata: {
-          decision: "add_manifestation",
-          decade,
-          childShortcode: result.childShortcode,
-          forceAdded: true,
-        },
-      });
+      // Best-effort memory write — pattern recall: "we force-added
+      // RCD on caretaking signals 4 times last quarter — STOKER may
+      // need playbook tuning for that decade." Wrapping in try/catch
+      // because the action already succeeded (child signal created in
+      // the DB) — a transient supermemory error must not surface as a
+      // tool failure that confuses ORC about whether the child
+      // exists. CR pass on PR #12.
+      try {
+        const memory = await getMemoryBackend();
+        await memory.remember({
+          orgId: ctx.orgId,
+          container: "events",
+          kind: "decision",
+          content:
+            `Force-added ${decade} manifestation on parent (created child ${result.childShortcode}). ` +
+            `Hook: "${framingHook}". ` +
+            `Reason STOKER missed it: ${reason}.`,
+          signalId: parentSignalId,
+          journeyId: ctx.journeyId,
+          metadata: {
+            decision: "add_manifestation",
+            decade,
+            childShortcode: result.childShortcode,
+            forceAdded: true,
+          },
+        });
+      } catch (err) {
+        console.warn(
+          "[add_manifestation] memory write failed (best-effort, continuing):",
+          err,
+        );
+      }
 
       return {
         success: true as const,

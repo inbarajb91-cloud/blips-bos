@@ -121,10 +121,20 @@ export async function approveStokerManifestation(opts: {
 
   // FURNACE event firing is deferred to Phase 10 (no FURNACE handler
   // yet). Manifestation sits at IN_FURNACE until Phase 10 ships.
-  // Leaving the parent's STOKER tab + Bridge are revalidated so the
-  // renderer reflects the new state.
+  // Revalidate child + Bridge + parent so the parent's STOKER tab
+  // reflects the new APPROVED state on this decade card. Without the
+  // parent revalidation, the parent workspace's resonance grid stayed
+  // stale until a manual refresh — caught on PR #12 review.
   revalidatePath(`/engine-room/signals/${child.shortcode}`);
   revalidatePath("/engine-room");
+  if (child.parentSignalId) {
+    const [parent] = await db
+      .select({ shortcode: signalsTable.shortcode })
+      .from(signalsTable)
+      .where(eq(signalsTable.id, child.parentSignalId))
+      .limit(1);
+    if (parent) revalidatePath(`/engine-room/signals/${parent.shortcode}`);
+  }
   return { ok: true, childShortcode: child.shortcode };
 }
 
@@ -368,6 +378,18 @@ export async function dismissStokerManifestation(opts: {
 
   revalidatePath(`/engine-room/signals/${child.shortcode}`);
   revalidatePath("/engine-room");
+  // Also revalidate the parent's workspace so the parent's STOKER tab
+  // reflects the dismissed card. Without this, the parent's resonance
+  // grid showed the card as still pending until manual refresh — caught
+  // on PR #12 review (mirrors approve path).
+  if (child.parentSignalId) {
+    const [parent] = await db
+      .select({ shortcode: signalsTable.shortcode })
+      .from(signalsTable)
+      .where(eq(signalsTable.id, child.parentSignalId))
+      .limit(1);
+    if (parent) revalidatePath(`/engine-room/signals/${parent.shortcode}`);
+  }
   // Note: dismissal of one manifestation doesn't change the parent's
   // FANNED_OUT terminal state. Even if all manifestations are dismissed,
   // STOKER still ran and produced output — the parent's "fanned out"
@@ -537,19 +559,52 @@ export async function addStokerManifestation(opts: {
     );
 
     // Mint the STOKER agent_outputs row carrying the founder's framing.
-    // content.forceAdded=true so the renderer can surface "founder
-    // force-added — STOKER did not generate this" provenance.
+    // Content shape mirrors the inngest STOKER fan-out path
+    // (src/lib/inngest/functions/stoker.ts) — same outputType, same
+    // top-level keys — so the workspace renderer treats force-added
+    // children identically to STOKER-generated ones. CR pass on PR #12
+    // caught the original divergence (outputType="decade_resonance",
+    // missing dimensionAlignment, missing parent ids) which would have
+    // tripped the renderer's shape assertions.
+    //
+    // dimensionAlignment is the 7-dimension empty-string skeleton — the
+    // founder's force-add input doesn't include per-dimension notes
+    // (and we deliberately don't synthesise them in 9G; force-add is
+    // lean). The renderer renders only non-empty dimensions, so empty
+    // strings are a clean "no per-dimension note" tell.
+    //
+    // forceAdded provenance keys (forceAdded / addedBy / addReason) are
+    // additive — they coexist with the canonical shape rather than
+    // replacing it.
     await tx.insert(agentOutputs).values({
       signalId: childRow.id,
       journeyId: journey.id,
       agentName: "STOKER",
-      outputType: "decade_resonance",
+      outputType: "manifestation",
       status: "PENDING",
       content: {
+        decade: opts.decade,
+        // No STOKER score because STOKER didn't run — the founder
+        // bypassed it. null is explicit; the renderer skips score chips
+        // when score is null.
+        resonanceScore: null,
+        rationale:
+          opts.reason ??
+          "Founder force-added — STOKER did not generate this manifestation.",
         framingHook,
         tensionAxis,
         narrativeAngle,
-        decade: opts.decade,
+        dimensionAlignment: {
+          social: "",
+          musical: "",
+          cultural: "",
+          career: "",
+          responsibilities: "",
+          expectations: "",
+          sports: "",
+        },
+        parentSignalId: parent.id,
+        parentShortcode: parent.shortcode,
         forceAdded: true,
         addedBy: user.authId,
         addReason: opts.reason ?? null,

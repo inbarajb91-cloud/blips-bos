@@ -44,24 +44,34 @@ export function restartStoker(ctx: OrcToolContext) {
     execute: async ({ parentSignalId, reason }) => {
       const result = await restartStokerProcess({ parentSignalId, reason });
 
-      // Memory write — record the restart intent for cross-signal
-      // recall. The fact that auto-restart isn't wired is captured in
-      // the metadata.intentOnly flag.
-      const memory = await getMemoryBackend();
-      await memory.remember({
-        orgId: ctx.orgId,
-        container: "events",
-        kind: "decision",
-        content:
-          `Restart STOKER intent recorded for parent signal. Reason: ${reason}. ` +
-          `Auto-restart not wired (Phase 9G is intent-only); founder follows manual steps to actually re-run.`,
-        signalId: parentSignalId,
-        journeyId: ctx.journeyId,
-        metadata: {
-          decision: "restart_stoker",
-          intentOnly: true,
-        },
-      });
+      // Best-effort memory write — record the restart intent for
+      // cross-signal recall. Wrapped in try/catch because the action
+      // already wrote the decision_history row (the canonical audit
+      // trail); a transient supermemory error must not surface as a
+      // tool failure that could mislead ORC about whether the intent
+      // was recorded. CR pass on PR #12.
+      try {
+        const memory = await getMemoryBackend();
+        await memory.remember({
+          orgId: ctx.orgId,
+          container: "events",
+          kind: "decision",
+          content:
+            `Restart STOKER intent recorded for parent signal. Reason: ${reason}. ` +
+            `Auto-restart not wired (Phase 9G is intent-only); founder follows manual steps to actually re-run.`,
+          signalId: parentSignalId,
+          journeyId: ctx.journeyId,
+          metadata: {
+            decision: "restart_stoker",
+            intentOnly: true,
+          },
+        });
+      } catch (err) {
+        console.warn(
+          "[restart_stoker] memory write failed (best-effort, continuing):",
+          err,
+        );
+      }
 
       return {
         success: true as const,

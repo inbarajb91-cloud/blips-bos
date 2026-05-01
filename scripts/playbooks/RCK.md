@@ -20,7 +20,7 @@ Sub-tensions to watch for:
 
 - **Ambition vs meaning.** The "what does my work actually do for the world" question shows up around 31–34, often after the second promotion when "more responsibility" stops translating to "more meaning."
 - **Career inflection.** Choosing between depth (mastery in a niche) and breadth (founding / pivoting / managing). Both directions feel right; both close the other.
-- **Biology starts to mattering.** For founders / engineers / lawyers / consultants on Indian-urban tracks, mid-30s is when the body sends its first letter. Energy budgets become real. "All-nighters" become a story you tell, not a tool.
+- **Biology starts to matter.** For founders / engineers / lawyers / consultants on Indian-urban tracks, mid-30s is when the body sends its first letter. Energy budgets become real. "All-nighters" become a story you tell, not a tool.
 - **Partnership vs autonomy.** Either you're choosing someone, or you're explicitly choosing not to. There's no neutral default anymore.
 - **Money becomes coded.** RCK has earned enough that money is now a value signal, not just a survival lever. What you spend on says what you believe.
 - **Parenthood-pivot is starting** for some; for others it's the question they're delaying.

@@ -121,25 +121,38 @@ export function editManifestationFraming(ctx: OrcToolContext) {
         .limit(1);
 
       if (child) {
-        const memory = await getMemoryBackend();
-        const fieldList = Object.keys(fields).join(", ");
-        await memory.remember({
-          orgId: ctx.orgId,
-          container: "events",
-          kind: "decision",
-          content:
-            `Edited manifestation ${child.shortcode} (${child.decade}) — fields: ${fieldList}. ` +
-            (cascade ? "Past-gate edit with cascade. " : "Pre-gate edit. ") +
-            `Reason: ${reason ?? "(no reason given)"}.`,
-          signalId: manifestationSignalId,
-          journeyId: ctx.journeyId,
-          metadata: {
-            decision: "edit_manifestation_framing",
-            shortcode: child.shortcode,
-            decade: child.decade,
-            cascade: cascade === true,
-          },
-        });
+        // Memory write is best-effort — supermemory is a hosted
+        // dependency (transient outages happen) and the tool's
+        // primary work (the edit) already succeeded. Swallow the
+        // error rather than tearing the tool down. CR pass on PR #12
+        // caught the unwrapped await — a memory hiccup would have
+        // surfaced as a tool failure to ORC despite the edit landing.
+        try {
+          const memory = await getMemoryBackend();
+          const fieldList = Object.keys(fields).join(", ");
+          await memory.remember({
+            orgId: ctx.orgId,
+            container: "events",
+            kind: "decision",
+            content:
+              `Edited manifestation ${child.shortcode} (${child.decade}) — fields: ${fieldList}. ` +
+              (cascade ? "Past-gate edit with cascade. " : "Pre-gate edit. ") +
+              `Reason: ${reason ?? "(no reason given)"}.`,
+            signalId: manifestationSignalId,
+            journeyId: ctx.journeyId,
+            metadata: {
+              decision: "edit_manifestation_framing",
+              shortcode: child.shortcode,
+              decade: child.decade,
+              cascade: cascade === true,
+            },
+          });
+        } catch (err) {
+          console.warn(
+            "[edit_manifestation_framing] memory write failed (best-effort, continuing):",
+            err,
+          );
+        }
       }
 
       return {

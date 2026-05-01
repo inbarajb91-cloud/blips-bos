@@ -107,6 +107,13 @@ export function OrcPanel({
   // the stream callbacks setMessages with a NEW array on every chunk
   // (not in-place mutation), so React re-renders + the effect fires.
   const threadRef = useRef<HTMLDivElement>(null);
+  // Phase 9G — composerRef points at the input element so the
+  // "Say something else" chip button can focus it from outside the
+  // input (chip lives inside MessageRow, the input lives inside
+  // OrcInput; they're separate components). The ref is created here
+  // and passed down into OrcInput as a prop, where OrcInput attaches
+  // it to the underlying <input>. CR pass on PR #12.
+  const composerRef = useRef<HTMLInputElement>(null);
   // Latest signal.id stored in a ref so async callbacks (the recovery
   // reload after a pre-stream failure) can compare what the user is
   // currently viewing against what they were viewing when the failure
@@ -194,6 +201,12 @@ export function OrcPanel({
    */
   function handleSend(overrideText?: string) {
     if (!conversationId) return;
+    // Chip-triggered sends ("Approved." / "Decline.") used to bypass the
+    // canSend + pending gate because they go through the override-text
+    // path. CR pass on PR #12 caught this — if the lock has expired
+    // or another send is in flight, a chip click would fire a duplicate
+    // request the server has to reject. Gate both flows symmetrically.
+    if (!canSend || pending) return;
     const text = (overrideText ?? inputValue).trim();
     if (text.length === 0) return;
 
@@ -536,6 +549,15 @@ export function OrcPanel({
                 chips={clientId ? chipsByClientId[clientId] : undefined}
                 onChipApprove={() => handleSend("Approved.")}
                 onChipDecline={() => handleSend("Decline.")}
+                onChipSayElse={() => {
+                  // Focus the composer so the user can type a custom
+                  // reply right away instead of having to click into
+                  // the input. Phase 9G UX nicety. requestAnimationFrame
+                  // gives React a tick to flush the chip's responded
+                  // state change first — without it, the focus call can
+                  // race the re-render and lose to a focus event Reset.
+                  requestAnimationFrame(() => composerRef.current?.focus());
+                }}
               />
             );
           })
@@ -551,6 +573,7 @@ export function OrcPanel({
             onSend={() => handleSend()}
             disabled={conversationId === null || pending || !canSend}
             signalShortcode={signal.shortcode}
+            inputRef={composerRef}
             disabledReason={
               // Four distinct states:
               //   canSend=true          → null (input live)
@@ -750,6 +773,7 @@ function MessageRow({
   chips,
   onChipApprove,
   onChipDecline,
+  onChipSayElse,
 }: {
   msg: Message & { streaming?: boolean };
   chips?: OrcChip[];
@@ -759,6 +783,10 @@ function MessageRow({
   /** Phase 9G — fires when the user clicks Decline on a propose_action
    *  chip. */
   onChipDecline?: () => void;
+  /** Phase 9G — fires when the user clicks "Say something else" on a
+   *  propose_action chip. Used to focus the composer so the user can
+   *  type a refinement immediately. CR pass on PR #12. */
+  onChipSayElse?: () => void;
 }) {
   const isStreaming = msg.streaming === true;
   const isEmptyStreaming = isStreaming && msg.content.length === 0;
@@ -831,6 +859,7 @@ function MessageRow({
               chip={chip}
               onApprove={onChipApprove}
               onDecline={onChipDecline}
+              onSayElse={onChipSayElse}
             />
           ))}
         </div>
@@ -843,6 +872,7 @@ function ChipCard({
   chip,
   onApprove,
   onDecline,
+  onSayElse,
 }: {
   chip: OrcChip;
   /** Phase 9G — only fires for propose_action chips. Click sends a
@@ -853,6 +883,10 @@ function ChipCard({
   /** Phase 9G — only fires for propose_action chips. Click sends a
    *  synthetic "Decline." message; ORC moves on. */
   onDecline?: () => void;
+  /** Phase 9G — only fires for propose_action chips. Click focuses
+   *  the composer so the user can type their refinement without
+   *  hunting for the input. CR pass on PR #12. */
+  onSayElse?: () => void;
 }) {
   // Local "responded" state — once the user clicks any of the three
   // buttons on a propose_action chip, the buttons hide and a small
@@ -929,7 +963,10 @@ function ChipCard({
           )}
           <button
             type="button"
-            onClick={() => setResponded(true)}
+            onClick={() => {
+              setResponded(true);
+              onSayElse?.();
+            }}
             className="font-mono text-[9.5px] tracking-[0.22em] uppercase px-[10px] py-[5px] rounded-sm text-t4 transition-colors hover:text-t2 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2"
           >
             Say something else
@@ -952,6 +989,7 @@ function OrcInput({
   disabled,
   signalShortcode,
   disabledReason,
+  inputRef: externalInputRef,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -965,8 +1003,18 @@ function OrcInput({
    *    - "self-released": user voluntarily released, can re-lock above
    *    - null: input is active */
   disabledReason?: "loading" | "other-user" | "self-released" | null;
+  /** Phase 9G — optional shared ref for the underlying input. The
+   *  parent (OrcPanel) passes its `composerRef` so chip click handlers
+   *  outside this component (Say-something-else) can focus the input.
+   *  When omitted, the component falls back to its own internal ref
+   *  for self-contained refocus-after-send behavior. CR pass on PR #12. */
+  inputRef?: React.RefObject<HTMLInputElement | null>;
 }) {
-  const inputRef = useRef<HTMLInputElement>(null);
+  const localInputRef = useRef<HTMLInputElement>(null);
+  // Prefer the shared ref from the parent; fall back to local. Both
+  // point at the same DOM node when shared, so refocus-after-send
+  // works regardless.
+  const inputRef = externalInputRef ?? localInputRef;
 
   // Refocus input after send clears it (useTransition releases pending
   // during an async boundary; refocusing here keeps the chat flow tight).
@@ -980,7 +1028,11 @@ function OrcInput({
         el.focus();
       }
     }
-  }, [value, disabled]);
+    // inputRef is stable per-render once chosen (either externalInputRef
+    // or localInputRef), but eslint exhaustive-deps wants it explicit;
+    // including it is harmless because both ref objects are referentially
+    // stable across renders (useRef creates the object once).
+  }, [value, disabled, inputRef]);
 
   return (
     <input

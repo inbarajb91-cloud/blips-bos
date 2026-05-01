@@ -315,8 +315,14 @@ export async function POST(req: Request) {
   // (e.g. "the team approved that last week" or "we should add a
   // task to the docs") only make tools AVAILABLE — they don't fire
   // anything on their own. ORC still has to choose to call.
+  // CR pass on PR #12: previous regex stems (`add` / `chang`) matched
+  // unrelated phrases like "add a comment" / "change the name." Tightened
+  // to whole-word matches with explicit conjugations + bounded the
+  // dangerous stems entirely. Word boundaries (`\b`) on both sides so
+  // "approval" / "approved" / "approving" all land but "approximate"
+  // doesn't. "decline" / "cancel" cover the chip Decline path.
   const allowMutation =
-    /\b(approv|dismiss|reject|advanc|ship|edit|modif|chang|restart|re-?run|forc|add|decline|cancel)/i.test(
+    /\b(approve|approved|approval|approving|dismiss|dismissed|dismissing|reject|rejected|advance|advanced|ship|shipped|shipping|edit|edited|editing|modify|modified|restart|restarted|re-?run|rerun|force|force-add|decline|declined|cancel|cancelled)\b/i.test(
       userMessage,
     );
 
