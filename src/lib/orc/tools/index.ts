@@ -7,6 +7,11 @@ import { flagConcern } from "./flag-concern";
 import { requestReRun } from "./request-re-run";
 import { dismissSignal } from "./dismiss";
 import { approveAndAdvance } from "./approve-and-advance";
+import { editManifestationFraming } from "./edit-manifestation-framing";
+import { dismissManifestation } from "./dismiss-manifestation";
+import { addManifestation } from "./add-manifestation";
+import { restartStoker } from "./restart-stoker";
+import { proposeAction } from "./propose-action";
 
 /**
  * Build the ORC tool set, bound to a specific turn's context.
@@ -43,9 +48,22 @@ export function buildOrcTools(ctx: OrcToolContext) {
     recall: recall(ctx),
     flag_concern: flagConcern(ctx),
     request_re_run: requestReRun(ctx),
+    // Phase 9G — propose_action emits a chip with Approve / Decline /
+    // Say-something-else buttons. Bound regardless of allowMutation
+    // (it's a suggestion, not a side-effect — the actual side-effect
+    // lands on the NEXT turn after Approve click).
+    propose_action: proposeAction(ctx),
     ...(ctx.allowMutation && {
       approve_and_advance: approveAndAdvance(ctx),
       dismiss: dismissSignal(ctx),
+      // Phase 9G — STOKER mutation tools. Same allowMutation gate as
+      // approve/dismiss; the route-level regex includes the new
+      // intent stems (edit, restart, force, add, etc.) so these only
+      // bind when the user said one of those words in this turn.
+      edit_manifestation_framing: editManifestationFraming(ctx),
+      dismiss_manifestation: dismissManifestation(ctx),
+      add_manifestation: addManifestation(ctx),
+      restart_stoker: restartStoker(ctx),
     }),
   };
 }

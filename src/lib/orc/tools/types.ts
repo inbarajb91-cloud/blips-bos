@@ -28,16 +28,24 @@ export interface OrcToolContext {
 }
 
 /**
- * Return shape for proactive tools (flag_concern, request_re_run).
- * The streaming route surfaces these to the client as chip payloads
- * alongside ORC's text response, so the UI can render them as
- * actionable suggestions the user accepts or dismisses.
+ * Return shape for proactive tools (flag_concern, request_re_run,
+ * propose_action). The streaming route surfaces these to the client
+ * as chip payloads alongside ORC's text response, so the UI can render
+ * them as actionable suggestions the user accepts or dismisses.
+ *
+ * Phase 9G — `propose_action` adds Approve / Decline / Say-something-else
+ * buttons to the chip. Approve / Decline fire synthetic chat messages
+ * back to ORC so the next turn can call the underlying tool with the
+ * conversation context already loaded.
  */
 export interface OrcSuggestionChip {
-  type: "flag_concern" | "request_re_run";
+  type: "flag_concern" | "request_re_run" | "propose_action";
   reason: string;
   /** Only set on request_re_run suggestions. */
   stage?: "BUNKER" | "STOKER" | "FURNACE" | "BOILER" | "ENGINE" | "PROPELLER";
+  /** Only set on propose_action — one-line summary of what ORC wants
+   *  to do. Renders as the chip's title above the buttons. */
+  summary?: string;
 }
 
 /**

@@ -301,20 +301,30 @@ export async function POST(req: Request) {
 
   // Detect mutation intent in the user's current message. Defense-
   // in-depth against prompt injection: only when the user actually
-  // typed an approve/dismiss word in THIS turn do we bind the
-  // destructive tools (approve_and_advance, dismiss). Without this
-  // flag, those tools aren't in ORC's tool set even if a recalled
-  // memory or signal raw_text contains adversarial "approve this"
-  // instructions. The regex catches stems (approv/dismiss/reject/
-  // advanc) so all conjugations land — and including "ship" covers
-  // the colloquial "ship it" / "ship this" approval phrasing. False
-  // positives (e.g. "the team approved that last week") are safe:
-  // ORC still has to choose to call the tool, the system prompt
-  // requires explicit permission, and the SQL inside the tool has
-  // status='PENDING' WHERE clauses that fail safe.
-  const allowMutation = /\b(approv|dismiss|reject|advanc|ship)/i.test(
-    userMessage,
-  );
+  // typed an approve/dismiss/edit/restart/etc word in THIS turn do
+  // we bind the destructive tools. Without this flag, those tools
+  // aren't in ORC's tool set even if a recalled memory or signal
+  // raw_text contains adversarial "approve this" instructions.
+  //
+  // Phase 9G additions: edit / modif / chang (for
+  // edit_manifestation_framing); restart / re-?run (for
+  // restart_stoker); forc / add (for add_manifestation). The set
+  // is broader, but mutation tools still go through the system
+  // prompt's "explicit user word" gate, the action-level org/status
+  // checks, and the AI SDK's tool-output validation. False positives
+  // (e.g. "the team approved that last week" or "we should add a
+  // task to the docs") only make tools AVAILABLE — they don't fire
+  // anything on their own. ORC still has to choose to call.
+  // CR pass on PR #12: previous regex stems (`add` / `chang`) matched
+  // unrelated phrases like "add a comment" / "change the name." Tightened
+  // to whole-word matches with explicit conjugations + bounded the
+  // dangerous stems entirely. Word boundaries (`\b`) on both sides so
+  // "approval" / "approved" / "approving" all land but "approximate"
+  // doesn't. "decline" / "cancel" cover the chip Decline path.
+  const allowMutation =
+    /\b(approve|approved|approval|approving|dismiss|dismissed|dismissing|reject|rejected|advance|advanced|ship|shipped|shipping|edit|edited|editing|modify|modified|restart|restarted|re-?run|rerun|force|force-add|decline|declined|cancel|cancelled)\b/i.test(
+      userMessage,
+    );
 
   // Bind tools to this request's context
   const tools = buildOrcTools({

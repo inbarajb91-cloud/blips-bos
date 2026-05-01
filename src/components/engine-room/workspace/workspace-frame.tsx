@@ -623,12 +623,41 @@ export function WorkspaceFrame({
             : `${RAIL_WIDTH}px 0px 1fr`,
         }}
       >
-        {/* Left panel — ORC conversation. align-self: start so it's
-            its natural content height and doesn't stretch to match
-            the canvas. Long conversations just grow the panel; no
-            internal scroll to trap the user. */}
+        {/* Left panel — ORC conversation. Phase 9G fix (May 1):
+            ORC panel has its own internal scroll axis so a long
+            conversation doesn't drag the whole page. `sticky top-…`
+            anchors the panel to the top of the scrolling container,
+            `h-` (NOT max-h — see below) gives it a fixed viewport-
+            relative height so the OrcPanel's `h-full` resolves
+            correctly, and `overflow-hidden` clips overflow into the
+            internal scroll axis. The chat thread inside OrcPanel
+            uses flex-1 + overflow-y-auto + min-h-0 to scroll within
+            this height. Head + input stay pinned top + bottom.
+            Why `h-[calc(...)]` and not `max-h-`: the previous attempt
+            used max-h, but `h-full` on a child requires an explicit
+            `height` on its parent — max-height alone doesn't count,
+            so h-full collapses to content height, the thread never
+            gets constrained, and overflow-y-auto never engages.
+            Switching to a fixed h- with dvh (dynamic viewport height
+            — accounts for mobile browser chrome) makes the chat-shell
+            pattern work. The "extra space below input when chat is
+            short" is the standard chat-app pattern (Slack / Discord /
+            ChatGPT all do this) — input pinned at bottom of a fixed-
+            height panel.
+
+            Why `top-[100px]` and not `top-0`: the panel is a sibling
+            of the sticky tab-strip container at line ~578 inside the
+            same scrolling ancestor. With both pinned to top-0 they
+            overlap — the panel slides UNDER the tab strip and the
+            top-most chat content is hidden behind the BUNKER /
+            STOKER / FURNACE / … tabs. The tab-strip row is 57px
+            tall; the optional manifestation-selector sub-row adds
+            ~37px when STOKER+ tabs are active. 100px clears both
+            cases with a small visual buffer. The height calc drops
+            by 100px to keep the panel bottom in the viewport
+            (140 + 100 = 240). CR pass on PR #12. */}
         <aside
-          className="border-r border-rule-1 bg-wash-1 flex flex-col self-stretch"
+          className="border-r border-rule-1 bg-wash-1 flex flex-col self-start sticky top-[100px] h-[calc(100dvh-240px)] overflow-hidden"
           aria-label="ORC conversation"
         >
           <OrcPanel
