@@ -137,12 +137,19 @@ async function main() {
       continue;
     }
 
-    // Idempotency check — same title, same org = treat as already seeded.
-    // Title acts as the natural key here since knowledge_documents has no
-    // org-scoped UNIQUE on title (founder may legitimately create
-    // multiple docs with similar names over time). This is a deliberate
-    // skip-on-conflict, not an upsert: once a doc exists, subsequent
-    // edits go through the founder UI.
+    // Idempotency check — same title, same org, **status='active'** =
+    // treat as already seeded. Title acts as the natural key here since
+    // knowledge_documents has no org-scoped UNIQUE on title (founder may
+    // legitimately create multiple docs with similar names over time).
+    // This is a deliberate skip-on-conflict, not an upsert: once a doc
+    // exists, subsequent edits go through the founder UI.
+    //
+    // CR pass 2 on PR #12: filter status='active' so the documented
+    // "archive a doc to force-replace" affordance actually works. An
+    // archived doc with the same title used to block re-seeding, which
+    // contradicted the script header's instructions. Now archived docs
+    // are invisible to the collision check; the seed creates a fresh
+    // active row alongside.
     const [existing] = await db
       .select({
         id: knowledgeDocuments.id,
@@ -156,6 +163,7 @@ async function main() {
         and(
           eq(knowledgeDocuments.orgId, org.id),
           eq(knowledgeDocuments.title, pb.title),
+          eq(knowledgeDocuments.status, "active"),
         ),
       )
       .limit(1);

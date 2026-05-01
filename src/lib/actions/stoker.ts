@@ -70,7 +70,7 @@ export async function approveStokerManifestation(opts: {
   }
   if (child.status !== "IN_STOKER") {
     throw new Error(
-      `This manifestation is at status ${child.status} — STOKER approval is only valid at IN_STOKER. Use ORC's edit_manifestation_framing tool with force+cascade for past-gate edits.`,
+      `This manifestation is at status ${child.status} — STOKER approval is only valid at IN_STOKER. Use ORC's edit_manifestation_framing tool with cascade=true for past-gate edits.`,
     );
   }
 

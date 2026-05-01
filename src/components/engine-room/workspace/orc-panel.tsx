@@ -199,16 +199,23 @@ export function OrcPanel({
    * is used, the input value is NOT cleared (the user might be mid-
    * draft typing something else).
    */
-  function handleSend(overrideText?: string) {
-    if (!conversationId) return;
+  function handleSend(overrideText?: string): Promise<boolean> {
     // Chip-triggered sends ("Approved." / "Decline.") used to bypass the
     // canSend + pending gate because they go through the override-text
     // path. CR pass on PR #12 caught this — if the lock has expired
     // or another send is in flight, a chip click would fire a duplicate
     // request the server has to reject. Gate both flows symmetrically.
-    if (!canSend || pending) return;
+    //
+    // Return Promise<boolean> so chip click handlers can revert their
+    // optimistic "Responded" state on failure (CR pass 2 on PR #12).
+    // - true  = the request landed successfully (stream completed cleanly)
+    // - false = gated out OR pre-stream failure OR exception during stream
+    // Aborts (signal change / fresh send superseded) resolve false too;
+    // the chip is no longer visible in those flows so the value is moot.
+    if (!conversationId) return Promise.resolve(false);
+    if (!canSend || pending) return Promise.resolve(false);
     const text = (overrideText ?? inputValue).trim();
-    if (text.length === 0) return;
+    if (text.length === 0) return Promise.resolve(false);
 
     setSendError(null);
 
@@ -277,6 +284,15 @@ export function OrcPanel({
     // failures: the user message IS persisted, so we keep the
     // optimistic row and just drop the streaming placeholder.
     let failedPreStream = false;
+
+    // Wrap startTransition's body in a deferred promise so handleSend
+    // can return Promise<boolean> for chip click handlers. Resolved
+    // exactly once from inside the try/catch/finally below — true on
+    // clean completion, false on any failure or abort.
+    let resolveOuter!: (ok: boolean) => void;
+    const outer = new Promise<boolean>((resolve) => {
+      resolveOuter = resolve;
+    });
 
     startTransition(async () => {
       try {
@@ -349,11 +365,19 @@ export function OrcPanel({
           } as Message & { streaming: boolean };
           return next;
         });
+        // Outer promise: resolve true so chip click handlers can keep
+        // their optimistic "Responded" state in place.
+        resolveOuter(true);
       } catch (e) {
         // AbortError = caller deliberately cancelled (signal change
         // or a fresh send superseded this one). Don't show an error
         // or rollback — the new context is already taking over.
         if (e instanceof Error && e.name === "AbortError") {
+          // Resolve outer false; if the chip is still visible (rare —
+          // user navigated back?) it'll revert to interactive. Most of
+          // the time the chip's containing message has already been
+          // unmounted by the navigation that triggered the abort.
+          resolveOuter(false);
           return;
         }
         console.error("ORC reply failed:", e);
@@ -410,6 +434,10 @@ export function OrcPanel({
               // user can refresh manually if it really matters.
             });
         }
+        // Outer promise: resolve false so chip click handlers revert
+        // their optimistic "Responded" state — the user's intent didn't
+        // land, so the chip should remain interactive for retry.
+        resolveOuter(false);
       } finally {
         // Clear the abort ref only if it's still pointing at OUR
         // controller — a concurrent send may have already replaced
@@ -419,6 +447,8 @@ export function OrcPanel({
         }
       }
     });
+
+    return outer;
   }
 
   // Rail mode (Phase 9.5) — when collapsed, render a thin vertical
@@ -547,6 +577,9 @@ export function OrcPanel({
                 key={`${msg.ts}-${i}`}
                 msg={msg}
                 chips={clientId ? chipsByClientId[clientId] : undefined}
+                // Pass the Promise<boolean> through to the chip so it
+                // can revert its optimistic Responded state on send
+                // failure. CR pass 2 on PR #12.
                 onChipApprove={() => handleSend("Approved.")}
                 onChipDecline={() => handleSend("Decline.")}
                 onChipSayElse={() => {
@@ -778,11 +811,13 @@ function MessageRow({
   msg: Message & { streaming?: boolean };
   chips?: OrcChip[];
   /** Phase 9G — fires when the user clicks Approve on a propose_action
-   *  chip. Threaded down to ChipCard. */
-  onChipApprove?: () => void;
+   *  chip. Threaded down to ChipCard. Returns Promise<boolean> so the
+   *  chip can revert optimistic "Responded" on send failure (CR pass 2
+   *  on PR #12). */
+  onChipApprove?: () => Promise<boolean>;
   /** Phase 9G — fires when the user clicks Decline on a propose_action
-   *  chip. */
-  onChipDecline?: () => void;
+   *  chip. Same Promise<boolean> contract as onChipApprove. */
+  onChipDecline?: () => Promise<boolean>;
   /** Phase 9G — fires when the user clicks "Say something else" on a
    *  propose_action chip. Used to focus the composer so the user can
    *  type a refinement immediately. CR pass on PR #12. */
@@ -878,11 +913,14 @@ function ChipCard({
   /** Phase 9G — only fires for propose_action chips. Click sends a
    *  synthetic "Approved." message to ORC; the next ORC turn calls
    *  the side-effect tool it proposed (mutation gate fires on the
-   *  word, conversation context disambiguates which tool). */
-  onApprove?: () => void;
+   *  word, conversation context disambiguates which tool).
+   *  CR pass 2 on PR #12: returns Promise<boolean> so the chip can
+   *  revert its optimistic "Responded" state when the send fails. */
+  onApprove?: () => Promise<boolean>;
   /** Phase 9G — only fires for propose_action chips. Click sends a
-   *  synthetic "Decline." message; ORC moves on. */
-  onDecline?: () => void;
+   *  synthetic "Decline." message; ORC moves on. Same Promise<boolean>
+   *  contract as onApprove. */
+  onDecline?: () => Promise<boolean>;
   /** Phase 9G — only fires for propose_action chips. Click focuses
    *  the composer so the user can type their refinement without
    *  hunting for the input. CR pass on PR #12. */
@@ -935,9 +973,15 @@ function ChipCard({
           {onApprove && (
             <button
               type="button"
-              onClick={() => {
+              onClick={async () => {
+                // Optimistic flip — instant visual feedback ("Responded"
+                // appears immediately so the user knows the click landed).
+                // If the send fails (network error, 413, 429, etc.) the
+                // promise resolves false and we revert so the buttons
+                // come back live for retry. CR pass 2 on PR #12.
                 setResponded(true);
-                onApprove();
+                const ok = await onApprove();
+                if (!ok) setResponded(false);
               }}
               className="font-mono text-[9.5px] tracking-[0.22em] uppercase px-[10px] py-[5px] rounded-sm border transition-colors hover:brightness-110 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2"
               style={{
@@ -952,9 +996,11 @@ function ChipCard({
           {onDecline && (
             <button
               type="button"
-              onClick={() => {
+              onClick={async () => {
+                // Same optimistic + revert pattern as Approve.
                 setResponded(true);
-                onDecline();
+                const ok = await onDecline();
+                if (!ok) setResponded(false);
               }}
               className="font-mono text-[9.5px] tracking-[0.22em] uppercase px-[10px] py-[5px] rounded-sm border border-rule-2 text-t3 transition-colors hover:text-t1 hover:border-rule-3 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2"
             >
