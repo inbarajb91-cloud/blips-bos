@@ -98,6 +98,15 @@ export function OrcPanel({
   // (and on subsequent send), which causes consumeStream to throw
   // AbortError — the catch ignores AbortError so no UI noise.
   const abortRef = useRef<AbortController | null>(null);
+  // Phase 9G — chat-app auto-scroll. Ref points at the scrollable
+  // thread container so a useEffect can scrollTop = scrollHeight
+  // it after each render that adds or grows messages. Standard
+  // chat-app pattern: latest message stays visible at the bottom;
+  // older messages scroll up and out as the conversation grows.
+  // Streaming mid-reply also keeps the latest tokens in view because
+  // the stream callbacks setMessages with a NEW array on every chunk
+  // (not in-place mutation), so React re-renders + the effect fires.
+  const threadRef = useRef<HTMLDivElement>(null);
   // Latest signal.id stored in a ref so async callbacks (the recovery
   // reload after a pre-stream failure) can compare what the user is
   // currently viewing against what they were viewing when the failure
@@ -151,6 +160,28 @@ export function OrcPanel({
       cancelled = true;
     };
   }, [signal.id]);
+
+  // Auto-scroll thread to bottom when messages change — chat-app
+  // pattern, latest message stays visible. Fires on:
+  //   - initial conversation load (messages goes null → array)
+  //   - user sends a message (optimistic append + streaming
+  //     placeholder added)
+  //   - each ORC token delta (stream callback setMessages with a
+  //     fresh array reference, so messages identity changes per
+  //     chunk and this effect re-fires; ~50 calls per stream is
+  //     fine — scrollTop assignment is cheap and the browser
+  //     coalesces consecutive layout reads)
+  // requestAnimationFrame defers the scroll to AFTER the DOM has
+  // painted the new content; without it, scrollHeight may still
+  // reflect the pre-render height and we'd scroll short.
+  useEffect(() => {
+    const el = threadRef.current;
+    if (!el || messages === null) return;
+    const raf = requestAnimationFrame(() => {
+      el.scrollTop = el.scrollHeight;
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [messages]);
 
   /**
    * Send a message to ORC. By default uses the live input value;
@@ -468,8 +499,13 @@ export function OrcPanel({
           within the panel's max-height without dragging the page.
           The min-h-0 is critical: without it, flex children default
           to min-h: auto which means the thread can't shrink below
-          its content height, defeating the overflow-y. */}
-      <div className="flex-1 overflow-y-auto min-h-0 p-[18px_24px] flex flex-col gap-[22px]">
+          its content height, defeating the overflow-y.
+          threadRef wired so the auto-scroll effect can keep the
+          latest message visible (chat-app pattern). */}
+      <div
+        ref={threadRef}
+        className="flex-1 overflow-y-auto min-h-0 p-[18px_24px] flex flex-col gap-[22px]"
+      >
         {loadError ? (
           <div
             role="alert"
