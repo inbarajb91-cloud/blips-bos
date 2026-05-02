@@ -53,6 +53,11 @@ export const signalStatus = pgEnum("signal_status", [
   //   and refused to manifest. Founder may force-add via add_manifestation.
   "FANNED_OUT",
   "STOKER_REFUSED",
+  // Phase 10 — FURNACE refusal state for manifestation children.
+  // FURNACE_REFUSED: FURNACE refused to produce a brief because brand-fit
+  //   score landed below 50. Founder can force-advance via ORC (similar
+  //   pattern to STOKER's add_manifestation) or dismiss the manifestation.
+  "FURNACE_REFUSED",
 ]);
 
 export const agentName = pgEnum("agent_name", [
@@ -599,6 +604,18 @@ export const agentOutputs = pgTable(
     // you on April 30" provenance, and by ORC's recall to learn
     // edit-pattern data over time.
     revisions: jsonb("revisions").notNull().default([]),
+    // Phase 10 — FURNACE per-section approval state for the granular
+    // approval flow. Founder can approve sections individually as they
+    // review the brief; when all required sections are approved, the
+    // brief auto-promotes to status='APPROVED' and fires boiler.ready.
+    // Shape: Record<sectionName, { approved: boolean,
+    //                              approvedAt: ISO-8601,
+    //                              approvedBy: uuid }>.
+    // Default empty object; populated lazily as founder approves.
+    // Sections not in the map are treated as not-yet-approved.
+    // Reused across stages where granular approval makes sense (FURNACE
+    // for brief sections, future ENGINE for tech pack sections, etc.).
+    sectionApprovals: jsonb("section_approvals").notNull().default({}),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
