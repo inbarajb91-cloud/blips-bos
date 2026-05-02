@@ -339,7 +339,7 @@ async function main() {
     });
     refuseResult = r.object;
     console.log(
-      `  ✓ LLM call succeeded (${r.tokensInput} in / ${r.tokensOutput} out tokens, $${r.costUsd?.toFixed(6) ?? "?"})`,
+      `  ✓ LLM call succeeded (${r.usage.tokensInput} in / ${r.usage.tokensOutput} out tokens, model=${r.model})`,
     );
   } catch (err) {
     refuseError = err instanceof Error ? err.message : String(err);

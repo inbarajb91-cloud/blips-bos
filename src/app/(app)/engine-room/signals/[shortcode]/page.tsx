@@ -195,6 +195,7 @@ export default async function SignalPage({
             .select({
               id: agentOutputsTable.id,
               signalId: agentOutputsTable.signalId,
+              agentName: agentOutputsTable.agentName,
               status: agentOutputsTable.status,
               content: agentOutputsTable.content,
               revisions: agentOutputsTable.revisions,
@@ -203,7 +204,7 @@ export default async function SignalPage({
             .from(agentOutputsTable)
             .where(
               and(
-                eq(agentOutputsTable.agentName, "STOKER"),
+                inArray(agentOutputsTable.agentName, ["STOKER", "FURNACE"]),
                 inArray(agentOutputsTable.signalId, childIds),
               ),
             )
@@ -212,12 +213,24 @@ export default async function SignalPage({
               asc(agentOutputsTable.createdAt),
             )
         : [];
-      // Iterate forward and `Map.set` only on first sighting per signal
-      // — earliest createdAt wins because the rows come out in
-      // (signalId ASC, createdAt ASC) order.
+      // Map by (signalId, agentName) so STOKER + FURNACE outputs both
+      // surface for the renderer. Earliest createdAt wins per agent
+      // (canonical first run; deterministic ordering above).
       const outputBySignal = new Map<string, (typeof childOutputs)[number]>();
+      const outputByAgent = new Map<
+        string, // key: `${signalId}::${agentName}`
+        (typeof childOutputs)[number]
+      >();
       for (const o of childOutputs) {
-        if (!outputBySignal.has(o.signalId)) {
+        const agentKey = `${o.signalId}::${o.agentName}`;
+        if (!outputByAgent.has(agentKey)) {
+          outputByAgent.set(agentKey, o);
+        }
+        // Backwards-compat for stokerData below — keeps the
+        // outputBySignal map populated only with STOKER outputs so the
+        // `out` pickup at line 232 still works for the parent's
+        // 3-card grid.
+        if (o.agentName === "STOKER" && !outputBySignal.has(o.signalId)) {
           outputBySignal.set(o.signalId, o);
         }
       }
@@ -257,14 +270,30 @@ export default async function SignalPage({
       // detail row's real id and revisions count are now threaded
       // through from the agent_outputs row.
       manifestations = children.map((c) => {
-        const out = outputBySignal.get(c.id);
-        const stokerDetail: ManifestationOwnDetail | null = out
+        const stokerOut = outputByAgent.get(`${c.id}::STOKER`);
+        const furnaceOut = outputByAgent.get(`${c.id}::FURNACE`);
+        const stokerDetail: ManifestationOwnDetail | null = stokerOut
           ? {
-              id: out.id,
-              content: (out.content ?? {}) as Record<string, unknown>,
-              status: out.status,
-              revisionsCount: Array.isArray(out.revisions)
-                ? out.revisions.length
+              id: stokerOut.id,
+              content: (stokerOut.content ?? {}) as Record<string, unknown>,
+              status: stokerOut.status,
+              revisionsCount: Array.isArray(stokerOut.revisions)
+                ? stokerOut.revisions.length
+                : 0,
+            }
+          : null;
+        // Phase 10 — surface FURNACE brief alongside STOKER output so
+        // the FURNACE renderer can consume `activeManifestation.outputs.FURNACE`
+        // without an extra fetch. Same shape as STOKER detail (id, content,
+        // status, revisionsCount). Null when FURNACE hasn't run on this
+        // child yet (manifestation status pre-IN_FURNACE).
+        const furnaceDetail: ManifestationOwnDetail | null = furnaceOut
+          ? {
+              id: furnaceOut.id,
+              content: (furnaceOut.content ?? {}) as Record<string, unknown>,
+              status: furnaceOut.status,
+              revisionsCount: Array.isArray(furnaceOut.revisions)
+                ? furnaceOut.revisions.length
                 : 0,
             }
           : null;
@@ -274,7 +303,7 @@ export default async function SignalPage({
           title: c.workingTitle,
           decade: c.manifestationDecade as DecadeKey,
           status: c.status as SignalStatus,
-          outputs: { STOKER: stokerDetail },
+          outputs: { STOKER: stokerDetail, FURNACE: furnaceDetail },
         };
       });
     }
