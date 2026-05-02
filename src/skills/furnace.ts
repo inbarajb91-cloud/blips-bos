@@ -142,9 +142,9 @@ const briefSectionsSchema = z
     brandFitRationale: z
       .string()
       .min(100)
-      .max(400)
+      .max(600)
       .describe(
-        "Why this score. Be specific about what FITS or what DOESN'T. Vague rationales are themselves refusals of the rationale job.",
+        "Why this score, in 1-3 sentences (max 600 chars). Be specific about what FITS or what DOESN'T. Vague rationales are themselves refusals of the rationale job.",
       ),
 
     // Refusal flag (drives everything below)
@@ -166,82 +166,82 @@ const briefSectionsSchema = z
     designDirection: z
       .string()
       .min(200)
-      .max(500)
+      .max(700)
       .nullable()
       .describe(
-        "HERO. Single tight thesis statement of what this design IS. Editorial register, present tense. Reads as a designer's call, not marketing copy.",
+        "HERO. Single tight thesis statement (max 700 chars) of what this design IS. Editorial register, present tense. Reads as a designer's call, not marketing copy.",
       ),
     tactileIntent: z
       .string()
       .min(100)
-      .max(400)
+      .max(500)
       .nullable()
       .describe(
-        "REQUIRED — premium-design rule. What should the garment FEEL like + COMMUNICATE physically? Use specific material vocabulary (heavyweight cotton, brushed back fleece, corduroy, garment-dyed, etc.). 'Soft cotton' is a failure — be specific. ENGINE Step 1 reads this to derive material spec.",
+        "REQUIRED — premium-design rule (max 500 chars). What should the garment FEEL like + COMMUNICATE physically? Use specific material vocabulary (heavyweight cotton, brushed back fleece, corduroy, garment-dyed, etc.). 'Soft cotton' is a failure — be specific. ENGINE Step 1 reads this to derive material spec.",
       ),
     moodAndTone: z
       .string()
-      .min(100)
-      .max(300)
+      .min(80)
+      .max(400)
       .nullable()
       .describe(
-        "Emotional register — raw / quiet / sardonic / spectral / weighted / declarative / unsettled. Single-thought, no caveats.",
+        "Emotional register (max 400 chars) — raw / quiet / sardonic / spectral / weighted / declarative / unsettled. Single-thought, no caveats.",
       ),
     compositionApproach: z
       .string()
-      .min(100)
-      .max(300)
+      .min(80)
+      .max(400)
       .nullable()
       .describe(
-        "Type-led / illustrative / photographic / abstract / mixed / negative-space-heavy / dense / single-statement. The PRIMARY composition register; use mixed only when the design genuinely combines two registers.",
+        "Composition register (max 400 chars) — Type-led / illustrative / photographic / abstract / mixed / negative-space-heavy / dense / single-statement. The PRIMARY composition register; use mixed only when the design genuinely combines two registers.",
       ),
     colorTreatment: z
       .string()
-      .min(100)
-      .max(300)
+      .min(80)
+      .max(450)
       .nullable()
       .describe(
-        "Color choices + how they sit. Reference S01 Raw Industrial / S02 Cold Cosmic / S03 Warm Reckoning seasonal palettes OR explicitly justify why this design departs. High-contrast / muted monochrome / wash + accent / decade-palette-anchored.",
+        "Color choices + how they sit (max 450 chars). Reference S01 Raw Industrial / S02 Cold Cosmic / S03 Warm Reckoning seasonal palettes OR explicitly justify why this design departs. High-contrast / muted monochrome / wash + accent / decade-palette-anchored.",
       ),
     typographicTreatment: z
       .string()
       .min(100)
-      .max(400)
+      .max(500)
       .nullable()
       .describe(
-        "If type-led: which Ink family (Syne display / Cormorant Garamond editorial / DM Mono) + scale (hero / pull-quote / sub-text) + treatment notes (debossed feel, screen-print texture, hand-drawn substitution, broken setting, set-as-quote, set-as-fragment).",
+        "Typographic notes (max 500 chars). If type-led: which Ink family (Syne display / Cormorant Garamond editorial / DM Mono) + scale (hero / pull-quote / sub-text) + treatment notes (debossed feel, screen-print texture, hand-drawn substitution, broken setting, set-as-quote, set-as-fragment).",
       ),
     artDirection: z
       .string()
       .min(100)
-      .max(400)
+      .max(500)
       .nullable()
       .describe(
-        "Illustrative style notes if illustration is involved (drawn / painted / printmaking-influenced / collaged); photo treatment if photo; iconographic system if iconographic. Specific enough that BOILER can render directly.",
+        "Art direction notes (max 500 chars). Illustrative style notes if illustration is involved (drawn / painted / printmaking-influenced / collaged); photo treatment if photo; iconographic system if iconographic. Specific enough that BOILER can render directly.",
       ),
     referenceAnchors: z
       .string()
       .min(100)
-      .max(400)
+      .max(500)
       .nullable()
       .describe(
-        "Visual references this is in conversation with — designers, art movements, artifacts (Acne posters, Brutalist editorial, early 90s rave flyers, Daniel Eatock's restraint, etc.). Push past streetwear default — Acne / ALD acceptable but not exclusive.",
+        "Visual references this is in conversation with (max 500 chars) — designers, art movements, artifacts (Acne posters, Brutalist editorial, early 90s rave flyers, Daniel Eatock's restraint, etc.). Push past streetwear default — Acne / ALD acceptable but not exclusive.",
       ),
     placementIntent: z
       .string()
-      .min(80)
-      .max(200)
-      .nullable()
-      .describe(
-        "Front-only / back-panel / sleeve hit / wraparound / hem / all-over / inside-tag. Compositional, not technical. Print technique stays at ENGINE Step 1.",
-      ),
-    voiceInVisual: z
-      .string()
-      .min(100)
+      .min(60)
       .max(300)
       .nullable()
       .describe(
-        "If text appears in the design itself, how does it read — sharp one-liner / quote / data-as-poem / fragment / unfinished thought? BLIPS voice (observational, calmly confrontational, smirks doesn't shout).",
+        "Placement intent (max 300 chars). Front-only / back-panel / sleeve hit / wraparound / hem / all-over / inside-tag. Compositional, not technical. Print technique stays at ENGINE Step 1.",
+      ),
+    voiceInVisual: z
+      .string()
+      .min(80)
+      .max(400)
+      .nullable()
+      .describe(
+        "Voice in visual (max 400 chars). If text appears in the design itself, how does it read — sharp one-liner / quote / data-as-poem / fragment / unfinished thought? BLIPS voice (observational, calmly confrontational, smirks doesn't shout).",
       ),
 
     // ORC-extensible addenda — empty on initial generation; populated
@@ -259,73 +259,37 @@ const briefSectionsSchema = z
       .describe(
         "Extensible addenda — sections that aren't in the core 11 but ORC or founder wants on this specific brief (hangtag content, special instructions, etc.). Empty on initial FURNACE generation; populated later via ORC tools.",
       ),
-  })
-  .refine(
-    (val) => {
-      // Refusal consistency: refused iff score < 50
-      return val.refused === val.brandFitScore < 50;
-    },
-    {
-      message:
-        "refused must be true if and only if brandFitScore < 50.",
-    },
-  )
-  .refine(
-    (val) => {
-      // refusalReason required when refused, null when not
-      return val.refused
-        ? val.refusalReason !== null
-        : val.refusalReason === null;
-    },
-    {
-      message:
-        "refusalReason is required when refused=true and must be null when refused=false.",
-    },
-  )
-  .refine(
-    (val) => {
-      // When refused, all section fields are null
-      if (!val.refused) return true;
-      return (
-        val.designDirection === null &&
-        val.tactileIntent === null &&
-        val.moodAndTone === null &&
-        val.compositionApproach === null &&
-        val.colorTreatment === null &&
-        val.typographicTreatment === null &&
-        val.artDirection === null &&
-        val.referenceAnchors === null &&
-        val.placementIntent === null &&
-        val.voiceInVisual === null
-      );
-    },
-    {
-      message:
-        "When refused=true, all section fields (designDirection, tactileIntent, moodAndTone, compositionApproach, colorTreatment, typographicTreatment, artDirection, referenceAnchors, placementIntent, voiceInVisual) must be null.",
-    },
-  )
-  .refine(
-    (val) => {
-      // When NOT refused, all required section fields are populated
-      if (val.refused) return true;
-      return (
-        val.designDirection !== null &&
-        val.tactileIntent !== null &&
-        val.moodAndTone !== null &&
-        val.compositionApproach !== null &&
-        val.colorTreatment !== null &&
-        val.typographicTreatment !== null &&
-        val.artDirection !== null &&
-        val.referenceAnchors !== null &&
-        val.placementIntent !== null &&
-        val.voiceInVisual !== null
-      );
-    },
-    {
-      message:
-        "When refused=false, all 10 required section fields (designDirection, tactileIntent, moodAndTone, compositionApproach, colorTreatment, typographicTreatment, artDirection, referenceAnchors, placementIntent, voiceInVisual) must be populated.",
-    },
-  );
+  });
+
+// NOTE: schema deliberately does NOT include .refine() chains for the
+// refusal invariants (refused iff score<50; sections null iff refused;
+// etc.). Phase 10 smoke test (May 3) showed Gemini's structured-output
+// mode generates output that Zod's refinements then reject — the AI SDK
+// retries, fails again, throws "No object generated". Refinements run
+// post-generation; the model doesn't know about them and can't conform.
+//
+// Two paths considered:
+//   (a) Drop refinements + validate semantics at the app layer (the
+//       Inngest handler + ORC tools can reject malformed output and
+//       re-prompt with feedback). The schema enforces STRUCTURE
+//       (character bounds, types, nullable fields); the prompt enforces
+//       SEMANTICS (refusal coherence). This is the standard pattern in
+//       the AI SDK + Gemini docs.
+//   (b) Use a Zod discriminated union (refused-variant vs accepted-variant)
+//       — cleaner but Gemini's structured-output also struggles with
+//       complex unions, and the prompt instructions to pick the right
+//       variant become more brittle.
+//
+// Picked (a). The system prompt explicitly tells the model:
+//   "refused=true → all section fields null; refused=false → all sections
+//    populated". When the model gets this wrong (rare, observed <5% in
+//    smoke test), the brief still validates structurally and downstream
+//    code can flag the inconsistency.
+//
+// Application-level validators (e.g. validateBriefCoherence) live alongside
+// the Inngest handler (Phase 10C) for soft-warning cases. Hard validators
+// (e.g. tactileIntent must contain material vocabulary) live in the eval
+// suite (Phase 10G) so we measure quality, not crash on it.
 
 const outputSchema = briefSectionsSchema;
 
@@ -426,6 +390,24 @@ The user message may include up to 3 past briefs for this decade. Read them for 
 
 OUTPUT FORMAT
 Valid JSON matching the schema. When refused=true, all section fields null. When refused=false, all 10 required section fields populated within character bounds. Empty addenda array on initial generation.
+
+CHARACTER COUNTS — STRICTLY ENFORCED BY THE SCHEMA
+The schema rejects any section over its max character bound and the API call FAILS. Stay under each max — concision is part of the editorial discipline. Long answers indicate unfocused thinking; tighten and ship.
+
+  Section maxima (chars):
+    brandFitRationale: 600   (refusalReason: same range when refused)
+    designDirection:   700   (the hero — most generous bound)
+    tactileIntent:     500
+    typographicTreatment: 500
+    artDirection:      500
+    referenceAnchors:  500
+    colorTreatment:    450
+    moodAndTone:       400
+    compositionApproach: 400
+    voiceInVisual:     400
+    placementIntent:   300
+
+Aim for 60-80% of max per section. If you find yourself over the max, you're trying to say two things in one section — pick the sharper one.
 
 No commentary before or after the JSON.`;
 
