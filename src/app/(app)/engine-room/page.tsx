@@ -161,7 +161,7 @@ export default async function BridgePage() {
       {/* Collections stream */}
       {colRows.length === 0 ? (
         <div className="border border-dashed border-rule-2 rounded-md py-20 px-8 flex flex-col items-center gap-4 text-center">
-          <p className="font-editorial italic text-t2 text-[22px] leading-tight">
+          <p className="font-editorial text-t2 text-[22px] leading-tight">
             no collections yet.
           </p>
           <p className="font-mono text-[11px] tracking-[0.22em] uppercase text-t4 max-w-sm leading-relaxed">

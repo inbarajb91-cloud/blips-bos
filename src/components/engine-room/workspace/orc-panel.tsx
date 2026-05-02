@@ -561,7 +561,7 @@ export function OrcPanel({
             Loading conversation…
           </div>
         ) : messages.length === 0 ? (
-          <div className="font-editorial italic text-[14px] text-t4">
+          <div className="font-editorial text-[14px] text-t4">
             No messages yet. Say something to ORC below.
           </div>
         ) : (
@@ -1104,7 +1104,7 @@ function OrcInput({
       aria-label={`Message ORC about signal ${signalShortcode}`}
       disabled={disabled}
       maxLength={2000}
-      className="flex-1 bg-transparent border border-rule-2 rounded-sm px-[14px] py-[10px] font-display text-[14px] -tracking-[0.002em] text-t1 outline-none focus:border-[rgba(var(--d),0.7)] transition-colors placeholder:text-t5 placeholder:italic placeholder:font-editorial disabled:opacity-60 disabled:cursor-not-allowed"
+      className="flex-1 bg-transparent border border-rule-2 rounded-sm px-[14px] py-[10px] font-display text-[14px] -tracking-[0.002em] text-t1 outline-none focus:border-[rgba(var(--d),0.7)] transition-colors placeholder:text-t5 placeholder:font-editorial disabled:opacity-60 disabled:cursor-not-allowed"
     />
   );
 }

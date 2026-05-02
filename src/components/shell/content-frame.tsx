@@ -11,7 +11,7 @@ export function ContentFrame({ children }: { children?: React.ReactNode }) {
   }
   return (
     <div className="flex-1 min-h-0 overflow-auto flex items-center justify-center relative bg-ink p-8">
-      <div className="font-editorial italic font-light text-[22px] text-warm-muted tracking-[0.01em] select-none">
+      <div className="font-editorial font-light text-[22px] text-warm-muted tracking-[0.01em] select-none">
         — No module loaded —
       </div>
     </div>

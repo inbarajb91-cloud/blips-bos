@@ -463,7 +463,7 @@ export function CollectionCard({
         >
           <div className="pt-2 pb-7 pl-7 pr-6">
             {c.outline && (
-              <p className="font-editorial italic text-[14px] leading-[1.5] text-t3 py-1.5 pb-4 max-w-[620px]">
+              <p className="font-editorial text-[14px] leading-[1.5] text-t3 py-1.5 pb-4 max-w-[620px]">
                 {c.outline}
               </p>
             )}
@@ -503,7 +503,7 @@ export function CollectionCard({
             )}
 
             {candidates.length === 0 && signals.length === 0 && (
-              <p className="font-editorial italic text-[14px] text-t4 py-6">
+              <p className="font-editorial text-[14px] text-t4 py-6">
                 nothing here yet. {isRunning ? "collecting…" : "re-run to refresh."}
               </p>
             )}
@@ -548,7 +548,7 @@ export function CollectionCard({
                     </span>
                   )}
                 </div>
-                <span className="font-editorial italic text-[12.5px] text-t5 max-w-[340px] text-right leading-[1.5]">
+                <span className="font-editorial text-[12.5px] text-t5 max-w-[340px] text-right leading-[1.5]">
                   Hides this collection from Bridge. Signals stay in the
                   pipeline; triage candidates retained.
                 </span>
@@ -592,7 +592,7 @@ function CandidateRow({ c }: { c: CandidateForCard }) {
           {c.workingTitle}
         </span>
         {c.concept && (
-          <span className="font-editorial italic text-[14px] leading-[1.5] text-t3">
+          <span className="font-editorial text-[14px] leading-[1.5] text-t3">
             {c.concept}
           </span>
         )}
@@ -711,7 +711,7 @@ function SignalRow({
             {s.workingTitle}
           </span>
           {s.concept && (
-            <span className="font-editorial italic text-[14px] leading-[1.5] text-t3 line-clamp-1">
+            <span className="font-editorial text-[14px] leading-[1.5] text-t3 line-clamp-1">
               {s.concept}
             </span>
           )}

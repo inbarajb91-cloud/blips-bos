@@ -176,7 +176,7 @@ export function ContextStrip({
             ) : (
               <div className="p-[14px_16px] border border-rule-1 rounded-sm bg-wash-1">
                 <Label>Origin</Label>
-                <div className="font-editorial italic text-[13.5px] text-t4">
+                <div className="font-editorial text-[13.5px] text-t4">
                   Direct submission · no parent collection
                 </div>
               </div>
@@ -189,7 +189,7 @@ export function ContextStrip({
               {signal.concept ? (
                 <>
                   <Label>Concept</Label>
-                  <p className="font-editorial italic text-[15px] leading-[1.5] text-t2">
+                  <p className="font-editorial text-[15px] leading-[1.5] text-t2">
                     &ldquo;{signal.concept}&rdquo;
                   </p>
                 </>
@@ -223,7 +223,7 @@ export function ContextStrip({
                 <div className="font-mono text-[9.5px] tracking-[0.22em] uppercase text-[#d4908a] mb-1">
                   Read-only
                 </div>
-                <p className="font-editorial italic text-[13.5px] leading-[1.5] text-t3">
+                <p className="font-editorial text-[13.5px] leading-[1.5] text-t3">
                   {lockStatus.lockedByEmail ?? "Another user"} is currently
                   editing this signal. You can view — edits unlock when
                   their session ends or the lock expires.
@@ -273,7 +273,7 @@ function LockToggle({
         <span className="font-mono text-[10px] tracking-[0.22em] uppercase text-t5">
           Lock
         </span>
-        <span className="text-t5 italic font-editorial text-[12px]">
+        <span className="text-t5 font-editorial text-[12px]">
           unlocked
         </span>
         <button

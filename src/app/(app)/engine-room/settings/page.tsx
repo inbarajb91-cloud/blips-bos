@@ -63,7 +63,7 @@ export default function EngineRoomSettingsPage() {
         ))}
       </div>
 
-      <p className="font-editorial italic text-warm-muted text-base mt-10 text-center">
+      <p className="font-editorial text-warm-muted text-base mt-10 text-center">
         Current defaults: every human gate requires approval. Flip them off as
         trust earns through.
       </p>

@@ -41,7 +41,7 @@ export function SkillCard({
         </span>
       </div>
 
-      <p className="font-editorial italic text-warm-bright text-sm leading-snug">
+      <p className="font-editorial text-warm-bright text-sm leading-snug">
         {metaphor}
       </p>
 

@@ -294,7 +294,7 @@ export function StokerResonance({
               STOKER is running…
             </span>
           </div>
-          <p className="font-editorial italic text-t3 text-sm max-w-xl">
+          <p className="font-editorial text-t3 text-sm max-w-xl">
             Scoring resonance across the three decade cohorts. The cards
             land here as soon as STOKER finishes — no need to refresh.
           </p>
@@ -309,7 +309,7 @@ export function StokerResonance({
         <div className="text-t1 font-display text-base font-semibold mb-2">
           STOKER hasn&apos;t run for this signal yet
         </div>
-        <p className="font-editorial italic text-t3 text-sm max-w-xl">
+        <p className="font-editorial text-t3 text-sm max-w-xl">
           Once you approve this signal at BUNKER, STOKER scores its
           resonance across the three decade cohorts (RCK / RCL / RCD)
           and produces decade-specific manifestations. Each manifestation
@@ -352,7 +352,7 @@ export function StokerResonance({
       <h2 className="font-display text-base font-semibold text-t1 mb-1">
         How {signal.shortcode} lands across the three decades
       </h2>
-      <p className="font-editorial italic text-t3 text-sm mb-7 max-w-3xl">
+      <p className="font-editorial text-t3 text-sm mb-7 max-w-3xl">
         Scores are advisory — your call overrides. Approve cards to
         advance them to FURNACE. Edits stay on the card before approval.
       </p>
@@ -470,7 +470,7 @@ function DecadeCard({
         </div>
         <ProseAsBullets
           text={row.rationale}
-          textClassName="font-editorial italic text-t3 text-[13px] leading-relaxed"
+          textClassName="font-editorial text-t3 text-[13px] leading-relaxed"
         />
       </div>
     );
@@ -1079,7 +1079,7 @@ function FanOutPreview({
         <span className="font-mono text-[9px] tracking-[0.24em] uppercase text-t4">
           Advancing to FURNACE
         </span>
-        <span className="font-editorial italic text-t3 text-sm">
+        <span className="font-editorial text-t3 text-sm">
           Approve at least one manifestation to advance.
         </span>
       </div>
@@ -1092,7 +1092,7 @@ function FanOutPreview({
         Advancing to FURNACE
       </span>
       {advancing.length === 0 ? (
-        <span className="font-editorial italic text-t3 text-sm">
+        <span className="font-editorial text-t3 text-sm">
           Nothing yet.
         </span>
       ) : (
@@ -1157,7 +1157,7 @@ function ManifestationDetailView({
 }) {
   if (!manifestationDetail) {
     return (
-      <div className="py-8 text-t3 font-editorial italic">
+      <div className="py-8 text-t3 font-editorial">
         STOKER output for this manifestation hasn&apos;t been loaded yet.
         If this persists after a refresh, check the parent signal and
         re-run STOKER from there.
@@ -1192,7 +1192,7 @@ function ManifestationDetailView({
           <span className="text-t3"> of {parentRef.shortcode}</span>
         )}
       </h2>
-      <p className="font-editorial italic text-t3 text-sm mb-7 max-w-3xl">
+      <p className="font-editorial text-t3 text-sm mb-7 max-w-3xl">
         Originally produced by STOKER
         {manifestationDetail.revisionsCount > 0 && (
           <>, last edited (revision {manifestationDetail.revisionsCount})</>
@@ -1290,7 +1290,7 @@ function ManifestationDetailView({
             <div className="font-mono text-[10px] tracking-[0.22em] uppercase text-t4 mb-1.5">
               Rationale
             </div>
-            <div className="font-editorial text-[14px] leading-relaxed text-t2 italic">
+            <div className="font-editorial text-[14px] leading-relaxed text-t2">
               {c.rationale}
             </div>
           </div>

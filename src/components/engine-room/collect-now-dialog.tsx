@@ -235,7 +235,7 @@ export function CollectNowDialog() {
                       : "what are you looking for? one-liner for your own reference."
                   }
                   rows={3}
-                  className={`bg-transparent text-t1 border rounded-sm px-3.5 py-3 font-editorial italic text-[14px] leading-[1.5] resize-y min-h-[72px] outline-none w-full focus:border-t2 transition-colors placeholder:text-t5 ${
+                  className={`bg-transparent text-t1 border rounded-sm px-3.5 py-3 font-editorial text-[14px] leading-[1.5] resize-y min-h-[72px] outline-none w-full focus:border-t2 transition-colors placeholder:text-t5 ${
                     searchMode === "reference" &&
                     outline.trim().length > 0 &&
                     outline.trim().length < 10
@@ -257,7 +257,7 @@ export function CollectNowDialog() {
                     outline.trim().length < 10
                   }
                 />
-                <div className="font-editorial italic text-[12.5px] text-t5 leading-[1.5]">
+                <div className="font-editorial text-[12.5px] text-t5 leading-[1.5]">
                   {searchMode === "reference"
                     ? outline.trim().length > 0 && outline.trim().length < 10
                       ? `reference mode — needs at least 10 characters to become a search query. currently ${outline.trim().length}.`
@@ -295,7 +295,7 @@ export function CollectNowDialog() {
                     </button>
                   ))}
                 </div>
-                <div className="font-editorial italic text-[12.5px] text-t5 leading-[1.5]">
+                <div className="font-editorial text-[12.5px] text-t5 leading-[1.5]">
                   {decadeHint === "any"
                     ? "span all three decades. BUNKER finds tensions that resonate across."
                     : `bias sourcing toward ${decadeHint}. STOKER will still fan out to matching decades downstream — this doesn't replace that.`}
@@ -331,7 +331,7 @@ export function CollectNowDialog() {
                     </button>
                   ))}
                 </div>
-                <div className="font-editorial italic text-[13px] text-t4">
+                <div className="font-editorial text-[13px] text-t4">
                   {TYPE_HINTS[type]}
                 </div>
               </div>
@@ -393,7 +393,7 @@ export function CollectNowDialog() {
                       </button>
                     ))}
                   </div>
-                  <div className="font-editorial italic text-[13px] text-t4">
+                  <div className="font-editorial text-[13px] text-t4">
                     candidates accumulate inside this same collection on every
                     refresh.
                   </div>
@@ -414,7 +414,7 @@ export function CollectNowDialog() {
                   "linear-gradient(to bottom, var(--color-wash-1), rgba(var(--d), 0.03))",
               }}
             >
-              <div className="font-editorial italic text-[13.5px] text-t3">
+              <div className="font-editorial text-[13.5px] text-t3">
                 <b className="text-t1 font-display not-italic font-semibold">
                   {type.charAt(0).toUpperCase() + type.slice(1)}
                 </b>{" "}

@@ -57,7 +57,7 @@ export default async function KnowledgeListPage({
         </div>
       </div>
 
-      <p className="font-editorial italic text-warm-muted text-sm mb-8">
+      <p className="font-editorial text-warm-muted text-sm mb-8">
         ORC reads from these via{" "}
         <code className="font-mono text-[11px] text-warm-bright">
           recall(query, container=&apos;knowledge&apos;)
@@ -68,7 +68,7 @@ export default async function KnowledgeListPage({
 
       {docs.length === 0 ? (
         <div className="border border-dashed border-deep-divider rounded-md py-16 px-6 text-center">
-          <p className="font-editorial italic text-warm-bright text-base mb-2">
+          <p className="font-editorial text-warm-bright text-base mb-2">
             {showArchived
               ? "No archived knowledge docs yet."
               : "No knowledge docs yet."}
