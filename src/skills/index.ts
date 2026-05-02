@@ -21,6 +21,6 @@ export {
 // Keep in phase order so the load sequence mirrors the pipeline.
 import "./bunker"; // Phase 6
 import "./stoker"; // Phase 9
-// import "./furnace"; // Phase 10
+import "./furnace"; // Phase 10
 // import "./boiler";  // Phase 11
 // import "./engine";  // Phase 12
