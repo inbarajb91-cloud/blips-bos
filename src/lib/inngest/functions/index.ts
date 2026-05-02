@@ -6,6 +6,7 @@ import {
   bunkerScheduledCheck,
 } from "./bunker";
 import { stokerProcess } from "./stoker";
+import { furnaceProcess } from "./furnace";
 
 /**
  * Inngest function registry — every function the app exposes.
@@ -20,4 +21,5 @@ export const functions = [
   bunkerCollectionRun,
   bunkerScheduledCheck,
   stokerProcess, // Phase 9C
+  furnaceProcess, // Phase 10C
 ];
