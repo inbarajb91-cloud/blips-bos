@@ -45,7 +45,14 @@ if (existsSync(".env.local")) {
 }
 
 interface Playbook {
-  decade: "RCK" | "RCL" | "RCD";
+  /** Identity tag — drives logging only. RCK/RCL/RCD = decade playbook;
+   *  BRAND/MATERIALS = brand-wide reference docs (Phase 10 added these). */
+  decade: "RCK" | "RCL" | "RCD" | "BRAND" | "MATERIALS";
+  /** Title stored in knowledge_documents.title. Must match the title
+   *  the consuming agent's recall lookup uses verbatim — these are the
+   *  canonical titles for the FURNACE Inngest handler's playbook fetch
+   *  (see src/lib/inngest/functions/furnace.ts) and the verify script
+   *  (scripts/verify-furnace-pipeline.ts). Don't drift. */
   title: string;
   fileName: string;
   tags: string[];
@@ -54,21 +61,35 @@ interface Playbook {
 const PLAYBOOKS: Playbook[] = [
   {
     decade: "RCK",
-    title: "RCK Decade Playbook · 28-38 · The Reckoning",
+    title: "RCK Decade Playbook",
     fileName: "RCK.md",
-    tags: ["decade-playbook", "rck", "stoker"],
+    tags: ["decade-playbook", "rck", "stoker", "furnace"],
   },
   {
     decade: "RCL",
-    title: "RCL Decade Playbook · 38-48 · The Recalibration",
+    title: "RCL Decade Playbook",
     fileName: "RCL.md",
-    tags: ["decade-playbook", "rcl", "stoker"],
+    tags: ["decade-playbook", "rcl", "stoker", "furnace"],
   },
   {
     decade: "RCD",
-    title: "RCD Decade Playbook · 48-58 · The Reckoned",
+    title: "RCD Decade Playbook",
     fileName: "RCD.md",
-    tags: ["decade-playbook", "rcd", "stoker"],
+    tags: ["decade-playbook", "rcd", "stoker", "furnace"],
+  },
+  // Phase 10 additions — brand-wide reference docs FURNACE recalls
+  // alongside the per-decade playbook for visual brief generation.
+  {
+    decade: "BRAND",
+    title: "BLIPS Brand Identity",
+    fileName: "BRAND.md",
+    tags: ["brand-identity", "stoker", "furnace", "boiler"],
+  },
+  {
+    decade: "MATERIALS",
+    title: "BLIPS Materials Playbook",
+    fileName: "MATERIALS.md",
+    tags: ["materials", "tactile-vocabulary", "furnace", "engine"],
   },
 ];
 
