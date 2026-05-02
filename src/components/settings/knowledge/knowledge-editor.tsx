@@ -354,7 +354,7 @@ export function KnowledgeEditor(props: {
             Version history
           </h2>
           {versions.length === 0 ? (
-            <p className="font-editorial italic text-warm-muted text-sm">
+            <p className="font-editorial text-warm-muted text-sm">
               No versions yet.
             </p>
           ) : (
@@ -379,7 +379,7 @@ export function KnowledgeEditor(props: {
                     {v.title}
                   </p>
                   {v.changeNote && (
-                    <p className="font-editorial italic text-warm-muted text-[12px] mt-1 leading-relaxed">
+                    <p className="font-editorial text-warm-muted text-[12px] mt-1 leading-relaxed">
                       {v.changeNote}
                     </p>
                   )}

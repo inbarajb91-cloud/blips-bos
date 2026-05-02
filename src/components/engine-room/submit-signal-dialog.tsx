@@ -96,7 +96,7 @@ export function SubmitSignalDialog() {
                   >
                     Signal logged
                   </h2>
-                  <p className="font-editorial italic text-warm-bright text-lg">
+                  <p className="font-editorial text-warm-bright text-lg">
                     BUNKER extracted{" "}
                     <span className="text-off-white font-mono not-italic text-base tracking-[0.12em]">
                       {result.shortcode}

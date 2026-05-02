@@ -48,7 +48,7 @@ export function BunkerRetrospective({ signal, parentRef }: RendererProps) {
         <h2 className="font-display text-base font-semibold text-t1 mb-1">
           This manifestation inherits its source from its parent signal
         </h2>
-        <p className="font-editorial italic text-t3 text-sm mb-7 max-w-3xl">
+        <p className="font-editorial text-t3 text-sm mb-7 max-w-3xl">
           The raw source content + extraction live on the parent. This
           manifestation was produced by STOKER from that extraction —
           its own pipeline starts at STOKER, not BUNKER.
@@ -70,7 +70,7 @@ export function BunkerRetrospective({ signal, parentRef }: RendererProps) {
                 Open ↗
               </a>
             </div>
-            <span className="font-editorial italic text-t3 text-sm">
+            <span className="font-editorial text-t3 text-sm">
               {parentRef.workingTitle}
             </span>
           </div>
@@ -125,7 +125,7 @@ export function BunkerRetrospective({ signal, parentRef }: RendererProps) {
             <SrcRow
               k="Raw excerpt"
               v={
-                <span className="font-editorial italic text-[14px] leading-[1.55] text-t3">
+                <span className="font-editorial text-[14px] leading-[1.55] text-t3">
                   &ldquo;{truncate(signal.rawText, 500)}&rdquo;
                 </span>
               }
@@ -149,13 +149,13 @@ export function BunkerRetrospective({ signal, parentRef }: RendererProps) {
             </span>
           </ExtCell>
           <ExtCell k="Concept" full>
-            <span className="font-editorial italic text-[15.5px] leading-[1.5] text-t2">
+            <span className="font-editorial text-[15.5px] leading-[1.5] text-t2">
               {signal.concept ?? "—"}
             </span>
           </ExtCell>
           {sourceContext && (
             <ExtCell k="Source Context" full>
-              <span className="font-editorial italic text-[15.5px] leading-[1.5] text-t2">
+              <span className="font-editorial text-[15.5px] leading-[1.5] text-t2">
                 {sourceContext}
               </span>
             </ExtCell>

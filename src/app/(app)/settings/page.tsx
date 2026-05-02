@@ -89,7 +89,7 @@ export default function BOSSettingsPage() {
         })}
       </div>
 
-      <p className="font-editorial italic text-warm-muted text-base mt-10 text-center">
+      <p className="font-editorial text-warm-muted text-base mt-10 text-center">
         More sections surface as each phase defines what belongs here.
       </p>
     </div>

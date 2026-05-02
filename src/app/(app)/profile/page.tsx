@@ -38,7 +38,7 @@ export default async function ProfilePage() {
         <Row label="Last sign-in" value={lastSignIn} />
       </dl>
 
-      <p className="font-editorial italic text-warm-muted text-base mt-10 text-center">
+      <p className="font-editorial text-warm-muted text-base mt-10 text-center">
         Full profile editing lands in Phase 2.
       </p>
     </div>

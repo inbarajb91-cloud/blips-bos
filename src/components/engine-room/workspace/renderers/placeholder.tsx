@@ -95,7 +95,7 @@ export function StagePlaceholder({
       )}
 
       <div className="p-12 border border-dashed border-rule-2 rounded-md bg-wash-1 text-center">
-        <p className="font-editorial italic text-[15px] leading-[1.55] text-t3 max-w-[52ch] mx-auto">
+        <p className="font-editorial text-[15px] leading-[1.55] text-t3 max-w-[52ch] mx-auto">
           {description}
         </p>
         <p className="mt-5 font-mono text-[10px] tracking-[0.24em] uppercase text-t5">

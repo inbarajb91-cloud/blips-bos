@@ -36,7 +36,7 @@ export function OrcCard({
               Orchestrator
             </span>
           </div>
-          <p className="font-editorial italic text-warm-bright text-lg leading-tight">
+          <p className="font-editorial text-warm-bright text-lg leading-tight">
             One orchestrator, six skills.
           </p>
         </div>
