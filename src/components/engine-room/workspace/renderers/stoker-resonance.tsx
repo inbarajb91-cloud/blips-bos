@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { Component, type ReactNode, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { RendererProps } from "./registry";
 import type { ParentReference, ManifestationOwnDetail } from "./types";
@@ -11,6 +11,69 @@ import {
   editStokerManifestation,
   type ManifestationEditFields,
 } from "@/lib/actions/stoker";
+
+/**
+ * DIAGNOSTIC — Phase 10D verification (May 4, 2026).
+ *
+ * Wraps each DecadeCard in an error boundary that surfaces the actual
+ * thrown error inline + logs to console, instead of Next.js's default
+ * masked "An error occurred in the Server Components render" message.
+ *
+ * Inba flagged a mid-card render error on the RANSOM-RCL card during
+ * Vercel preview testing. Data inspection showed all 3 cards have
+ * identical structure — the per-card error is reproducible only in the
+ * Vercel prod build. This boundary unmasks the error so we can fix it.
+ *
+ * Once the underlying error is identified + fixed, this boundary can
+ * stay (good defensive code — one card erroring shouldn't take out the
+ * whole grid) or revert to the prior behavior.
+ */
+class CardErrorBoundary extends Component<
+  { children: ReactNode; cardKey: string },
+  { error: Error | null }
+> {
+  state = { error: null as Error | null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  componentDidCatch(error: Error, info: { componentStack?: string | null }) {
+    // Log full error + component stack to browser console + Vercel
+    // function logs (server-side fallback). Surfaces in BOTH dev tools
+    // (browser console) AND Vercel runtime logs (server side).
+    console.error(
+      `[STOKER card render error · ${this.props.cardKey}]`,
+      error,
+      "\nstack:",
+      error.stack,
+      "\ncomponent stack:",
+      info.componentStack,
+    );
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="rounded-md border border-[#d4908a] bg-[#a04040]/12 p-4 text-[12px] font-mono text-[#d4908a] leading-relaxed">
+          <div className="font-bold mb-2">CARD ERROR · {this.props.cardKey}</div>
+          <div className="mb-2">
+            <strong>Message:</strong> {this.state.error.message}
+          </div>
+          <div className="mb-2">
+            <strong>Name:</strong> {this.state.error.name}
+          </div>
+          {this.state.error.stack && (
+            <pre className="text-[10px] whitespace-pre-wrap overflow-x-auto opacity-80">
+              {this.state.error.stack.slice(0, 800)}
+            </pre>
+          )}
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 /**
  * STOKER Resonance Renderer — Phase 9D.
@@ -398,12 +461,13 @@ export function StokerResonance({
             {orderedDecades.map((row) => {
               const child = childByDecade.get(row.decade) ?? null;
               return (
-                <DecadeCard
-                  key={row.decade}
-                  row={row}
-                  child={child}
-                  onSwitchToManifestation={onSwitchToManifestation}
-                />
+                <CardErrorBoundary key={row.decade} cardKey={row.decade}>
+                  <DecadeCard
+                    row={row}
+                    child={child}
+                    onSwitchToManifestation={onSwitchToManifestation}
+                  />
+                </CardErrorBoundary>
               );
             })}
           </div>
