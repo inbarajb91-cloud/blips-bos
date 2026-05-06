@@ -9,6 +9,11 @@ import {
   decisionHistory,
 } from "@/db";
 import { getCurrentUserWithOrg } from "@/lib/auth/current-user";
+import {
+  REQUIRED_SECTIONS,
+  SECTION_BOUNDS,
+  type SectionName,
+} from "./furnace-shared";
 
 /**
  * FURNACE server actions — Phase 10D.
@@ -40,37 +45,11 @@ import { getCurrentUserWithOrg } from "@/lib/auth/current-user";
  * indirect — joined to signals.org_id at query time.
  */
 
-// Required sections for granular approval flow. When all 10 are
-// individually approved, the brief auto-promotes to APPROVED.
-// brandFitRationale is informational (not gated for approval) since
-// it's the score's justification, not a design decision.
-const REQUIRED_SECTIONS = [
-  "designDirection",
-  "tactileIntent",
-  "moodAndTone",
-  "compositionApproach",
-  "colorTreatment",
-  "typographicTreatment",
-  "artDirection",
-  "referenceAnchors",
-  "placementIntent",
-  "voiceInVisual",
-] as const;
-
-type SectionName = (typeof REQUIRED_SECTIONS)[number];
-
-const SECTION_BOUNDS: Record<SectionName, { min: number; max: number }> = {
-  designDirection: { min: 200, max: 700 },
-  tactileIntent: { min: 100, max: 500 },
-  moodAndTone: { min: 80, max: 400 },
-  compositionApproach: { min: 80, max: 400 },
-  colorTreatment: { min: 80, max: 450 },
-  typographicTreatment: { min: 100, max: 500 },
-  artDirection: { min: 100, max: 500 },
-  referenceAnchors: { min: 100, max: 500 },
-  placementIntent: { min: 60, max: 300 },
-  voiceInVisual: { min: 80, max: 400 },
-};
+// REQUIRED_SECTIONS, SECTION_BOUNDS, SectionName are now imported from
+// `./furnace-shared` — Next.js App Router doesn't allow non-function
+// exports in `"use server"` files. The constants are shared between this
+// server-actions module and the client renderer (FurnaceBrief) so they
+// MUST live in a non-server module.
 
 interface BriefRow {
   id: string;
@@ -454,6 +433,6 @@ export async function editBriefSection(opts: {
   return { ok: true, revisionsCount: brief.revisions.length + 1 };
 }
 
-// Re-export the section-name + bounds for renderer use.
-export { REQUIRED_SECTIONS, SECTION_BOUNDS };
-export type { SectionName };
+// REQUIRED_SECTIONS / SECTION_BOUNDS / SectionName are exported from
+// `./furnace-shared` directly. Don't re-export from here — "use server"
+// files can only export async functions.

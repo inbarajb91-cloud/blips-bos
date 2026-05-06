@@ -8,10 +8,12 @@ import {
   approveFullBrief,
   dismissBrief,
   editBriefSection,
+} from "@/lib/actions/furnace";
+import {
   REQUIRED_SECTIONS,
   SECTION_BOUNDS,
   type SectionName,
-} from "@/lib/actions/furnace";
+} from "@/lib/actions/furnace-shared";
 
 /**
  * FURNACE Brief Renderer — Phase 10D.
