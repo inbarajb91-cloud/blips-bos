@@ -8,6 +8,7 @@ import {
   approveFullBrief,
   dismissBrief,
   editBriefSection,
+  regenerateFullBrief,
 } from "@/lib/actions/furnace";
 import {
   REQUIRED_SECTIONS,
@@ -44,9 +45,13 @@ import {
  *     actual ORC tool integration; this renderer just opens the ORC
  *     panel with a pre-filled prompt context)
  *
- * Cascade banner (Phase 10F): currently shows a static placeholder
- * when STOKER manifestation has been edited past gate. The actual
- * detection logic ships in 10F.
+ * Cascade banner (Phase 10F): when the STOKER manifestation framing has
+ * been edited past the IN_STOKER gate (i.e. while in IN_FURNACE+),
+ * `activeManifestation.stokerHasCascade === true`. We surface a banner
+ * inviting regeneration on PENDING/REJECTED briefs, and a read-only
+ * "framing changed since approval" notice on APPROVED briefs (we can't
+ * regenerate an approved brief without orphaning BOILER, so awareness
+ * only there).
  */
 
 interface BriefContent {
@@ -114,6 +119,7 @@ export function FurnaceBrief(props: RendererProps) {
   const sectionApprovals = (briefDetail.content as Record<string, unknown>)
     ?.sectionApprovals as SectionApprovals | undefined;
   const status = briefDetail.status;
+  const stokerHasCascade = manifestation.stokerHasCascade === true;
 
   // Refused state — brief was generated but FURNACE refused (brand-fit < 50)
   if (content.refused === true) {
@@ -123,6 +129,7 @@ export function FurnaceBrief(props: RendererProps) {
         brandFitScore={content.brandFitScore ?? 0}
         refusalReason={content.refusalReason ?? "(no rationale provided)"}
         manifestationShortcode={manifestation.shortcode}
+        stokerHasCascade={stokerHasCascade}
       />
     );
   }
@@ -134,6 +141,7 @@ export function FurnaceBrief(props: RendererProps) {
         briefId={briefDetail.id}
         content={content}
         manifestationShortcode={manifestation.shortcode}
+        stokerHasCascade={stokerHasCascade}
       />
     );
   }
@@ -144,6 +152,7 @@ export function FurnaceBrief(props: RendererProps) {
       <FurnaceRejectedByFounder
         briefId={briefDetail.id}
         manifestationShortcode={manifestation.shortcode}
+        stokerHasCascade={stokerHasCascade}
       />
     );
   }
@@ -156,6 +165,7 @@ export function FurnaceBrief(props: RendererProps) {
       sectionApprovals={sectionApprovals ?? ((briefDetail as unknown) as { sectionApprovals?: SectionApprovals }).sectionApprovals ?? {}}
       manifestationShortcode={manifestation.shortcode}
       revisionsCount={briefDetail.revisionsCount}
+      stokerHasCascade={stokerHasCascade}
     />
   );
 }
@@ -215,15 +225,19 @@ function FurnaceRefused({
   brandFitScore,
   refusalReason,
   manifestationShortcode,
+  stokerHasCascade,
 }: {
   briefId: string;
   brandFitScore: number;
   refusalReason: string;
   manifestationShortcode: string;
+  stokerHasCascade: boolean;
 }) {
-  void briefId; // Future: force-advance via ORC tool (Phase 10E)
   return (
     <div className="py-12 px-7">
+      {stokerHasCascade && (
+        <CascadeBanner briefId={briefId} variant="actionable" />
+      )}
       <div className="border border-rule-2 rounded-md px-7 py-6 mb-6 bg-[rgba(242,239,233,0.044)]">
         <div className="font-mono text-[9px] tracking-[0.24em] uppercase text-[rgba(var(--d-rck),0.9)] mb-2.5">
           FURNACE REFUSED · brand fit {brandFitScore}/100
@@ -247,14 +261,16 @@ function FurnaceApproved({
   briefId,
   content,
   manifestationShortcode,
+  stokerHasCascade,
 }: {
   briefId: string;
   content: BriefContent;
   manifestationShortcode: string;
+  stokerHasCascade: boolean;
 }) {
-  void briefId;
   return (
     <div className="py-8 px-7">
+      {stokerHasCascade && <CascadeBanner briefId={briefId} variant="readonly" />}
       <div className="bg-wash-1 border border-rule-1 rounded-md px-6 py-5 mb-6">
         <div className="flex items-center justify-between mb-3">
           <div>
@@ -276,13 +292,17 @@ function FurnaceApproved({
 function FurnaceRejectedByFounder({
   briefId,
   manifestationShortcode,
+  stokerHasCascade,
 }: {
   briefId: string;
   manifestationShortcode: string;
+  stokerHasCascade: boolean;
 }) {
-  void briefId;
   return (
     <div className="py-12 px-7">
+      {stokerHasCascade && (
+        <CascadeBanner briefId={briefId} variant="actionable" />
+      )}
       <div className="border border-rule-2 rounded-md px-7 py-6 max-w-3xl">
         <div className="font-mono text-[9px] tracking-[0.24em] uppercase text-t4 mb-2.5">
           FURNACE · Brief rejected by founder
@@ -307,12 +327,14 @@ function FurnaceBriefReview({
   sectionApprovals,
   manifestationShortcode,
   revisionsCount,
+  stokerHasCascade,
 }: {
   briefId: string;
   content: BriefContent;
   sectionApprovals: SectionApprovals;
   manifestationShortcode: string;
   revisionsCount: number;
+  stokerHasCascade: boolean;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -387,7 +409,10 @@ function FurnaceBriefReview({
         </div>
       )}
 
-      {/* Cascade banner placeholder — Phase 10F */}
+      {/* Phase 10F — cascade banner: STOKER framing edited past gate */}
+      {stokerHasCascade && (
+        <CascadeBanner briefId={briefId} variant="actionable" />
+      )}
 
       {/* Section card grid */}
       <SectionCardGrid
@@ -626,6 +651,94 @@ function SectionCard({
           )}
         </>
       )}
+    </div>
+  );
+}
+
+// ─── Cascade banner — Phase 10F ──────────────────────────────────
+//
+// Surfaces when the parent STOKER manifestation framing was edited
+// past the IN_STOKER gate (one or more revisions on the STOKER row
+// have cascade=true). The brief in front of the user was generated
+// against an older framing.
+//
+// Two variants:
+//   - "actionable" (PENDING / REJECTED briefs): includes a regenerate
+//     CTA that prompts for a reason and calls regenerateFullBrief.
+//   - "readonly" (APPROVED briefs): warning only. Regenerating an
+//     approved brief would orphan downstream BOILER output, so we
+//     surface awareness without an action; founder can edit downstream
+//     manually if needed.
+
+function CascadeBanner({
+  briefId,
+  variant,
+}: {
+  briefId: string;
+  variant: "actionable" | "readonly";
+}) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+
+  function handleRegenerate() {
+    const reason = window.prompt(
+      "Why are you regenerating? (4-600 chars — e.g. 'manifestation framing was rewritten, need brief against new tension axis')",
+      "Manifestation framing changed since this brief was generated — regenerating against updated framing.",
+    );
+    if (!reason || reason.trim().length < 4) return;
+    setError(null);
+    startTransition(async () => {
+      try {
+        await regenerateFullBrief({ briefId, reason: reason.trim() });
+        router.refresh();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Failed to regenerate brief.");
+      }
+    });
+  }
+
+  return (
+    <div
+      className="mb-6 px-5 py-4 rounded-md border-2"
+      style={{
+        borderColor: "rgba(212, 144, 138, 0.55)",
+        background: "rgba(212, 144, 138, 0.08)",
+      }}
+    >
+      <div className="flex items-start justify-between gap-5">
+        <div className="flex-1 min-w-0">
+          <div
+            className="font-mono text-[9px] tracking-[0.24em] uppercase mb-1.5"
+            style={{ color: "rgba(212, 144, 138, 0.95)" }}
+          >
+            CASCADE · framing edited past gate
+          </div>
+          <div className="font-display font-medium text-[14.5px] leading-[1.55] text-t1">
+            {variant === "actionable"
+              ? "The manifestation framing was rewritten after STOKER was approved. This brief was generated against the older framing."
+              : "The manifestation framing was rewritten after this brief was approved. The approved brief reflects the older framing — regenerating would orphan the downstream BOILER output."}
+          </div>
+          {error && (
+            <div className="mt-2 font-display text-[12px] text-[#d4908a]">{error}</div>
+          )}
+        </div>
+        {variant === "actionable" && (
+          <button
+            type="button"
+            onClick={handleRegenerate}
+            disabled={pending}
+            className="font-mono text-[10px] tracking-[0.18em] uppercase px-4 py-2.5 rounded-sm border-2 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2 disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+            style={{
+              borderColor: "rgba(212, 144, 138, 0.7)",
+              background: "rgba(212, 144, 138, 0.12)",
+              color: "rgba(212, 144, 138, 1)",
+            }}
+          >
+            {pending ? "Regenerating…" : "Regenerate brief"}
+          </button>
+        )}
+      </div>
     </div>
   );
 }

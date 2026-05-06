@@ -61,4 +61,15 @@ export interface ManifestationSummary {
   decade: DecadeKey;
   status: SignalStatus;
   outputs: Partial<Record<string, ManifestationOwnDetail | null>>;
+  /**
+   * Phase 10F — true when the STOKER agent_outputs row's revisions
+   * array contains any entry with cascade=true. Indicates that the
+   * manifestation framing was edited past the IN_STOKER gate (after
+   * advancing to IN_FURNACE+). Downstream renderers (FURNACE, BOILER)
+   * read this flag to surface a "manifestation framing changed since
+   * this stage's output was generated — regenerate?" banner. Server
+   * page computes once at fetch time so renderers don't need to walk
+   * the revisions array client-side.
+   */
+  stokerHasCascade: boolean;
 }

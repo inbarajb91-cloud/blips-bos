@@ -297,6 +297,16 @@ export default async function SignalPage({
                 : 0,
             }
           : null;
+        // Phase 10F — cascade detection. Walk STOKER revisions for any
+        // entry with cascade=true. Set when manifestation framing was
+        // edited past IN_STOKER gate (Phase 9G pattern). FURNACE
+        // renderer uses this to surface a "regenerate?" banner so
+        // downstream stages know their output may be stale.
+        const stokerHasCascade = stokerOut && Array.isArray(stokerOut.revisions)
+          ? (stokerOut.revisions as Array<Record<string, unknown>>).some(
+              (r) => r?.cascade === true,
+            )
+          : false;
         return {
           id: c.id,
           shortcode: c.shortcode,
@@ -304,6 +314,7 @@ export default async function SignalPage({
           decade: c.manifestationDecade as DecadeKey,
           status: c.status as SignalStatus,
           outputs: { STOKER: stokerDetail, FURNACE: furnaceDetail },
+          stokerHasCascade,
         };
       });
     }
