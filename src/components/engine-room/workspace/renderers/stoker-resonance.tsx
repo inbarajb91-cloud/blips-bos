@@ -499,6 +499,24 @@ function DecadeCard({
    *  any future surface that renders cards without the workspace). */
   onSwitchToManifestation?: RendererProps["onSwitchToManifestation"];
 }) {
+  // DIAGNOSTIC — log every card render to browser console + capture
+  // any unhandled promise rejection inside this card's tree. Phase 10
+  // verification (May 6, 2026). Inba reports a masked Server Components
+  // render error inside RCL cards across multiple signals; client error
+  // boundaries don't catch it; route-level error.tsx doesn't fire.
+  // Logging the row + child data per render lets us spot per-card
+  // differences in the browser console once Inba reloads.
+  if (typeof window !== "undefined") {
+    console.log(
+      `[DecadeCard render] ${row.decade} band=${bandFor(row.resonanceScore)}`,
+      {
+        row,
+        child,
+        hasOnSwitch: typeof onSwitchToManifestation === "function",
+      },
+    );
+  }
+
   const band = bandFor(row.resonanceScore);
   const tint = DECADE_TINTS[row.decade];
 
