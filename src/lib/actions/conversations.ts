@@ -55,7 +55,6 @@ export interface OrcConversation {
 export async function getOrCreateOrcConversation(
   signalId: string,
 ): Promise<OrcConversation> {
-  try {
   const user = await getCurrentUserWithOrg();
   if (!user) throw new Error("Unauthenticated");
 
@@ -163,20 +162,6 @@ export async function getOrCreateOrcConversation(
       signalId: raced.signalId,
       messages: (raced.messages as Message[]) ?? [],
     };
-  }
-  } catch (err) {
-    // DIAGNOSTIC — log full error to Vercel runtime logs (May 6 verification).
-    // Inba reports masked Server Components render errors from this action.
-    const e = err as Error & { code?: string; cause?: unknown };
-    console.error(
-      "[getOrCreateOrcConversation] FAILED — signalId:", signalId,
-      "\n  message:", e.message,
-      "\n  name:", e.name,
-      "\n  code:", e.code ?? "(none)",
-      "\n  cause:", e.cause ?? "(none)",
-      "\n  stack:", e.stack,
-    );
-    throw err;
   }
 }
 
