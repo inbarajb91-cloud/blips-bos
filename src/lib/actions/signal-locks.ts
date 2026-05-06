@@ -50,6 +50,7 @@ export interface LockStatus {
  *     status reflects the other holder
  */
 export async function acquireSignalLock(signalId: string): Promise<LockStatus> {
+  try {
   const user = await getCurrentUserWithOrg();
   if (!user) throw new Error("Unauthenticated");
 
@@ -93,6 +94,22 @@ export async function acquireSignalLock(signalId: string): Promise<LockStatus> {
   // UPDATE succeeded — I hold the lock. Read it back via normal join
   // so the email comes through without a second round-trip.
   return readLockStatus(signalId, user.authId);
+  } catch (err) {
+    // DIAGNOSTIC — log full error to Vercel runtime logs (May 6 verification).
+    // Inba reports masked Server Components render errors from this action;
+    // Next.js prod-mode wraps unhandled throws with that text. Logging
+    // here surfaces the actual cause in Vercel function logs.
+    const e = err as Error & { code?: string; cause?: unknown };
+    console.error(
+      "[acquireSignalLock] FAILED — signalId:", signalId,
+      "\n  message:", e.message,
+      "\n  name:", e.name,
+      "\n  code:", e.code ?? "(none)",
+      "\n  cause:", e.cause ?? "(none)",
+      "\n  stack:", e.stack,
+    );
+    throw err;
+  }
 }
 
 /**
