@@ -13,7 +13,7 @@ import {
 } from "@/lib/actions/stoker";
 
 /**
- * DIAGNOSTIC — Phase 10D verification (May 4, 2026).
+ * DIAGNOSTIC — Phase 10D verification (May 4, 2026 · redeploy May 6).
  *
  * Wraps each DecadeCard in an error boundary that surfaces the actual
  * thrown error inline + logs to console, instead of Next.js's default
