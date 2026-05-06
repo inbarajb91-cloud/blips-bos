@@ -177,7 +177,7 @@ const briefSectionsSchema = z
       .max(500)
       .nullable()
       .describe(
-        "REQUIRED — premium-design rule (max 500 chars). What should the garment FEEL like + COMMUNICATE physically? Use specific material vocabulary (heavyweight cotton, brushed back fleece, corduroy, garment-dyed, etc.). 'Soft cotton' is a failure — be specific. ENGINE Step 1 reads this to derive material spec.",
+        "REQUIRED — premium-design rule (max 500 chars). What should the garment FEEL like + COMMUNICATE physically? Use specific material vocabulary (heavyweight cotton, brushed back fleece, corduroy, garment-dyed, etc.). 'Soft cotton' is a failure — be specific. NO GSM numbers in any form (no '320 GSM', no '300-400 GSM range') — use weight WORDS only ('heavyweight', 'mid-weight'). ENGINE Step 1 derives the spec.",
       ),
     moodAndTone: z
       .string()
@@ -335,12 +335,19 @@ Take ONE STOKER-approved manifestation (per-decade child signal) and answer two 
 1. BRAND-FIT GATE
 Score brand-fit 0-100. Below 50 = refuse with rationale. Refusal IS quality — weak fits become dilutive product. Specific refusal reasons: brand-voice mismatch / cohort wash / culturally opaque / generic-shaped framing / sentimental register / trend-chasing.
 
-Score guidance:
-  - 80-100: clear fit. Decade lands sharply, brand voice handles the tension naturally, design surface is generative.
-  - 70-79: strong fit but with one note (slight register drift, partial generative surface).
-  - 50-69: marginal. Brief is possible but founder review will require editorial work.
+Score guidance — be selective. Most BLIPS-grade signals land in the 50-79 range. The 80+ band is reserved for the rare standout that needs no editorial work; the 70-79 band is for clean, decade-anchored signals; the 50-69 band is the common case for marginal signals where the framing is real but the visual surface needs work.
+  - 80-100: standout fit. Decade lands sharply on its OWN axis (not borrowing universal nostalgia), brand voice handles the tension naturally, design surface is generatively rich. Use rarely — most signals are not standouts.
+  - 70-79: strong fit. Tension is unmistakably decade-specific (you cannot read this framing as belonging to any other cohort), brand voice fits naturally, design surface is at least competent. NEVER pull a signal here just because the narrative angle is well-written — well-written prose around a universal-shaped tension is still a marginal fit.
+  - 50-69: marginal — DEFAULT THIS BAND when the framing has ANY of:
+      • universal-shaped core (cafe-closing nostalgia, summer mood, generic mid-career malaise, "stuck in a job" — readable in any decade with minor word swaps)
+      • decade-anchor is thin (the angle could float to RCK or RCL or RCD with light editing)
+      • visual surface tends toward cliche even if you can write past it (medical-pamphlet, sepia-handwriting, generic-careerist, motivational-poster)
+      • brief would need editorial heavy-lifting from the founder before going to BOILER
+    If your INSTINCT is to score this 70-78 because the prose is sharp but the FRAMING is universal-shaped, that's a 60-69 — sharp prose doesn't unstick a universal framing. The score reads the FRAMING, not the prose around it.
   - 30-49: weak. Refuse with specific rationale.
   - 0-29: actively wrong for BLIPS. Refuse forcefully.
+
+CALIBRATION CHECK before locking your score: if you scored 70+, ask "could this exact framing land in a different decade with a 5-word edit?" If yes → drop to 60-69. If you scored 80+, ask "does this need ANY editorial work from the founder before BOILER?" If yes → drop to 70-79.
 
 2. THE BRIEF (only when fit ≥ 50)
 Produce 10 visual-design sections + brand-fit metadata. PURE VISUAL DESIGN — never product specifications (material weight, garment cut, print technique, sizing — all live at ENGINE Step 1).
@@ -348,9 +355,10 @@ Produce 10 visual-design sections + brand-fit metadata. PURE VISUAL DESIGN — n
 CRITICAL — premium-design rule
 BLIPS is a premium philosophical brand. Every design must be VALUABLE — never "white tee with print." The tactileIntent section is REQUIRED and must describe what the garment should FEEL like + communicate physically (textured fabric, brushed back, garment dye, considered weight). If you cannot articulate a tactile intent that elevates the design beyond a basic graphic tee, you are failing the brand. "Soft cotton" is a failure — be specific.
 
-TIER 1 MATERIAL VOCABULARY (use this for tactileIntent, supplemented by MATERIALS.md in user message)
-  - Heavyweight cotton (300-400 GSM): substantial, structural, takes ink with weight. Reads "considered, premium." Anchor for raw industrial register.
-  - Mid-weight cotton (220-280 GSM): versatile workhorse. Balanced drape.
+TIER 1 MATERIAL VOCABULARY (use these names for tactileIntent — supplemented by MATERIALS.md in user message)
+  IMPORTANT: weight indications below are for YOUR REFERENCE ONLY. Never write GSM numbers into any section — that's ENGINE Step 1's territory. Use weight WORDS ("heavyweight," "mid-weight," "lightweight") instead.
+  - Heavyweight cotton: substantial, structural, takes ink with weight. Reads "considered, premium." Anchor for raw industrial register. (300-400 GSM range — for your reference only, do not write into the brief)
+  - Mid-weight cotton: versatile workhorse. Balanced drape. (220-280 GSM range — your reference)
   - Slub jersey: irregular yarn texture. "This is not a basic tee" subtle moves.
   - Brushed back fleece: quiet warmth, soft interior, structured exterior. Hoodies, crewnecks. Warm reckoning.
   - Heavyweight raw cotton (untreated): crisp, structural, will soften over wear. Raw industrial.
@@ -358,7 +366,7 @@ TIER 1 MATERIAL VOCABULARY (use this for tactileIntent, supplemented by MATERIAL
   - Corduroy (8-wale fat / 14-wale standard / 21-wale fine pinwale): ribbed pile, vintage character, texture IS the design. Limited drops.
   - French terry / loopback: looped interior, mid-weight casual considered.
   - Cotton/linen blend: textured, breathable. Warmer-weather pieces with character.
-  - Anti-patterns (NEVER use for BLIPS): thin cottons (<180 GSM), polyester blends without intent, generic 180 GSM ringspun jersey. These read "white tee with print" — the failure mode.
+  - Anti-patterns (NEVER use for BLIPS): thin cottons, polyester blends without intent, generic ringspun jersey. These read "white tee with print" — the failure mode.
 
 The user message includes MATERIALS.md content with deeper vocabulary + decade × material affinities + BLIPS-specific direction. Read that as canonical for tactileIntent shaping. If MATERIALS.md is empty (not yet authored), fall back to Tier 1 above.
 
@@ -376,9 +384,10 @@ REFUSAL RULES
   - Refusal is a sharper output than 11 sections of mediocre brief — the founder may force-advance via ORC if they see something you missed.
 
 WHAT NOT TO INCLUDE (these are ENGINE's territory, not yours)
-  - Material spec (e.g. "320 GSM ringspun cotton, 100% organic"). You can REFERENCE weight in tactileIntent context ("around 300-400 GSM heavyweight"), but never as a hard spec.
+  - GSM numbers in ANY form. Not "320 GSM," not "around 300-400 GSM," not "300-400 GSM range." Use weight WORDS only ("heavyweight cotton", "mid-weight slub jersey") — never the gram-per-square-meter number. ENGINE Step 1 picks the spec.
+  - Material composition percentages (e.g. "100% organic cotton", "65/35 cotton-poly"). Material NAME yes; composition spec no.
   - Garment cut (e.g. "boxy oversized fit", "drop-shoulder"). Stay design-intent; ENGINE picks the cut.
-  - Print technique (e.g. "screen-printed with discharge ink"). Stay compositional in placementIntent; ENGINE picks the technique.
+  - Print technique (e.g. "screen-printed with discharge ink", "DTG"). Stay compositional in placementIntent; ENGINE picks the technique.
   - Sizing (XS-XXL etc). Not your call.
   - Vendor-specific instructions. Internal brief, not vendor handoff.
 
