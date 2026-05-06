@@ -433,6 +433,439 @@ export async function editBriefSection(opts: {
   return { ok: true, revisionsCount: brief.revisions.length + 1 };
 }
 
+// ─── Regenerate the whole brief (LLM call with founder feedback) ─
+
+export async function regenerateFullBrief(opts: {
+  briefId: string;
+  reason: string;
+}): Promise<{
+  ok: true;
+  manifestationShortcode: string;
+  brandFitScore: number;
+  refused: boolean;
+}> {
+  const user = await getCurrentUserWithOrg();
+  if (!user) throw new Error("Unauthenticated");
+
+  if (opts.reason.trim().length < 4 || opts.reason.trim().length > 600) {
+    throw new Error("Reason must be 4-600 characters.");
+  }
+
+  const brief = await loadBriefScoped({
+    briefId: opts.briefId,
+    orgId: user.orgId,
+  });
+
+  if (brief.status === "APPROVED") {
+    throw new Error(
+      "Brief is APPROVED. Regenerating an approved brief would orphan downstream BOILER output. Use cascade-aware edits instead.",
+    );
+  }
+
+  // Load full context — same shape the Inngest handler builds.
+  const { signals, knowledgeDocuments, agentOutputs: ao } = await import(
+    "@/db/schema"
+  );
+  const { ilike, sql: drizzleSql, desc } = await import("drizzle-orm");
+  const { getMemoryBackend } = await import("@/lib/orc/memory");
+
+  const [child] = await db
+    .select({
+      id: signals.id,
+      shortcode: signals.shortcode,
+      workingTitle: signals.workingTitle,
+      concept: signals.concept,
+      parentSignalId: signals.parentSignalId,
+      manifestationDecade: signals.manifestationDecade,
+    })
+    .from(signals)
+    .where(
+      and(eq(signals.id, brief.signalId), eq(signals.orgId, user.orgId)),
+    )
+    .limit(1);
+  if (!child || !child.parentSignalId || !child.manifestationDecade) {
+    throw new Error("Manifestation context not loadable for regen.");
+  }
+
+  // Load STOKER content
+  const [stokerRow] = await db
+    .select({ content: ao.content })
+    .from(ao)
+    .where(
+      and(eq(ao.signalId, child.id), eq(ao.agentName, "STOKER")),
+    )
+    .limit(1);
+  if (!stokerRow) throw new Error("STOKER context missing — can't regen.");
+  const stoker = stokerRow.content as {
+    framingHook?: string;
+    tensionAxis?: string;
+    narrativeAngle?: string;
+    dimensionAlignment?: {
+      social: string;
+      musical: string;
+      cultural: string;
+      career: string;
+      responsibilities: string;
+      expectations: string;
+      sports: string;
+    };
+  };
+  if (
+    !stoker.framingHook ||
+    !stoker.tensionAxis ||
+    !stoker.narrativeAngle ||
+    !stoker.dimensionAlignment
+  ) {
+    throw new Error("STOKER content malformed.");
+  }
+
+  // Load parent
+  const [parent] = await db
+    .select({ id: signals.id, shortcode: signals.shortcode })
+    .from(signals)
+    .where(eq(signals.id, child.parentSignalId))
+    .limit(1);
+  if (!parent) throw new Error("Parent signal missing.");
+
+  // Load knowledge context (decade playbook + BRAND.md + MATERIALS.md)
+  const decade = child.manifestationDecade as "RCK" | "RCL" | "RCD";
+  const fetchByTitle = async (title: string): Promise<string> => {
+    const [doc] = await db
+      .select({ content: knowledgeDocuments.content })
+      .from(knowledgeDocuments)
+      .where(
+        and(
+          eq(knowledgeDocuments.orgId, user.orgId),
+          eq(knowledgeDocuments.status, "active"),
+          ilike(knowledgeDocuments.title, title),
+        ),
+      )
+      .limit(1);
+    return doc?.content ?? "";
+  };
+  const playbookTitles: Record<string, string> = {
+    RCK: "RCK Decade Playbook",
+    RCL: "RCL Decade Playbook",
+    RCD: "RCD Decade Playbook",
+  };
+  const [decadePlaybook, brandIdentity, materialsVocabulary] =
+    await Promise.all([
+      fetchByTitle(playbookTitles[decade]),
+      fetchByTitle("BLIPS Brand Identity"),
+      fetchByTitle("BLIPS Materials Playbook"),
+    ]);
+
+  // Past briefs for Tier 3 visual consistency
+  const pastRows = await db
+    .select({
+      content: ao.content,
+      shortcode: signals.shortcode,
+      workingTitle: signals.workingTitle,
+      approvedAt: ao.approvedAt,
+    })
+    .from(ao)
+    .innerJoin(signals, eq(ao.signalId, signals.id))
+    .where(
+      and(
+        eq(ao.agentName, "FURNACE"),
+        eq(ao.status, "APPROVED"),
+        eq(signals.orgId, user.orgId),
+        eq(signals.manifestationDecade, decade),
+        drizzleSql`${signals.id} <> ${child.id}`,
+      ),
+    )
+    .orderBy(desc(ao.approvedAt))
+    .limit(3);
+  const pastBriefs = pastRows
+    .map((r) => {
+      const c = r.content as {
+        designDirection?: string | null;
+        tactileIntent?: string | null;
+      };
+      if (!c.designDirection || !c.tactileIntent) return null;
+      return {
+        shortcode: r.shortcode,
+        workingTitle: r.workingTitle,
+        designDirection: c.designDirection,
+        tactileIntent: c.tactileIntent,
+        approvedAt: r.approvedAt?.toISOString() ?? "",
+      };
+    })
+    .filter((x): x is NonNullable<typeof x> => x !== null);
+
+  // Load FURNACE skill + run with feedback prefix in prompt
+  await import("@/skills"); // populate registry
+  const { furnaceSkill } = await import("@/skills/furnace");
+  const baseInput = {
+    signalId: child.id,
+    shortcode: child.shortcode,
+    workingTitle: child.workingTitle,
+    concept: child.concept ?? "",
+    manifestationDecade: decade,
+    parentSignalId: parent.id,
+    parentShortcode: parent.shortcode,
+    manifestation: {
+      framingHook: stoker.framingHook,
+      tensionAxis: stoker.tensionAxis,
+      narrativeAngle: stoker.narrativeAngle,
+      dimensionAlignment: stoker.dimensionAlignment,
+    },
+    knowledgeContext: { decadePlaybook, brandIdentity, materialsVocabulary },
+    pastBriefsForDecade: pastBriefs,
+  };
+
+  // Inject the founder's feedback as a regen directive prepended to the
+  // standard prompt. The skill's system prompt unchanged; per-call
+  // user message prepends a "REGENERATION REQUEST" header.
+  const standardPrompt = furnaceSkill.buildPrompt(baseInput);
+  const promptWithFeedback = `REGENERATION REQUEST — founder asked to redo this brief with the following feedback:
+
+"${opts.reason}"
+
+The previous brief (id ${brief.id}) is being replaced. Re-read the manifestation context and address the founder's feedback in your new output. Don't repeat the previous brief's exact framing if the feedback indicates a direction change.
+
+---
+
+${standardPrompt}`;
+
+  const { generateStructured } = await import("@/lib/ai/generate");
+  const result = await generateStructured({
+    orgId: user.orgId,
+    agentKey: "FURNACE",
+    system: furnaceSkill.systemPrompt,
+    prompt: promptWithFeedback,
+    schema: furnaceSkill.outputSchema,
+  });
+
+  const newContent = result.object as Record<string, unknown>;
+
+  // Update existing brief row + append revision entry. Section
+  // approvals reset (regen invalidates all prior approvals). Status
+  // stays PENDING — founder reviews fresh.
+  const revisionEntry = {
+    ts: new Date().toISOString(),
+    section: null as string | null,
+    oldContent: brief.content,
+    newContent,
+    editor: { authId: user.authId, kind: "orc" as const },
+    reason: opts.reason,
+    trigger: "regenerate_full" as const,
+  };
+
+  await db
+    .update(agentOutputs)
+    .set({
+      content: newContent,
+      status: "PENDING",
+      sectionApprovals: {},
+      revisions: sql`${agentOutputs.revisions} || ${JSON.stringify([revisionEntry])}::jsonb`,
+    })
+    .where(eq(agentOutputs.id, brief.id));
+
+  // Best-effort memory write for Tier 3 learning
+  void (async () => {
+    try {
+      const memory = await getMemoryBackend();
+      await memory.remember({
+        orgId: user.orgId,
+        container: "events",
+        kind: "stage_completion",
+        content: `FURNACE brief regenerated for ${child.shortcode} (${decade}). brand-fit ${newContent.brandFitScore}/100. Founder feedback: ${opts.reason}`,
+        signalId: child.id,
+        metadata: {
+          stage: "furnace",
+          decade,
+          shortcode: child.shortcode,
+          brandFitScore: newContent.brandFitScore,
+          refused: newContent.refused,
+          regenerated: true,
+        },
+      });
+    } catch (err) {
+      console.warn("[regenerateFullBrief] memory write failed (best-effort):", err);
+    }
+  })();
+
+  await revalidateBriefPaths(brief);
+
+  return {
+    ok: true,
+    manifestationShortcode: brief.childShortcode,
+    brandFitScore: newContent.brandFitScore as number,
+    refused: newContent.refused as boolean,
+  };
+}
+
+// ─── Regenerate ONE section (LLM call constrained to one field) ──
+
+export async function regenerateBriefSection(opts: {
+  briefId: string;
+  section: SectionName;
+  reason: string;
+}): Promise<{
+  ok: true;
+  section: SectionName;
+  revisionsCount: number;
+}> {
+  const user = await getCurrentUserWithOrg();
+  if (!user) throw new Error("Unauthenticated");
+
+  if (!REQUIRED_SECTIONS.includes(opts.section)) {
+    throw new Error(`Section '${opts.section}' is not regenerable.`);
+  }
+  if (opts.reason.trim().length < 4 || opts.reason.trim().length > 600) {
+    throw new Error("Reason must be 4-600 characters.");
+  }
+
+  const brief = await loadBriefScoped({
+    briefId: opts.briefId,
+    orgId: user.orgId,
+  });
+
+  if (brief.status === "APPROVED") {
+    throw new Error("Brief is APPROVED. Section regen blocked on approved briefs.");
+  }
+
+  // Build a focused single-section prompt + tight schema. The LLM
+  // only writes ONE field; rest of brief stays intact.
+  const { z: zod } = await import("zod");
+  const { generateStructured } = await import("@/lib/ai/generate");
+  const bounds = SECTION_BOUNDS[opts.section];
+
+  const sectionSchema = zod.object({
+    content: zod
+      .string()
+      .min(bounds.min)
+      .max(bounds.max)
+      .describe(
+        `Replacement content for the ${opts.section} section (${bounds.min}-${bounds.max} chars).`,
+      ),
+  });
+
+  const briefContext = JSON.stringify(brief.content, null, 2).slice(0, 4000);
+  const sectionPrompt = `You are FURNACE — BLIPS's visual design brief generator.
+
+REGENERATE ONE SECTION request: rewrite the '${opts.section}' section of an existing brief based on founder feedback.
+
+EXISTING BRIEF (for context — do NOT change other sections, only return the new ${opts.section}):
+${briefContext}
+
+FOUNDER FEEDBACK (what's wrong with the current ${opts.section}):
+"${opts.reason}"
+
+Produce a replacement for the '${opts.section}' section ONLY. Character bounds: ${bounds.min}-${bounds.max}. Stay consistent with the rest of the brief; address the founder's specific feedback. Return JSON: {"content": "<the new section text>"}.`;
+
+  const result = await generateStructured({
+    orgId: user.orgId,
+    agentKey: "FURNACE",
+    system:
+      "You are FURNACE editing one section of an existing visual design brief. Stay tight to the founder's feedback. Match the brief's existing voice + register. No commentary.",
+    prompt: sectionPrompt,
+    schema: sectionSchema,
+  });
+
+  const newSectionContent = result.object.content;
+  const oldSectionContent = brief.content[opts.section];
+
+  // Update brief content + invalidate section approval + append revision
+  const updatedContent = { ...brief.content, [opts.section]: newSectionContent };
+  const updatedApprovals = { ...brief.sectionApprovals };
+  delete updatedApprovals[opts.section];
+
+  const revisionEntry = {
+    ts: new Date().toISOString(),
+    section: opts.section,
+    oldContent: oldSectionContent,
+    newContent: newSectionContent,
+    editor: { authId: user.authId, kind: "orc" as const },
+    reason: opts.reason,
+    trigger: "regenerate" as const,
+  };
+
+  await db
+    .update(agentOutputs)
+    .set({
+      content: updatedContent,
+      sectionApprovals: updatedApprovals,
+      revisions: sql`${agentOutputs.revisions} || ${JSON.stringify([revisionEntry])}::jsonb`,
+    })
+    .where(eq(agentOutputs.id, brief.id));
+
+  await revalidateBriefPaths(brief);
+  return {
+    ok: true,
+    section: opts.section,
+    revisionsCount: brief.revisions.length + 1,
+  };
+}
+
+// ─── Add an addendum to a brief ──────────────────────────────────
+
+export async function addBriefAddendum(opts: {
+  briefId: string;
+  label: string;
+  content: string;
+  reason: string;
+  addedByOrc?: boolean;
+}): Promise<{ ok: true; addendaCount: number }> {
+  const user = await getCurrentUserWithOrg();
+  if (!user) throw new Error("Unauthenticated");
+
+  const trimmedLabel = opts.label.trim();
+  const trimmedContent = opts.content.trim();
+  if (trimmedLabel.length < 5 || trimmedLabel.length > 50) {
+    throw new Error("Label must be 5-50 characters.");
+  }
+  if (trimmedContent.length < 50 || trimmedContent.length > 500) {
+    throw new Error("Content must be 50-500 characters.");
+  }
+  if (opts.reason.trim().length < 50 || opts.reason.trim().length > 300) {
+    throw new Error("Reason must be 50-300 characters.");
+  }
+
+  const brief = await loadBriefScoped({
+    briefId: opts.briefId,
+    orgId: user.orgId,
+  });
+
+  const existingAddenda = (brief.content.addenda as unknown[]) ?? [];
+  const newAddendum = {
+    label: trimmedLabel,
+    content: trimmedContent,
+    addedBy: opts.addedByOrc ? "orc" : "founder",
+    addedAt: new Date().toISOString(),
+    reason: opts.reason.trim(),
+  };
+  const updatedContent = {
+    ...brief.content,
+    addenda: [...existingAddenda, newAddendum],
+  };
+
+  const revisionEntry = {
+    ts: new Date().toISOString(),
+    section: "addenda",
+    oldContent: existingAddenda,
+    newContent: updatedContent.addenda,
+    editor: { authId: user.authId, kind: opts.addedByOrc ? "orc" : "founder" },
+    reason: opts.reason,
+    trigger: "addendum_add" as const,
+  };
+
+  await db
+    .update(agentOutputs)
+    .set({
+      content: updatedContent,
+      revisions: sql`${agentOutputs.revisions} || ${JSON.stringify([revisionEntry])}::jsonb`,
+    })
+    .where(eq(agentOutputs.id, brief.id));
+
+  await revalidateBriefPaths(brief);
+  return {
+    ok: true,
+    addendaCount: existingAddenda.length + 1,
+  };
+}
+
 // REQUIRED_SECTIONS / SECTION_BOUNDS / SectionName are exported from
 // `./furnace-shared` directly. Don't re-export from here — "use server"
 // files can only export async functions.

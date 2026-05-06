@@ -322,7 +322,7 @@ export async function POST(req: Request) {
   // "approval" / "approved" / "approving" all land but "approximate"
   // doesn't. "decline" / "cancel" cover the chip Decline path.
   const allowMutation =
-    /\b(approve|approved|approval|approving|dismiss|dismissed|dismissing|reject|rejected|advance|advanced|ship|shipped|shipping|edit|edited|editing|modify|modified|restart|restarted|re-?run|rerun|force|force-add|decline|declined|cancel|cancelled)\b/i.test(
+    /\b(approve|approved|approval|approving|dismiss|dismissed|dismissing|reject|rejected|advance|advanced|ship|shipped|shipping|edit|edited|editing|modify|modified|restart|restarted|re-?run|rerun|force|force-add|decline|declined|cancel|cancelled|regenerate|regenerated|regenerating|brief|section|addendum|addenda|refused|refusing|redo|rewrite|rewritten)\b/i.test(
       userMessage,
     );
 
