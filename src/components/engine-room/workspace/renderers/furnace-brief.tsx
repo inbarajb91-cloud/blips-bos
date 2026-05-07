@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { RendererProps } from "./registry";
 import {
@@ -17,41 +17,36 @@ import {
 } from "@/lib/actions/furnace-shared";
 
 /**
- * FURNACE Brief Renderer — Phase 10D.
+ * FURNACE Brief Renderer — Phase 10D + Phase 10.4 layout revision.
  *
- * Renders the FURNACE-generated visual design brief for one approved
- * STOKER manifestation. The brief is one agent_outputs row carrying
- * 11 visual-design sections + an extensible addenda array; this
- * component lets the founder review per-section, edit in place,
- * approve incrementally, or approve the whole brief in one shot.
+ * Phase 10D first-ship laid the brief out as a 2-column card grid where
+ * every section's approve/edit affordance was visually as loud as the
+ * design content — the brief read like a checklist, not a brief. Phase
+ * 10.4 (this revision) flips the layout to a long-scroll document with
+ * a sticky left rail nav. Section content reads first; the per-section
+ * actions become small inline text-link affordances under each section.
  *
- * States this renderer handles:
- *   1. No brief yet — manifestation is at IN_FURNACE but FURNACE hasn't
- *      run (Inngest still processing, OR the approve action's
- *      inngest.send failed). Show a "FURNACE processing" empty state.
- *   2. Brief PENDING — section card grid + per-section actions + "Approve
- *      all sections" bottom CTA.
- *   3. Brief APPROVED — read-only success view with "advanced to BOILER"
- *      indication.
- *   4. Brief REJECTED — refusal banner + ORC affordance to regenerate.
- *   5. Brief refused (FURNACE refused, brand-fit < 50) — refusal banner
- *      with rationale + force-advance affordance via ORC.
+ * Core surfaces (PENDING state):
+ *   - Top hero — brand-fit badge + working title + revision counter
+ *   - Cascade banner — when the parent STOKER framing was edited past
+ *     gate; offers regenerate CTA
+ *   - Body 2-col grid:
+ *     - Sticky left rail nav: 10 sections with status pips, click to
+ *       smooth-scroll, current section highlighted via scroll-spy
+ *     - Document: section flow (H2 with title/status + body prose +
+ *       inline actions row), then a bottom "Approve all + advance" CTA
  *
- * Layout pattern matches Phase 9.5 STOKER renderer:
- *   - Section cards in a 2-column grid (1-column on narrow viewports)
- *   - Decade tinting via `var(--d)` for accents
- *   - Inline edit (textarea expands in place when Edit clicked)
- *   - "Ask ORC to redo this section" placeholder for Phase 10E (the
- *     actual ORC tool integration; this renderer just opens the ORC
- *     panel with a pre-filled prompt context)
+ * APPROVED state inherits the same long-scroll layout, read-only (no
+ * inline action affordances; the rail's "Approve all" CTA hides).
  *
- * Cascade banner (Phase 10F): when the STOKER manifestation framing has
- * been edited past the IN_STOKER gate (i.e. while in IN_FURNACE+),
- * `activeManifestation.stokerHasCascade === true`. We surface a banner
- * inviting regeneration on PENDING/REJECTED briefs, and a read-only
- * "framing changed since approval" notice on APPROVED briefs (we can't
- * regenerate an approved brief without orphaning BOILER, so awareness
- * only there).
+ * REFUSED / REJECTED-BY-FOUNDER / NO-MANIFESTATION / PROCESSING states
+ * keep their simpler banner layouts — there's nothing to navigate when
+ * the brief either doesn't exist or won't.
+ *
+ * No schema or server-action changes — pure UI rewrite. Every existing
+ * mutation (approveBriefSection / approveFullBrief / editBriefSection /
+ * dismissBrief / regenerateFullBrief) is wired identically; allowMutation
+ * gating, cascade flag, and best-effort memory writes all unchanged.
  */
 
 interface BriefContent {
@@ -77,17 +72,27 @@ interface SectionApprovals {
 }
 
 const SECTION_LABELS: Record<SectionName, string> = {
-  designDirection: "Design Direction",
-  tactileIntent: "Tactile Intent",
-  moodAndTone: "Mood + Tone",
-  compositionApproach: "Composition Approach",
-  colorTreatment: "Color Treatment",
-  typographicTreatment: "Typographic Treatment",
-  artDirection: "Art Direction",
-  referenceAnchors: "Reference Anchors",
-  placementIntent: "Placement Intent",
-  voiceInVisual: "Voice in Visual",
+  designDirection: "Design direction",
+  tactileIntent: "Tactile intent",
+  moodAndTone: "Mood + tone",
+  compositionApproach: "Composition approach",
+  colorTreatment: "Color treatment",
+  typographicTreatment: "Typographic treatment",
+  artDirection: "Art direction",
+  referenceAnchors: "Reference anchors",
+  placementIntent: "Placement intent",
+  voiceInVisual: "Voice in visual",
 };
+
+/** Section number padding for the H2 marker (01, 02, …, 10). */
+function sectionNum(i: number): string {
+  return (i + 1).toString().padStart(2, "0");
+}
+
+/** DOM id for a section anchor — used by the rail nav for scroll-to. */
+function sectionAnchorId(section: SectionName): string {
+  return `furnace-section-${section}`;
+}
 
 export function FurnaceBrief(props: RendererProps) {
   const { activeManifestation, signal } = props;
@@ -95,14 +100,9 @@ export function FurnaceBrief(props: RendererProps) {
   // FURNACE only runs on manifestation children; raw signals don't have
   // briefs. Show an empty state for the parent view.
   if (signal.parentSignalId === null && !activeManifestation) {
-    return (
-      <NoActiveManifestation />
-    );
+    return <NoActiveManifestation />;
   }
 
-  // For parent workspaces with manifestations, the workspace's
-  // manifestation selector picks `activeManifestation`. The brief
-  // lives on that child.
   const manifestation = activeManifestation;
   if (!manifestation) {
     return <NoActiveManifestation />;
@@ -134,7 +134,7 @@ export function FurnaceBrief(props: RendererProps) {
     );
   }
 
-  // Approved — read-only success view
+  // Approved — read-only long-scroll view
   if (status === "APPROVED") {
     return (
       <FurnaceApproved
@@ -157,12 +157,17 @@ export function FurnaceBrief(props: RendererProps) {
     );
   }
 
-  // Default state: PENDING — render the section card grid for review
+  // Default state: PENDING — long-scroll document for review
   return (
     <FurnaceBriefReview
       briefId={briefDetail.id}
       content={content}
-      sectionApprovals={sectionApprovals ?? ((briefDetail as unknown) as { sectionApprovals?: SectionApprovals }).sectionApprovals ?? {}}
+      sectionApprovals={
+        sectionApprovals ??
+        ((briefDetail as unknown) as { sectionApprovals?: SectionApprovals })
+          .sectionApprovals ??
+        {}
+      }
       manifestationShortcode={manifestation.shortcode}
       revisionsCount={briefDetail.revisionsCount}
       stokerHasCascade={stokerHasCascade}
@@ -170,7 +175,7 @@ export function FurnaceBrief(props: RendererProps) {
   );
 }
 
-// ─── Empty / processing / refused / approved state components ────
+// ─── Empty / processing state components ─────────────────────────
 
 function NoActiveManifestation() {
   return (
@@ -257,38 +262,6 @@ function FurnaceRefused({
   );
 }
 
-function FurnaceApproved({
-  briefId,
-  content,
-  manifestationShortcode,
-  stokerHasCascade,
-}: {
-  briefId: string;
-  content: BriefContent;
-  manifestationShortcode: string;
-  stokerHasCascade: boolean;
-}) {
-  return (
-    <div className="py-8 px-7">
-      {stokerHasCascade && <CascadeBanner briefId={briefId} variant="readonly" />}
-      <div className="bg-wash-1 border border-rule-1 rounded-md px-6 py-5 mb-6">
-        <div className="flex items-center justify-between mb-3">
-          <div>
-            <div className="font-mono text-[9px] tracking-[0.24em] uppercase text-t4 mb-1.5">
-              FURNACE · Brief approved · advancing to BOILER
-            </div>
-            <div className="font-display text-base font-semibold text-t1">
-              {manifestationShortcode}
-            </div>
-          </div>
-          <BrandFitBadge score={content.brandFitScore ?? 0} />
-        </div>
-      </div>
-      <SectionCardGrid content={content} sectionApprovals={{}} readOnly briefId={briefId} />
-    </div>
-  );
-}
-
 function FurnaceRejectedByFounder({
   briefId,
   manifestationShortcode,
@@ -319,7 +292,86 @@ function FurnaceRejectedByFounder({
   );
 }
 
-// ─── Main review state — section card grid ───────────────────────
+// ─── Approved state — long-scroll, read-only ─────────────────────
+
+function FurnaceApproved({
+  briefId,
+  content,
+  manifestationShortcode,
+  stokerHasCascade,
+}: {
+  briefId: string;
+  content: BriefContent;
+  manifestationShortcode: string;
+  stokerHasCascade: boolean;
+}) {
+  // Approved state has no per-section actions, so the nav rail's pip
+  // state is "all approved" and there's no Approve-all CTA. The rest
+  // of the layout — sticky rail + scroll-spy + section flow — is the
+  // same as the review state, just with `readOnly` flowed through.
+  const allApproved = useMemo<SectionApprovals>(
+    () =>
+      Object.fromEntries(
+        REQUIRED_SECTIONS.map((s) => [
+          s,
+          { approved: true, approvedAt: "", approvedBy: "" },
+        ]),
+      ),
+    [],
+  );
+
+  return (
+    <div className="py-8 px-7">
+      {stokerHasCascade && <CascadeBanner briefId={briefId} variant="readonly" />}
+
+      <ApprovedHero
+        manifestationShortcode={manifestationShortcode}
+        score={content.brandFitScore ?? 0}
+        rationale={content.brandFitRationale ?? null}
+      />
+
+      <BriefBody
+        briefId={briefId}
+        content={content}
+        sectionApprovals={allApproved}
+        readOnly
+      />
+    </div>
+  );
+}
+
+function ApprovedHero({
+  manifestationShortcode,
+  score,
+  rationale,
+}: {
+  manifestationShortcode: string;
+  score: number;
+  rationale: string | null;
+}) {
+  return (
+    <div className="bg-wash-1 border border-rule-1 rounded-md px-6 py-5 mb-7 flex items-center justify-between gap-6">
+      <div className="flex items-center gap-6">
+        <BrandFitBadge score={score} />
+        <div>
+          <div className="font-mono text-[9px] tracking-[0.24em] uppercase text-t4 mb-1">
+            FURNACE · Brief approved · advancing to BOILER
+          </div>
+          <div className="font-display font-semibold text-base text-t1 leading-tight">
+            {manifestationShortcode}
+          </div>
+          {rationale && (
+            <div className="font-display text-[13.5px] text-t3 mt-1.5 max-w-xl leading-[1.5]">
+              {rationale}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Pending review — the new long-scroll document layout ────────
 
 function FurnaceBriefReview({
   briefId,
@@ -340,9 +392,10 @@ function FurnaceBriefReview({
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
-  const allSectionsApproved = REQUIRED_SECTIONS.every(
+  const approvedCount = REQUIRED_SECTIONS.filter(
     (s) => sectionApprovals[s]?.approved === true,
-  );
+  ).length;
+  const allSectionsApproved = approvedCount === REQUIRED_SECTIONS.length;
 
   function handleApproveAll() {
     setError(null);
@@ -375,7 +428,11 @@ function FurnaceBriefReview({
 
   return (
     <div className="py-8 px-7">
-      {/* Top strip — brand-fit score + revisions + actions */}
+      {stokerHasCascade && (
+        <CascadeBanner briefId={briefId} variant="actionable" />
+      )}
+
+      {/* Top hero — brand-fit badge + working title + revision meta + dismiss */}
       <div className="bg-wash-1 border border-rule-1 rounded-md px-6 py-5 mb-7 flex items-center justify-between gap-6">
         <div className="flex items-center gap-6">
           <BrandFitBadge score={content.brandFitScore ?? 0} />
@@ -387,7 +444,8 @@ function FurnaceBriefReview({
               {content.brandFitRationale}
             </div>
             <div className="font-mono text-[9px] tracking-[0.22em] uppercase text-t5 mt-1.5">
-              Revision {revisionsCount + 1} · {Object.values(sectionApprovals).filter((a) => a.approved).length}/{REQUIRED_SECTIONS.length} sections approved
+              Revision {revisionsCount + 1} · {approvedCount}/
+              {REQUIRED_SECTIONS.length} sections approved
             </div>
           </div>
         </div>
@@ -409,25 +467,29 @@ function FurnaceBriefReview({
         </div>
       )}
 
-      {/* Phase 10F — cascade banner: STOKER framing edited past gate */}
-      {stokerHasCascade && (
-        <CascadeBanner briefId={briefId} variant="actionable" />
-      )}
-
-      {/* Section card grid */}
-      <SectionCardGrid
+      {/* Body — sticky left rail + scrolling document */}
+      <BriefBody
+        briefId={briefId}
         content={content}
         sectionApprovals={sectionApprovals}
-        briefId={briefId}
+        readOnly={false}
+        onApproveAll={handleApproveAll}
+        approveAllPending={pending}
+        approveAllDisabled={pending || allSectionsApproved}
       />
 
-      {/* Bottom CTA — approve all sections + advance */}
-      <div className="mt-8 flex justify-end">
+      {/* End-of-document CTA — same Approve-all button, mirrored at the
+          bottom for users who scroll past the rail. */}
+      <div className="mt-10 pt-6 border-t border-rule-1 flex items-center gap-4">
+        <div className="font-mono text-[10px] tracking-[0.16em] uppercase text-t4">
+          {approvedCount} of {REQUIRED_SECTIONS.length} sections approved · revision{" "}
+          {revisionsCount + 1}
+        </div>
         <button
           type="button"
           onClick={handleApproveAll}
           disabled={pending || allSectionsApproved}
-          className="font-mono text-[10.5px] tracking-[0.18em] uppercase px-5 py-3 rounded-sm border-2 transition-all focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2 disabled:opacity-40 disabled:cursor-not-allowed"
+          className="ml-auto font-mono text-[10.5px] tracking-[0.18em] uppercase px-5 py-3 rounded-sm border-2 transition-all focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2 disabled:opacity-40 disabled:cursor-not-allowed"
           style={{
             borderColor: "rgba(var(--d), 0.7)",
             background: "rgba(var(--d), 0.12)",
@@ -445,46 +507,185 @@ function FurnaceBriefReview({
   );
 }
 
-// ─── Section card grid ───────────────────────────────────────────
+// ─── Body — 2-col grid: sticky rail + scrolling document ─────────
 
-function SectionCardGrid({
+function BriefBody({
+  briefId,
   content,
   sectionApprovals,
-  briefId,
-  readOnly = false,
+  readOnly,
+  onApproveAll,
+  approveAllPending,
+  approveAllDisabled,
 }: {
+  briefId: string;
   content: BriefContent;
   sectionApprovals: SectionApprovals;
-  briefId: string;
-  readOnly?: boolean;
+  readOnly: boolean;
+  onApproveAll?: () => void;
+  approveAllPending?: boolean;
+  approveAllDisabled?: boolean;
 }) {
+  const sectionIds = useMemo(
+    () => REQUIRED_SECTIONS.map((s) => sectionAnchorId(s)),
+    [],
+  );
+  const activeId = useScrollSpy(sectionIds);
+
+  function handleNavClick(e: React.MouseEvent<HTMLAnchorElement>, id: string) {
+    e.preventDefault();
+    const target = document.getElementById(id);
+    if (!target) return;
+    target.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-      {REQUIRED_SECTIONS.map((section) => {
-        const sectionContent = (content[section] ?? "") as string;
-        const approved = sectionApprovals[section]?.approved === true;
-        return (
-          <SectionCard
-            key={section}
-            section={section}
-            content={sectionContent}
-            approved={approved}
-            briefId={briefId}
-            readOnly={readOnly}
-          />
-        );
-      })}
+    <div className="grid gap-8 lg:grid-cols-[240px_minmax(0,1fr)]">
+      {/* Sticky left rail */}
+      <SectionNavRail
+        sectionApprovals={sectionApprovals}
+        activeAnchorId={activeId}
+        onNavClick={handleNavClick}
+        readOnly={readOnly}
+        onApproveAll={onApproveAll}
+        approveAllPending={approveAllPending}
+        approveAllDisabled={approveAllDisabled}
+      />
+
+      {/* Document — section flow */}
+      <div className="min-w-0">
+        {REQUIRED_SECTIONS.map((section, i) => {
+          const sectionContent = (content[section] ?? "") as string;
+          const approved = sectionApprovals[section]?.approved === true;
+          return (
+            <SectionRow
+              key={section}
+              index={i}
+              section={section}
+              content={sectionContent}
+              approved={approved}
+              briefId={briefId}
+              readOnly={readOnly}
+            />
+          );
+        })}
+      </div>
     </div>
   );
 }
 
-function SectionCard({
+// ─── Sticky left rail nav ────────────────────────────────────────
+
+function SectionNavRail({
+  sectionApprovals,
+  activeAnchorId,
+  onNavClick,
+  readOnly,
+  onApproveAll,
+  approveAllPending,
+  approveAllDisabled,
+}: {
+  sectionApprovals: SectionApprovals;
+  activeAnchorId: string;
+  onNavClick: (e: React.MouseEvent<HTMLAnchorElement>, id: string) => void;
+  readOnly: boolean;
+  onApproveAll?: () => void;
+  approveAllPending?: boolean;
+  approveAllDisabled?: boolean;
+}) {
+  const approvedCount = REQUIRED_SECTIONS.filter(
+    (s) => sectionApprovals[s]?.approved === true,
+  ).length;
+
+  return (
+    // top-[100px] clears the workspace's sticky tab strip + manifestation
+    // selector row (~96px combined). z-1 keeps the rail above the
+    // document but below the workspace's own sticky strip.
+    <aside className="hidden lg:block sticky top-[100px] self-start max-h-[calc(100dvh-140px)] overflow-y-auto pr-2">
+      <div className="font-mono text-[9px] tracking-[0.24em] uppercase text-t5 mb-3 pl-3">
+        FURNACE brief · {approvedCount} of {REQUIRED_SECTIONS.length} approved
+      </div>
+      <nav className="border-l border-rule-1 -ml-px">
+        {REQUIRED_SECTIONS.map((section) => {
+          const id = sectionAnchorId(section);
+          const approved = sectionApprovals[section]?.approved === true;
+          const isCurrent = activeAnchorId === id;
+          return (
+            <a
+              key={section}
+              href={`#${id}`}
+              onClick={(e) => onNavClick(e, id)}
+              className={`flex items-center gap-3 py-2 pl-3 pr-3 transition-colors duration-150 border-l-2 -ml-px focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2 ${
+                isCurrent
+                  ? "text-t1 bg-wash-2"
+                  : "text-t3 hover:text-t1 hover:bg-wash-1 border-transparent"
+              }`}
+              style={
+                isCurrent
+                  ? {
+                      borderLeftColor: "rgba(var(--d), 1)",
+                    }
+                  : undefined
+              }
+            >
+              <span
+                className="inline-block rounded-full shrink-0"
+                style={{
+                  width: 9,
+                  height: 9,
+                  background: approved
+                    ? "rgba(var(--d), 0.85)"
+                    : "transparent",
+                  border: approved
+                    ? "1.5px solid rgba(var(--d), 0.85)"
+                    : "1.5px solid var(--color-rule-3)",
+                }}
+                aria-label={approved ? "Approved" : "Pending"}
+              />
+              <span className="font-mono text-[10px] tracking-[0.16em] uppercase flex-1 leading-tight">
+                {SECTION_LABELS[section]}
+              </span>
+            </a>
+          );
+        })}
+      </nav>
+
+      {!readOnly && onApproveAll && (
+        <div className="mt-5 pl-3">
+          <button
+            type="button"
+            onClick={onApproveAll}
+            disabled={approveAllDisabled}
+            className="w-full font-mono text-[9.5px] tracking-[0.18em] uppercase px-3 py-2.5 rounded-sm border-2 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2 disabled:opacity-40 disabled:cursor-not-allowed"
+            style={{
+              borderColor: "rgba(var(--d), 0.7)",
+              background: "rgba(var(--d), 0.12)",
+              color: "rgba(var(--d), 1)",
+            }}
+          >
+            {approveAllPending
+              ? "Approving…"
+              : approveAllDisabled
+                ? "All approved"
+                : "Approve all + advance →"}
+          </button>
+        </div>
+      )}
+    </aside>
+  );
+}
+
+// ─── Section row — flow element, no card chrome ──────────────────
+
+function SectionRow({
+  index,
   section,
   content,
   approved,
   briefId,
   readOnly,
 }: {
+  index: number;
   section: SectionName;
   content: string;
   approved: boolean;
@@ -498,7 +699,7 @@ function SectionCard({
   const [error, setError] = useState<string | null>(null);
 
   const bounds = SECTION_BOUNDS[section];
-  const charCount = draft.length;
+  const charCount = editing ? draft.length : content.length;
   const charBudgetWidth = Math.min(100, (charCount / bounds.max) * 100);
   const charOverBudget = charCount > bounds.max || charCount < bounds.min;
 
@@ -532,42 +733,49 @@ function SectionCard({
   }
 
   return (
-    <div
-      className={`p-5 rounded-md border transition-colors ${
-        approved
-          ? "border-[rgba(var(--d),0.55)] bg-[rgba(var(--d),0.04)]"
-          : "border-rule-2 bg-wash-1"
-      }`}
+    <article
+      id={sectionAnchorId(section)}
+      // scroll-margin-top ensures `scrollIntoView` clears the workspace's
+      // sticky tab strip + manifestation selector (~96px) when the rail
+      // navs the user to a section. Without this, the section header
+      // would land partly hidden behind the strip.
+      className="mb-12 scroll-mt-[112px]"
     >
-      <div className="flex items-start justify-between mb-2 gap-3">
-        <div className="flex-1 min-w-0">
-          <div className="font-mono text-[10px] tracking-[0.24em] uppercase text-t4 mb-1">
-            {SECTION_LABELS[section]}
-          </div>
-          <div
-            className="font-mono text-[8.5px] tracking-[0.18em] uppercase mb-2"
+      <header className="flex items-baseline gap-4 pb-3 mb-4 border-b border-rule-1">
+        <span className="font-mono text-[10px] tracking-[0.22em] text-t5 w-7 shrink-0 leading-none">
+          {sectionNum(index)}
+        </span>
+        <h2 className="font-display font-semibold text-[18px] text-t1 leading-tight tracking-[0.005em]">
+          {SECTION_LABELS[section]}
+        </h2>
+        <span
+          className="ml-auto inline-flex items-center gap-1.5 font-mono text-[9.5px] tracking-[0.18em] uppercase shrink-0"
+          style={{
+            color: approved ? "rgba(var(--d), 1)" : "var(--color-t4)",
+          }}
+        >
+          <span
+            className="inline-block rounded-full"
             style={{
-              color: approved ? "rgba(var(--d), 0.85)" : "var(--color-t5)",
+              width: 8,
+              height: 8,
+              background: approved ? "rgba(var(--d), 0.85)" : "transparent",
+              border: approved ? "none" : "1.5px solid var(--color-rule-3)",
             }}
-          >
-            {approved ? "▣ approved" : "▢ pending"} ·{" "}
-            <span className={charOverBudget ? "text-[#d4908a]" : ""}>
-              {editing ? draft.length : content.length}
-            </span>
-            /{bounds.max} chars
-          </div>
-        </div>
-      </div>
+          />
+          {approved ? "Approved" : "Pending"}
+        </span>
+      </header>
 
       {editing ? (
-        <>
+        <div>
           <textarea
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
-            rows={5}
-            className="w-full bg-black/30 border border-rule-2 text-t1 font-display font-normal text-[13.5px] leading-[1.6] px-3 py-2.5 rounded-sm outline-none focus:border-[rgba(var(--d),0.7)] resize-vertical"
+            rows={6}
+            className="w-full bg-black/30 border border-rule-2 text-t1 font-display font-normal text-[14.5px] leading-[1.65] px-4 py-3 rounded-sm outline-none focus:border-[rgba(var(--d),0.7)] resize-vertical max-w-3xl"
           />
-          <div className="mt-1 h-[2px] bg-rule-1 rounded-sm overflow-hidden">
+          <div className="mt-1 h-[2px] bg-rule-1 rounded-sm overflow-hidden max-w-3xl">
             <div
               className="h-full transition-all"
               style={{
@@ -578,10 +786,20 @@ function SectionCard({
               }}
             />
           </div>
+          <div className="mt-1 font-mono text-[9.5px] tracking-[0.04em] text-t5">
+            {charCount} / {bounds.max} chars · min {bounds.min}
+            {charOverBudget && (
+              <span className="ml-2 text-[#d4908a]">
+                · out of bounds, save will fail
+              </span>
+            )}
+          </div>
           {error && (
-            <div className="mt-2 font-display text-[12px] text-[#d4908a]">{error}</div>
+            <div className="mt-2 font-display text-[12.5px] text-[#d4908a]">
+              {error}
+            </div>
           )}
-          <div className="mt-3 flex gap-2 justify-end">
+          <div className="mt-3 flex gap-3 max-w-3xl">
             <button
               type="button"
               onClick={() => {
@@ -590,7 +808,7 @@ function SectionCard({
                 setError(null);
               }}
               disabled={pending}
-              className="font-mono text-[10px] tracking-[0.18em] uppercase px-3 py-2 rounded-sm border border-rule-2 text-t3 hover:text-t1 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              className="font-mono text-[10px] tracking-[0.16em] uppercase text-t4 hover:text-t2 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2 px-1 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               Cancel
             </button>
@@ -598,7 +816,7 @@ function SectionCard({
               type="button"
               onClick={handleSaveEdit}
               disabled={pending || charOverBudget}
-              className="font-mono text-[10px] tracking-[0.18em] uppercase px-3 py-2 rounded-sm border transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              className="ml-auto font-mono text-[10px] tracking-[0.16em] uppercase px-4 py-2 rounded-sm border transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2 disabled:opacity-40 disabled:cursor-not-allowed"
               style={{
                 borderColor: "rgba(var(--d), 0.7)",
                 background: "rgba(var(--d), 0.15)",
@@ -608,16 +826,35 @@ function SectionCard({
               {pending ? "Saving…" : "Save"}
             </button>
           </div>
-        </>
+        </div>
       ) : (
         <>
-          <p className="font-display font-normal text-[14px] leading-[1.6] text-t1 whitespace-pre-wrap">
+          <p
+            className="font-display font-normal text-[15.5px] leading-[1.65] text-t1 max-w-3xl mb-4 whitespace-pre-wrap"
+            style={{
+              opacity: approved ? 0.92 : 1,
+            }}
+          >
             {content || (
-              <span className="text-t5 italic">(empty)</span>
+              <span className="text-t5 italic font-normal">(empty)</span>
             )}
           </p>
           {!readOnly && (
-            <div className="mt-3 flex gap-2 justify-end">
+            <div className="flex items-center gap-5 font-mono text-[10px] tracking-[0.16em] uppercase">
+              {!approved && (
+                <button
+                  type="button"
+                  onClick={handleApprove}
+                  disabled={pending}
+                  className="cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2 px-1 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  style={{
+                    color: "rgba(var(--d), 0.95)",
+                    borderBottom: "1px dashed rgba(var(--d), 0.5)",
+                  }}
+                >
+                  {pending ? "…" : "Approve"}
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => {
@@ -625,37 +862,35 @@ function SectionCard({
                   setEditing(true);
                 }}
                 disabled={pending}
-                className="font-mono text-[10px] tracking-[0.18em] uppercase px-3 py-2 rounded-sm border border-rule-2 text-t3 hover:text-t1 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                className="cursor-pointer text-t4 hover:text-t2 border-b border-dashed border-rule-3 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2 px-1 disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 Edit
               </button>
-              {!approved && (
-                <button
-                  type="button"
-                  onClick={handleApprove}
-                  disabled={pending}
-                  className="font-mono text-[10px] tracking-[0.18em] uppercase px-3 py-2 rounded-sm border transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                  style={{
-                    borderColor: "rgba(var(--d), 0.7)",
-                    background: "rgba(var(--d), 0.12)",
-                    color: "rgba(var(--d), 1)",
-                  }}
-                >
-                  {pending ? "…" : "Approve"}
-                </button>
-              )}
+              <button
+                type="button"
+                disabled
+                title="Phase 10E ORC tool integration; ask ORC in the panel for now"
+                className="cursor-not-allowed text-t5 border-b border-dashed border-rule-3 px-1 opacity-70"
+              >
+                Ask ORC to redo
+              </button>
+              <span className="ml-auto text-t5 text-[9.5px] tracking-[0.04em]">
+                {content.length} / {bounds.max} chars
+              </span>
             </div>
           )}
           {error && (
-            <div className="mt-2 font-display text-[12px] text-[#d4908a]">{error}</div>
+            <div className="mt-2 font-display text-[12.5px] text-[#d4908a]">
+              {error}
+            </div>
           )}
         </>
       )}
-    </div>
+    </article>
   );
 }
 
-// ─── Cascade banner — Phase 10F ──────────────────────────────────
+// ─── Cascade banner — Phase 10F (unchanged from prior version) ───
 //
 // Surfaces when the parent STOKER manifestation framing was edited
 // past the IN_STOKER gate (one or more revisions on the STOKER row
@@ -667,8 +902,7 @@ function SectionCard({
 //     CTA that prompts for a reason and calls regenerateFullBrief.
 //   - "readonly" (APPROVED briefs): warning only. Regenerating an
 //     approved brief would orphan downstream BOILER output, so we
-//     surface awareness without an action; founder can edit downstream
-//     manually if needed.
+//     surface awareness without an action.
 
 function CascadeBanner({
   briefId,
@@ -743,7 +977,7 @@ function CascadeBanner({
   );
 }
 
-// ─── Brand fit score badge ───────────────────────────────────────
+// ─── Brand-fit score badge (unchanged) ───────────────────────────
 
 function BrandFitBadge({ score }: { score: number }) {
   const band = score >= 80 ? "strong" : score >= 50 ? "partial" : "weak";
@@ -770,4 +1004,92 @@ function BrandFitBadge({ score }: { score: number }) {
       </div>
     </div>
   );
+}
+
+// ─── Scroll-spy hook ─────────────────────────────────────────────
+//
+// Tracks which of the rendered section anchors is currently the
+// "active" one in the workspace's scroll viewport. Used by the rail
+// nav to highlight the current section as the founder scrolls.
+//
+// Implementation notes:
+//   - The engine-room layout uses `h-full overflow-auto` on its outer
+//     wrapper, so the scroll container is NOT the document/viewport.
+//     The hook walks up from the first section to find the closest
+//     scrollable ancestor and uses it as IntersectionObserver root.
+//   - rootMargin -120px from top (sticky strip clearance) and -45%
+//     from bottom (so a section is considered "active" when it sits
+//     in roughly the upper third of the viewport, matching reading
+//     focus rather than first-pixel-visible).
+//   - When multiple sections are visible at once, picks the one
+//     closest to the top (most likely the one the user is reading).
+
+function useScrollSpy(sectionIds: string[]): string {
+  const [activeId, setActiveId] = useState<string>(sectionIds[0] ?? "");
+
+  // Stable cache key for the dependency array — changes only when
+  // the actual list of ids changes, not on every render.
+  const idsKey = sectionIds.join("|");
+
+  // Keep a ref to the latest activeId so the observer callback can
+  // read it without re-creating itself when the active section
+  // changes (which would re-attach the observer every scroll tick).
+  const lastReportedRef = useRef<string>(activeId);
+
+  useEffect(() => {
+    if (sectionIds.length === 0) return;
+
+    // Find scroll container — first ancestor of the first section
+    // that has overflow-y: auto/scroll. Falls back to null (viewport).
+    const firstSection = document.getElementById(sectionIds[0]);
+    let scrollRoot: Element | null = null;
+    let walker: HTMLElement | null = firstSection?.parentElement ?? null;
+    while (walker) {
+      const style = getComputedStyle(walker);
+      if (style.overflowY === "auto" || style.overflowY === "scroll") {
+        scrollRoot = walker;
+        break;
+      }
+      walker = walker.parentElement;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        // Maintain a snapshot of all observed entries' visibility +
+        // top positions. Pick the topmost one currently intersecting.
+        const intersecting = entries.filter((e) => e.isIntersecting);
+        if (intersecting.length === 0) return;
+
+        intersecting.sort(
+          (a, b) => a.boundingClientRect.top - b.boundingClientRect.top,
+        );
+        const topId = intersecting[0].target.id;
+        if (topId !== lastReportedRef.current) {
+          lastReportedRef.current = topId;
+          setActiveId(topId);
+        }
+      },
+      {
+        root: scrollRoot,
+        // -120px from top clears the workspace's sticky tab strip;
+        // -45% from bottom narrows the "active" zone to the upper
+        // half + reading-focus region.
+        rootMargin: "-120px 0px -45% 0px",
+        threshold: 0,
+      },
+    );
+
+    sectionIds.forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) observer.observe(el);
+    });
+
+    return () => observer.disconnect();
+    // We deliberately depend only on the ids list, not on activeId,
+    // to avoid re-attaching the observer every time the active section
+    // changes during scroll.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [idsKey]);
+
+  return activeId;
 }
