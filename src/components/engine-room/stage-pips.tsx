@@ -24,7 +24,9 @@ export type SignalStatus =
   | "EXTRACTION_FAILED"
   // Phase 9 — STOKER terminal states for parent signals.
   | "FANNED_OUT" // STOKER produced 1+ approved manifestation children
-  | "STOKER_REFUSED"; // STOKER refused (no decade scored >= 50)
+  | "STOKER_REFUSED" // STOKER refused (no decade scored >= 50)
+  // Phase 10 — FURNACE refusal state for manifestation children.
+  | "FURNACE_REFUSED"; // FURNACE refused (brand-fit < 50)
 
 const STAGES = [
   "BUNKER",
@@ -88,6 +90,18 @@ function progressFor(status: SignalStatus): StageProgress {
         completedThrough: 2,
         activeStage: null,
         label: "STOKER REFUSED",
+      };
+    case "FURNACE_REFUSED":
+      // Phase 10 — manifestation child terminal-ish state when FURNACE
+      // refuses for brand-fit reasons (score < 50). Three pips light up
+      // (BUNKER + STOKER + FURNACE) — FURNACE ran successfully and
+      // produced an agent_outputs row with refused=true. Refusal is a
+      // valid FURNACE outcome, mirroring STOKER_REFUSED's logic. Founder
+      // can force-advance via ORC or dismiss the manifestation.
+      return {
+        completedThrough: 3,
+        activeStage: null,
+        label: "FURNACE REFUSED",
       };
     // CR pass on PR #8 — collection-card.tsx's currentStageLabel uses
     // human-readable display labels for these states ("COLD" / "FAILED").

@@ -126,6 +126,17 @@ export function computeStageStates(
       states.BUNKER = "completed";
       states.STOKER = "completed";
       break;
+    case "FURNACE_REFUSED":
+      // Phase 10 — manifestation child terminal-ish state when FURNACE
+      // refuses the brief (brand-fit < 50). BUNKER + STOKER + FURNACE
+      // all complete (FURNACE itself ran successfully and produced an
+      // agent_outputs row with refused=true). No active stage — founder
+      // may force-advance via ORC OR dismiss the manifestation.
+      // FURNACE tab shows the refusal banner.
+      states.BUNKER = "completed";
+      states.STOKER = "completed";
+      states.FURNACE = "completed";
+      break;
   }
 
   return states;

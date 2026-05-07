@@ -6,6 +6,7 @@ import {
   StokerResonance,
   type ParentStokerData,
 } from "./stoker-resonance";
+import { FurnaceBrief } from "./furnace-brief";
 import type {
   ParentReference,
   ManifestationOwnDetail,
@@ -99,14 +100,7 @@ export type Renderer = React.ComponentType<RendererProps>;
 export const RENDERERS: Record<AgentKey, Renderer> = {
   BUNKER: BunkerRetrospective,
   STOKER: StokerResonance,
-  FURNACE: (props) => (
-    <StagePlaceholder
-      stage="FURNACE"
-      phase="Phase 10"
-      description="FURNACE will score brand fit per decade-manifestation and produce the product brief for BOILER."
-      {...props}
-    />
-  ),
+  FURNACE: FurnaceBrief,
   BOILER: (props) => (
     <StagePlaceholder
       stage="BOILER"

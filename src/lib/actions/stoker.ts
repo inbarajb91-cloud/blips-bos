@@ -119,8 +119,30 @@ export async function approveStokerManifestation(opts: {
       );
   });
 
-  // FURNACE event firing is deferred to Phase 10 (no FURNACE handler
-  // yet). Manifestation sits at IN_FURNACE until Phase 10 ships.
+  // Phase 10 — fire furnace.ready so the FURNACE Inngest function picks
+  // up this manifestation and generates a brief. The handler does the
+  // heavy work (recall playbooks/BRAND.md/MATERIALS.md, run skill, write
+  // brief to agent_outputs). Send is fire-and-forget after the DB writes
+  // commit so a slow Inngest call doesn't extend this server action.
+  // If the send fails (Inngest down), the manifestation stays at
+  // IN_FURNACE awaiting brief; the founder can re-trigger via ORC's
+  // regenerate_full_brief tool when the system is back up.
+  try {
+    const { inngest } = await import("@/lib/inngest/client");
+    await inngest.send({
+      name: "stoker.manifestation.approved",
+      data: {
+        orgId: user.orgId,
+        manifestationSignalId: child.id,
+      },
+    });
+  } catch (err) {
+    console.warn(
+      "[approveStokerManifestation] inngest.send failed (manifestation still APPROVED in DB; FURNACE can be re-triggered via ORC):",
+      err,
+    );
+  }
+
   // Revalidate child + Bridge + parent so the parent's STOKER tab
   // reflects the new APPROVED state on this decade card. Without the
   // parent revalidation, the parent workspace's resonance grid stayed
