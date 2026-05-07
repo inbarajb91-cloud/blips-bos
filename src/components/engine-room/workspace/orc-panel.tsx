@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import type { signals } from "@/db/schema";
 import type { AgentKey } from "./types";
+import type { ManifestationSummary } from "./renderers/types";
 import {
   getOrCreateOrcConversation,
   type Message,
@@ -47,12 +48,21 @@ import type { LockStatus } from "@/lib/actions/signal-locks";
 export function OrcPanel({
   signal,
   activeStage,
+  activeManifestation,
   lockStatus,
   isOpen,
   onToggle,
 }: {
   signal: typeof signals.$inferSelect;
   activeStage: AgentKey;
+  /** Phase 10.4.2 — the manifestation child the user has selected via
+   *  the workspace's `?m=` URL param. Sent to /api/orc/reply so the
+   *  route can resolve its journey and thread it through ORC's tool
+   *  context — `get_stage_output("FURNACE")` and friends route to this
+   *  child for post-STOKER stages instead of the parent (which never
+   *  has post-STOKER outputs). Null when the active tab is parent-
+   *  scoped (BUNKER/STOKER) or when the parent has no manifestations. */
+  activeManifestation: ManifestationSummary | null;
   /** Lock state from signal_locks. When not held by current user, the
    *  input is disabled so a read-only viewer can't send messages. Null
    *  while the acquire is in flight — treat as still-loading. */
@@ -303,6 +313,11 @@ export function OrcPanel({
             signalId: signal.id,
             userMessage: text,
             stage: activeStage,
+            // Phase 10.4.2 — send the active manifestation child id so
+            // the route can resolve its journey + route post-STOKER
+            // tools to it. Null when no manifestation is selected
+            // (pre-STOKER tab, or parent has no manifestations).
+            activeManifestationId: activeManifestation?.id ?? null,
           }),
           signal: ac.signal,
         });

@@ -16,6 +16,36 @@ export interface OrcToolContext {
   /** The signal's currently-active journey. Every tool call scopes to
    *  this journey so archived journeys stay read-only from ORC's side. */
   journeyId: string;
+  /**
+   * Phase 10.4.2 — when the user is viewing a parent workspace tab
+   * that's manifestation-scoped (FURNACE/BOILER/ENGINE/PROPELLER) AND
+   * a manifestation child is active (?m= in the URL), this carries
+   * that child's signalId + journeyId + decade. Tools that pull stage
+   * data for post-STOKER stages route to the manifestation here
+   * instead of the parent.
+   *
+   * Without this, `get_stage_output("FURNACE")` on a parent workspace
+   * reported "FURNACE has not produced an output on the active journey
+   * yet" — true for the parent (parent's pipeline ends at FANNED_OUT),
+   * but the user was actually looking at the manifestation child's
+   * FURNACE brief. The mismatch made ORC look broken.
+   *
+   * Null when:
+   *   - User is on a pre-STOKER tab (BUNKER / STOKER are parent-scoped)
+   *   - Parent has no manifestations yet
+   *   - Active manifestation lookup failed (deleted, dismissed, etc.)
+   */
+  activeManifestation: {
+    signalId: string;
+    journeyId: string;
+    decade: "RCK" | "RCL" | "RCD";
+    shortcode: string;
+  } | null;
+  /** The stage the user is currently viewing in the workspace. Used
+   *  by tools (esp. get_stage_output) to decide whether to route to
+   *  the active manifestation or stay on the parent — POST_STOKER
+   *  stages route to the manifestation, BUNKER/STOKER stay on parent. */
+  activeStage: "BUNKER" | "STOKER" | "FURNACE" | "BOILER" | "ENGINE" | "PROPELLER";
   /** When true, destructive tools (approve_and_advance, dismiss) are
    *  included in the tool set returned by buildOrcTools. Computed
    *  server-side by /api/orc/reply based on regex intent detection in
