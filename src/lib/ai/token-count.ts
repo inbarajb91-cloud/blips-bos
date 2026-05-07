@@ -114,15 +114,28 @@ export function estimatePromptTokens(
  * current ~2800-token prefix); total_input bumped to 6500 to keep
  * the verbatim + summary + current_message room intact.
  *
- * Cost impact: at Gemini Flash $0.0003/1k tokens, +1500 tokens of
- * worst-case headroom is +$0.00045/turn. Negligible. Caps stay soft.
+ * 2026-05-07 (post-Phase 10): bumped system_brand_signal 3500 → 5000
+ * + total_input 6500 → 8500. Phase 10E added 9 brief-level ORC tools
+ * (approve/dismiss/edit/regen-section/regen-full/add-addendum/
+ * propose-addendum/flag-concern + approve_full_brief) plus the brief-
+ * specific tool documentation block in the system prompt — collectively
+ * ~700 new tokens. Live measurement on prod: ORC_SYSTEM_PROMPT alone
+ * was 3541 tokens, BRAND_DNA 497, signal core ~250 → 4288 total static
+ * prefix. With system_brand_signal at 3500 every FURNACE-stage ORC
+ * turn 413'd ("exceeds the per-turn context budget"). Bumped to 5000
+ * (~700 token headroom over the current ~4300-token prefix); total_input
+ * bumped to 8500 to keep verbatim + summary + current_message rooms
+ * intact (5000 + 800 + 2000 + 500 = 8300, leaving 200 headroom on total).
+ *
+ * Cost impact: at Gemini Flash $0.0003/1k tokens, +2000 tokens of
+ * worst-case headroom is +$0.0006/turn. Negligible. Caps stay soft.
  */
 export const ORC_BUDGET = {
-  system_brand_signal: 3_500,
+  system_brand_signal: 5_000,
   summary: 800,
   verbatim: 2_000,
   current_message: 500,
-  total_input: 6_500,
+  total_input: 8_500,
   total_output_target: 1_000,
 } as const;
 
