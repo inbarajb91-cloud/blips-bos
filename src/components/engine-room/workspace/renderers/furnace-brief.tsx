@@ -745,7 +745,10 @@ function SectionRow({
         <span className="font-mono text-[10px] tracking-[0.22em] text-t5 w-7 shrink-0 leading-none">
           {sectionNum(index)}
         </span>
-        <h2 className="font-display font-semibold text-[18px] text-t1 leading-tight tracking-[0.005em]">
+        <h2
+          id={`${sectionAnchorId(section)}-title`}
+          className="font-display font-semibold text-[18px] text-t1 leading-tight tracking-[0.005em]"
+        >
           {SECTION_LABELS[section]}
         </h2>
         <span
@@ -770,6 +773,7 @@ function SectionRow({
       {editing ? (
         <div>
           <textarea
+            aria-labelledby={`${sectionAnchorId(section)}-title`}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             rows={6}
@@ -1036,6 +1040,19 @@ function useScrollSpy(sectionIds: string[]): string {
   // changes (which would re-attach the observer every scroll tick).
   const lastReportedRef = useRef<string>(activeId);
 
+  // Ref-backed snapshot of currently-intersecting sections. CR pass 1
+  // caught a real bug: IntersectionObserver only reports targets whose
+  // intersection state JUST CHANGED — it does NOT re-deliver entries
+  // for sections still intersecting from a prior tick. Sorting only the
+  // freshly-changed `entries` array can promote a newly-entering section
+  // even while an earlier section is still the topmost visible one
+  // (rail highlight drifts during long scrolls). Maintaining a Map of
+  // currently-intersecting entries that we add/remove from on each
+  // callback gives us a true snapshot to pick the topmost from.
+  const visibleEntriesRef = useRef<Map<string, IntersectionObserverEntry>>(
+    new Map(),
+  );
+
   useEffect(() => {
     if (sectionIds.length === 0) return;
 
@@ -1053,20 +1070,36 @@ function useScrollSpy(sectionIds: string[]): string {
       walker = walker.parentElement;
     }
 
+    const visible = visibleEntriesRef.current;
+
     const observer = new IntersectionObserver(
       (entries) => {
-        // Maintain a snapshot of all observed entries' visibility +
-        // top positions. Pick the topmost one currently intersecting.
-        const intersecting = entries.filter((e) => e.isIntersecting);
-        if (intersecting.length === 0) return;
+        // Update the snapshot — add freshly-intersecting, remove
+        // freshly-non-intersecting. Then compute topmost from the
+        // full snapshot (not just the changed-ones batch).
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            visible.set(entry.target.id, entry);
+          } else {
+            visible.delete(entry.target.id);
+          }
+        }
 
-        intersecting.sort(
-          (a, b) => a.boundingClientRect.top - b.boundingClientRect.top,
-        );
-        const topId = intersecting[0].target.id;
-        if (topId !== lastReportedRef.current) {
-          lastReportedRef.current = topId;
-          setActiveId(topId);
+        if (visible.size === 0) return;
+
+        let topmost: IntersectionObserverEntry | null = null;
+        for (const entry of visible.values()) {
+          if (
+            topmost === null ||
+            entry.boundingClientRect.top < topmost.boundingClientRect.top
+          ) {
+            topmost = entry;
+          }
+        }
+
+        if (topmost && topmost.target.id !== lastReportedRef.current) {
+          lastReportedRef.current = topmost.target.id;
+          setActiveId(topmost.target.id);
         }
       },
       {
@@ -1084,7 +1117,10 @@ function useScrollSpy(sectionIds: string[]): string {
       if (el) observer.observe(el);
     });
 
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      visible.clear();
+    };
     // We deliberately depend only on the ids list, not on activeId,
     // to avoid re-attaching the observer every time the active section
     // changes during scroll.
