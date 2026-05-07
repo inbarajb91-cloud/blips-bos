@@ -177,13 +177,25 @@ export async function POST(req: Request) {
       )
       .limit(1);
     if (child && child.decade) {
-      const childJourney = await getActiveJourney(child.id);
-      activeManifestationContext = {
-        signalId: child.id,
-        journeyId: childJourney.id,
-        decade: child.decade as "RCK" | "RCL" | "RCD",
-        shortcode: child.shortcode,
-      };
+      // Guard the journey lookup so a transient DB hiccup or a missing-
+      // journey edge case doesn't 500 the whole ORC turn — the
+      // documented behavior is "fall through to parent-scoped tools",
+      // not "fail the request". Keep activeManifestationContext null on
+      // failure so the route continues normally.
+      try {
+        const childJourney = await getActiveJourney(child.id);
+        activeManifestationContext = {
+          signalId: child.id,
+          journeyId: childJourney.id,
+          decade: child.decade as "RCK" | "RCL" | "RCD",
+          shortcode: child.shortcode,
+        };
+      } catch (err) {
+        console.warn(
+          `[orc/reply] failed to resolve manifestation journey for ${child.id} (${child.shortcode}); falling through to parent-scoped tools:`,
+          err,
+        );
+      }
     }
   }
 
