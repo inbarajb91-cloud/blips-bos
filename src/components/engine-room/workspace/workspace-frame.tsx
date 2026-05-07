@@ -724,6 +724,13 @@ export function WorkspaceFrame({
           <OrcPanel
             signal={signal}
             activeStage={activeTab}
+            // Phase 10.4.2 — pass the active manifestation only on
+            // post-STOKER tabs (the only tabs that route through a
+            // manifestation child). On BUNKER/STOKER, ORC's tools should
+            // stay parent-scoped so we explicitly null the prop there.
+            activeManifestation={
+              POST_STOKER_STAGES.has(activeTab) ? activeManifestation : null
+            }
             lockStatus={lockStatus}
             isOpen={isOrcOpen}
             onToggle={toggleOrc}

@@ -112,6 +112,19 @@ export interface BuildCachedMessagesParams {
    *     this explicit so the model doesn't infer scope-locking.
    */
   activeStageHint?: StageKey;
+  /**
+   * Phase 10.4.2 — when the user is on a parent workspace tab that's
+   * manifestation-scoped (FURNACE+) and a manifestation is active,
+   * include its shortcode + decade in the orientation hint so ORC
+   * knows tools default to that child's data. Routing happens in the
+   * tools themselves (get_stage_output reads ctx.activeManifestation);
+   * this hint just makes the routing explicit to the model so it
+   * doesn't hesitate or ask which manifestation is being referenced.
+   */
+  activeManifestationHint?: {
+    shortcode: string;
+    decade: "RCK" | "RCL" | "RCD";
+  } | null;
 }
 
 export interface CachedPayload {
@@ -138,6 +151,7 @@ export function buildCachedMessages(
     verbatim,
     currentUserMessage,
     activeStageHint,
+    activeManifestationHint,
   } = params;
 
   const messages: ModelMessage[] = [];
@@ -175,8 +189,23 @@ export function buildCachedMessages(
   // users in BOS. CodeRabbit on PR #7 caught this; it's the same
   // pattern as the require-founder.ts fix on Phase 8L (no founder
   // name baked into a string that may outlive a single-founder org).
+  // Build the orientation hint. Phase 10.4.2: when an
+  // activeManifestationHint is set, the user is on a parent workspace
+  // viewing a manifestation-scoped tab — surface the active manifestation
+  // explicitly so ORC knows that get_stage_output and brief tools default
+  // to that child. Without this, ORC would guess based on the URL alone
+  // and could ask "which manifestation?" mid-turn — annoying when the
+  // workspace already shows one is active.
   const finalUserMessage = activeStageHint
-    ? `[Workspace orientation: The user is currently viewing the ${activeStageHint} tab. Frame your reply with that as orientation context — but you have access to every stage's outputs via tools, so don't refuse a cross-stage question.]\n\n${currentUserMessage}`
+    ? `[Workspace orientation: The user is currently viewing the ${activeStageHint} tab${
+        activeManifestationHint
+          ? `, focused on the ${activeManifestationHint.shortcode} (${activeManifestationHint.decade}) manifestation child`
+          : ""
+      }. Frame your reply with that as orientation context — but you have access to every stage's outputs via tools, so don't refuse a cross-stage question.${
+        activeManifestationHint
+          ? ` When fetching post-STOKER stage data (FURNACE / BOILER / ENGINE / PROPELLER), tools route to this manifestation by default.`
+          : ""
+      }]\n\n${currentUserMessage}`
     : currentUserMessage;
 
   messages.push({

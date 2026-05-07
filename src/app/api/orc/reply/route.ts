@@ -70,6 +70,15 @@ const BodySchema = z.object({
     "ENGINE",
     "PROPELLER",
   ]),
+  // Phase 10.4.2 — when the user is on a parent workspace tab that's
+  // manifestation-scoped (FURNACE/BOILER/ENGINE/PROPELLER) and a
+  // manifestation child is active in the URL (?m=DECADE), the client
+  // sends the child's signal id here so the route can resolve its
+  // journey + thread it through ORC's tool context. Tools that pull
+  // post-STOKER stage data route to this manifestation instead of the
+  // parent. Null/omitted on pre-STOKER tabs and when no manifestation
+  // is active.
+  activeManifestationId: z.string().uuid().nullable().optional(),
 });
 
 export async function POST(req: Request) {
@@ -121,7 +130,7 @@ export async function POST(req: Request) {
       { status: 400 },
     );
   }
-  const { signalId, userMessage, stage } = parsed;
+  const { signalId, userMessage, stage, activeManifestationId } = parsed;
 
   // Scope check: signal belongs to user's org
   const [signal] = await db
@@ -136,6 +145,59 @@ export async function POST(req: Request) {
   // Active journey resolution. ORC always operates on the live journey;
   // archived journeys are read-only via the conversations scope check.
   const activeJourney = await getActiveJourney(signalId);
+
+  // Phase 10.4.2 — resolve the active manifestation's journey when the
+  // client signaled one. We scope-check it (must be a child of `signal`,
+  // same org) so a malformed client request can't have ORC operate on
+  // an arbitrary signal. If lookup fails for any reason (deleted,
+  // dismissed past visibility, scope mismatch), we silently fall through
+  // to no-manifestation context — tools just stay parent-scoped, same
+  // as pre-Phase-10.4.2 behavior.
+  let activeManifestationContext: {
+    signalId: string;
+    journeyId: string;
+    decade: "RCK" | "RCL" | "RCD";
+    shortcode: string;
+  } | null = null;
+  if (activeManifestationId) {
+    const [child] = await db
+      .select({
+        id: signals.id,
+        shortcode: signals.shortcode,
+        decade: signals.manifestationDecade,
+        parentId: signals.parentSignalId,
+      })
+      .from(signals)
+      .where(
+        and(
+          eq(signals.id, activeManifestationId),
+          eq(signals.orgId, user.orgId),
+          eq(signals.parentSignalId, signalId),
+        ),
+      )
+      .limit(1);
+    if (child && child.decade) {
+      // Guard the journey lookup so a transient DB hiccup or a missing-
+      // journey edge case doesn't 500 the whole ORC turn — the
+      // documented behavior is "fall through to parent-scoped tools",
+      // not "fail the request". Keep activeManifestationContext null on
+      // failure so the route continues normally.
+      try {
+        const childJourney = await getActiveJourney(child.id);
+        activeManifestationContext = {
+          signalId: child.id,
+          journeyId: childJourney.id,
+          decade: child.decade as "RCK" | "RCL" | "RCD",
+          shortcode: child.shortcode,
+        };
+      } catch (err) {
+        console.warn(
+          `[orc/reply] failed to resolve manifestation journey for ${child.id} (${child.shortcode}); falling through to parent-scoped tools:`,
+          err,
+        );
+      }
+    }
+  }
 
   // Ensure conversation exists + append user message. Persisting the
   // user turn NOW (not at stream close) matches the "don't lose user
@@ -297,6 +359,14 @@ export async function POST(req: Request) {
     // stage switch. ORC stays cross-stage aware via tools; the hint
     // just orients reasoning toward where the user is looking.
     activeStageHint: stage,
+    // Phase 10.4.2 — surface the active manifestation in the same hint
+    // so ORC knows post-STOKER tools route to this child by default.
+    activeManifestationHint: activeManifestationContext
+      ? {
+          shortcode: activeManifestationContext.shortcode,
+          decade: activeManifestationContext.decade,
+        }
+      : null,
   });
 
   // Detect mutation intent in the user's current message. Defense-
@@ -332,6 +402,8 @@ export async function POST(req: Request) {
     userId: user.authId,
     signalId,
     journeyId: activeJourney.id,
+    activeManifestation: activeManifestationContext,
+    activeStage: stage,
     allowMutation,
   });
 
