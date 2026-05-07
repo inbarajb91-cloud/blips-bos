@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { signals, collections } from "@/db/schema";
 import { AgentTabStrip } from "./agent-tab-strip";
 import { ContextStrip } from "./context-strip";
@@ -18,7 +18,7 @@ import type {
   ManifestationSummary,
 } from "./renderers/types";
 import { WorkspaceRealtime } from "./workspace-realtime";
-import { computeStageStates, pickInitialTab, type AgentKey } from "./types";
+import { computeStageStates, pickInitialTab, AGENT_KEYS, type AgentKey } from "./types";
 import type { SignalStatus } from "@/components/engine-room/stage-pips";
 import {
   acquireSignalLock,
@@ -50,6 +50,30 @@ function writeDecadeToUrl(decade: DecadeKey | null) {
   // pollute the back-button history. The user's mental model is
   // "I'm on this signal's workspace and toggling between its
   // manifestations", not "I navigated to a new page."
+  window.history.replaceState(window.history.state, "", url);
+}
+
+// Phase 10.4.1 — persist active tab in URL via `?t=FURNACE`.
+// Without this, refreshing while on the FURNACE tab snapped back to
+// STOKER (or whichever stage `pickInitialTab` thought was correct)
+// because the workspace had no memory of what the user had picked.
+// Same `replaceState` pattern as the manifestation `?m=` param —
+// tab switches are session navigation, not document navigation.
+const VALID_TABS: ReadonlySet<AgentKey> = new Set(AGENT_KEYS);
+
+function readTabFromUrl(): AgentKey | null {
+  if (typeof window === "undefined") return null;
+  const param = new URLSearchParams(window.location.search).get("t");
+  if (param && VALID_TABS.has(param as AgentKey)) {
+    return param as AgentKey;
+  }
+  return null;
+}
+
+function writeTabToUrl(tab: AgentKey) {
+  if (typeof window === "undefined") return;
+  const url = new URL(window.location.href);
+  url.searchParams.set("t", tab);
   window.history.replaceState(window.history.state, "", url);
 }
 
@@ -140,15 +164,52 @@ export function WorkspaceFrame({
     () => computeStageStates(signal.status as SignalStatus),
     [signal.status],
   );
-  const [activeTab, setActiveTab] = useState<AgentKey>(() =>
-    pickInitialTab(states),
+  // Phase 10.4.1 — initial tab prefers ?t= URL param (so refresh
+  // restores what the user was looking at) over pickInitialTab (which
+  // re-derives from the signal's pipeline state and would snap a
+  // FANNED_OUT parent back to STOKER on every reload). pickInitialTab
+  // is the fallback when there's no URL hint.
+  //
+  // SSR-safety: `useState` initializer runs on both server and client.
+  // `readTabFromUrl` is window-guarded — it returns null on the server,
+  // so the initial server render uses pickInitialTab. The post-mount
+  // effect below re-syncs from URL once the client is hydrated; if the
+  // URL had a tab and it differs from the SSR pick, we update once.
+  const [activeTab, setActiveTabState] = useState<AgentKey>(() =>
+    readTabFromUrl() ?? pickInitialTab(states),
   );
 
-  // Re-home the active tab when the signal advances while the workspace
-  // is mounted (e.g. STOKER completes, status changes). Keeps the UI in
-  // sync with the pipeline's real state.
+  // Wrapper that mirrors state -> URL whenever the user changes tabs.
+  // Use this anywhere we'd otherwise call `setActiveTab` directly so
+  // the URL stays in sync with the displayed tab.
+  const setActiveTab = useCallback((tab: AgentKey) => {
+    setActiveTabState(tab);
+    writeTabToUrl(tab);
+  }, []);
+
+  // Post-hydration: if the URL carried a tab the SSR initializer
+  // couldn't see (server returns null from readTabFromUrl), upgrade to
+  // it. Runs once on mount.
   useEffect(() => {
-    setActiveTab(pickInitialTab(states));
+    const fromUrl = readTabFromUrl();
+    if (fromUrl && fromUrl !== activeTab) {
+      setActiveTabState(fromUrl);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Re-home the active tab when the signal advances while the workspace
+  // is mounted (e.g. STOKER completes during the session). Only fires
+  // when the user has NOT manually picked a tab (no `?t=` in URL) —
+  // otherwise we'd clobber their selection every time the pipeline
+  // status changes. Tab change is then mirrored to URL via setActiveTab.
+  useEffect(() => {
+    if (readTabFromUrl()) return;
+    const next = pickInitialTab(states);
+    setActiveTabState(next);
+    // We deliberately do NOT write to URL here — re-homing on stage
+    // change is automatic, not a user action; we don't want to lock
+    // the URL until the user explicitly picks a tab.
   }, [states]);
 
   // Left-panel width (ORC pinned left as of Phase 7.5) — restore from
