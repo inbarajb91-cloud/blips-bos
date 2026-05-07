@@ -151,7 +151,11 @@ export async function generateStructured<T>(
     }
   }
 
-  // All models in chain exhausted
+  // All models in chain exhausted — every model returned a transient
+  // error in the same call. Most often this is a Gemini-wide capacity
+  // event (every model in our chain shares the same backend) or a
+  // structured-output reliability flake on a particular schema. Either
+  // way, "try again in a few minutes" is the right user-facing advice.
   const durationMs = Date.now() - start;
   void logAgentCall({
     orgId: params.orgId,
@@ -167,10 +171,20 @@ export async function generateStructured<T>(
       fallbacks_used: fallbacksUsed,
     },
   });
-  throw (
-    lastError ??
-    new Error(`All ${chain.length} models in fallback chain failed`)
+  // Re-throw with a friendly user-facing message + preserved cause so
+  // surfacing UIs (ORC tools, server actions, the cascade-banner regen
+  // flow) can show "try again in a few minutes" without exposing raw
+  // AI SDK retry counts to the founder. The original error sits on
+  // `cause` for log inspection / future error-classification work.
+  const friendly = new Error(
+    `${params.agentKey}: all ${chain.length} model${
+      chain.length === 1 ? "" : "s"
+    } in the fallback chain failed (likely a temporary Gemini capacity event — please try again in a few minutes).`,
   );
+  if (lastError) {
+    (friendly as Error & { cause?: unknown }).cause = lastError;
+  }
+  throw friendly;
 }
 
 /**
