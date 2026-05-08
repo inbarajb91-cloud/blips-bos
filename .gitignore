@@ -56,3 +56,6 @@ next-env.d.ts
 scratch/
 TODO.local.md
 .claude/
+
+# Vercel CLI cache
+.vercel/

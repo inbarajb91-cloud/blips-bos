@@ -210,7 +210,7 @@ export async function generateStructured<T>(
  *   - Quota exhausted at org/project level (not model-specific)
  *   - Zod validation of input (our code is wrong, not the model's)
  */
-function isTransientError(err: Error): boolean {
+export function isTransientError(err: Error): boolean {
   const msg = (err.message || "").toLowerCase();
   const transientSignatures = [
     // Capacity / rate limits
