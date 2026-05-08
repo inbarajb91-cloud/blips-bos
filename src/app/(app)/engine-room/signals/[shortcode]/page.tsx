@@ -204,7 +204,11 @@ export default async function SignalPage({
             .from(agentOutputsTable)
             .where(
               and(
-                inArray(agentOutputsTable.agentName, ["STOKER", "FURNACE"]),
+                inArray(agentOutputsTable.agentName, [
+                  "STOKER",
+                  "FURNACE",
+                  "BOILER",
+                ]),
                 inArray(agentOutputsTable.signalId, childIds),
               ),
             )
@@ -272,6 +276,7 @@ export default async function SignalPage({
       manifestations = children.map((c) => {
         const stokerOut = outputByAgent.get(`${c.id}::STOKER`);
         const furnaceOut = outputByAgent.get(`${c.id}::FURNACE`);
+        const boilerOut = outputByAgent.get(`${c.id}::BOILER`);
         const stokerDetail: ManifestationOwnDetail | null = stokerOut
           ? {
               id: stokerOut.id,
@@ -297,6 +302,20 @@ export default async function SignalPage({
                 : 0,
             }
           : null;
+        // Phase 11D — surface BOILER gallery alongside STOKER + FURNACE
+        // outputs so the BOILER renderer can read
+        // `activeManifestation.outputs.BOILER` without an extra fetch.
+        // Null when BOILER hasn't run on this child yet.
+        const boilerDetail: ManifestationOwnDetail | null = boilerOut
+          ? {
+              id: boilerOut.id,
+              content: (boilerOut.content ?? {}) as Record<string, unknown>,
+              status: boilerOut.status,
+              revisionsCount: Array.isArray(boilerOut.revisions)
+                ? boilerOut.revisions.length
+                : 0,
+            }
+          : null;
         // Phase 10F — cascade detection. Walk STOKER revisions for any
         // entry with cascade=true. Set when manifestation framing was
         // edited past IN_STOKER gate (Phase 9G pattern). FURNACE
@@ -313,7 +332,11 @@ export default async function SignalPage({
           title: c.workingTitle,
           decade: c.manifestationDecade as DecadeKey,
           status: c.status as SignalStatus,
-          outputs: { STOKER: stokerDetail, FURNACE: furnaceDetail },
+          outputs: {
+            STOKER: stokerDetail,
+            FURNACE: furnaceDetail,
+            BOILER: boilerDetail,
+          },
           stokerHasCascade,
         };
       });

@@ -7,6 +7,7 @@ import {
   type ParentStokerData,
 } from "./stoker-resonance";
 import { FurnaceBrief } from "./furnace-brief";
+import { BoilerGallery } from "./boiler-gallery";
 import type {
   ParentReference,
   ManifestationOwnDetail,
@@ -101,14 +102,7 @@ export const RENDERERS: Record<AgentKey, Renderer> = {
   BUNKER: BunkerRetrospective,
   STOKER: StokerResonance,
   FURNACE: FurnaceBrief,
-  BOILER: (props) => (
-    <StagePlaceholder
-      stage="BOILER"
-      phase="Phase 11"
-      description="BOILER will generate concept art and render the mockup via Dynamic Mockups."
-      {...props}
-    />
-  ),
+  BOILER: BoilerGallery,
   ENGINE: (props) => (
     <StagePlaceholder
       stage="ENGINE"
