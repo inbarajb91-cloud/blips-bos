@@ -320,7 +320,7 @@ export const boilerProcess = inngest.createFunction(
       return {
         refused: true,
         manifestationShortcode: context.child.shortcode,
-        reason: skillOutput.refusalReason,
+        reason: skillOutput.refusalReason ?? "(no rationale provided)",
       };
     }
 
@@ -338,12 +338,40 @@ export const boilerProcess = inngest.createFunction(
           image_model_fallback_chain?: string[];
         }
       ).image_model_fallback_chain) ??
-      ["imagen-4.0-generate-001", "gemini-2.5-flash-image"];
+      // Phase 11G.1 — Google-first default (gemini-2.5-flash-image is
+      // "nano banana", $0.039 fast tier; imagen-4.0 as second hop for
+      // photographic / typography-critical fall-through). Prod env as
+      // of May 8 only carries GOOGLE_GENERATIVE_AI_API_KEY; OPENAI key
+      // not yet provisioned. When founder adds OPENAI_API_KEY to Vercel
+      // they can prepend "gpt-image-1" to this chain via the agent
+      // settings UI without code change.
+      ["gemini-2.5-flash-image", "imagen-4.0-generate-001"];
 
     const generated = await step.run(
       "generate-concept-images",
       async () => {
+        // Phase 11G fix: skillOutput.variants and galleryMood are both
+        // `… | null` after the flat-with-nullable schema refactor.
+        // Refused branch returned above; here BOTH fields must be present
+        // and well-formed. Guard each independently — if the model emits
+        // an inconsistent shape (refused=false but either field null),
+        // throw a loud + specific error rather than letting the gallery
+        // persist with a null galleryMood (which the renderer would
+        // surface as "(no mood summary)" — silent quality regression).
+        // CR pass 1 on PR #27 caught this: variants was guarded but
+        // galleryMood wasn't.
         const variants = skillOutput.variants;
+        if (!variants || variants.length === 0) {
+          throw new Error(
+            "[BOILER] Inconsistent skill output: refused=false but variants is null/empty. Model emitted invalid shape.",
+          );
+        }
+        const galleryMood = skillOutput.galleryMood;
+        if (!galleryMood || galleryMood.trim().length === 0) {
+          throw new Error(
+            "[BOILER] Inconsistent skill output: refused=false but galleryMood is null/empty. Model emitted invalid shape.",
+          );
+        }
         const results: Array<{
           variantSlug: string;
           register: string;
@@ -449,7 +477,12 @@ export const boilerProcess = inngest.createFunction(
         }
 
         return {
-          galleryMood: skillOutput.galleryMood,
+          // Use the locally-narrowed galleryMood — guard above ensures
+          // it's a non-empty string here, so the inferred return type
+          // is `string` (not `string | null`) and downstream consumers
+          // (memory write, agent_outputs persist, return shape) don't
+          // need to repeat the null check.
+          galleryMood,
           editorNotes: skillOutput.editorNotes,
           variants: results,
         };
