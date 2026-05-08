@@ -58,6 +58,13 @@ export const signalStatus = pgEnum("signal_status", [
   //   score landed below 50. Founder can force-advance via ORC (similar
   //   pattern to STOKER's add_manifestation) or dismiss the manifestation.
   "FURNACE_REFUSED",
+  // Phase 11 — BOILER refusal state for manifestation children.
+  // BOILER_REFUSED: BOILER refused to produce a concept gallery because
+  //   the brief is internally contradictory / too generic / asks for an
+  //   anti-pattern register / has no design surface. Same refusal-as-
+  //   quality ethos as STOKER + FURNACE. Founder reviews + force-advances
+  //   or dismisses. Migration applied via Supabase MCP May 8 2026.
+  "BOILER_REFUSED",
 ]);
 
 export const agentName = pgEnum("agent_name", [
