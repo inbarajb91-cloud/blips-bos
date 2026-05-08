@@ -22,6 +22,13 @@ import { regenerateFullBriefTool } from "./regenerate-full-brief";
 import { addBriefAddendumTool } from "./add-brief-addendum";
 import { proposeBriefAddendumTool } from "./propose-brief-addendum";
 import { flagBriefConcernTool } from "./flag-brief-concern";
+// Phase 11E — BOILER gallery tools (4 total: 2 mutation + 2 suggestion).
+// Variant / gallery regen tools deferred to Phase 11E.1 (need a
+// `boiler.regenerate` event the handler doesn't listen for yet).
+import { approveBoilerVariantTool } from "./approve-boiler-variant";
+import { dismissBoilerGalleryTool } from "./dismiss-boiler-gallery";
+import { proposeBoilerDirectionTool } from "./propose-boiler-direction";
+import { flagBoilerConcernTool } from "./flag-boiler-concern";
 
 /**
  * Build the ORC tool set, bound to a specific turn's context.
@@ -67,6 +74,11 @@ export function buildOrcTools(ctx: OrcToolContext) {
     // allowMutation (suggestions, not side-effects).
     propose_brief_addendum: proposeBriefAddendumTool(ctx),
     flag_brief_concern: flagBriefConcernTool(ctx),
+    // Phase 11E — BOILER gallery suggestion tools. Bound regardless of
+    // allowMutation. The mutation pair (approve_boiler_variant +
+    // dismiss_boiler_gallery) is in the allowMutation block below.
+    propose_boiler_direction: proposeBoilerDirectionTool(ctx),
+    flag_boiler_concern: flagBoilerConcernTool(ctx),
     ...(ctx.allowMutation && {
       approve_and_advance: approveAndAdvance(ctx),
       dismiss: dismissSignal(ctx),
@@ -91,6 +103,12 @@ export function buildOrcTools(ctx: OrcToolContext) {
       regenerate_brief_section: regenerateBriefSectionTool(ctx),
       regenerate_full_brief: regenerateFullBriefTool(ctx),
       add_brief_addendum: addBriefAddendumTool(ctx),
+      // Phase 11E — BOILER mutation tools. Same allowMutation gate as
+      // approve/dismiss; the route-level regex picks up new intent
+      // stems (pick / variant / gallery / boiler) so these only bind
+      // when the user said one of those words in this turn.
+      approve_boiler_variant: approveBoilerVariantTool(ctx),
+      dismiss_boiler_gallery: dismissBoilerGalleryTool(ctx),
     }),
   };
 }
