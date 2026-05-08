@@ -22,5 +22,5 @@ export {
 import "./bunker"; // Phase 6
 import "./stoker"; // Phase 9
 import "./furnace"; // Phase 10
-// import "./boiler";  // Phase 11
+import "./boiler"; // Phase 11B
 // import "./engine";  // Phase 12
