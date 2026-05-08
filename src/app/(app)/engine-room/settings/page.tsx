@@ -1,8 +1,23 @@
+import Link from "next/link";
+
 export const metadata = {
   title: "Engine Room Settings · BLIPS BOS",
 };
 
-const SECTIONS = [
+interface SettingsSection {
+  title: string;
+  desc: string;
+  phase: string;
+  href?: string;
+}
+
+const SECTIONS: SettingsSection[] = [
+  {
+    title: "Agent Models",
+    desc: "Per-agent model + temperature + fallback chain. Bulk-apply across all agents to test new models. Founder-only.",
+    phase: "Phase 3.5 · Live",
+    href: "/engine-room/settings/agents",
+  },
   {
     title: "ORC Behavior",
     desc: "Routing, prioritization, summarization, learning sensitivity.",
@@ -28,7 +43,7 @@ const SECTIONS = [
     desc: "Whether new signals auto-assign to an active batch, default batch name format, etc.",
     phase: "Phase 6",
   },
-] as const;
+];
 
 export default function EngineRoomSettingsPage() {
   return (
@@ -43,24 +58,46 @@ export default function EngineRoomSettingsPage() {
       </p>
 
       <div className="flex flex-col gap-px border border-deep-divider rounded-md overflow-hidden">
-        {SECTIONS.map((s) => (
-          <div
-            key={s.title}
-            className="bg-ink px-5 py-5 flex items-start justify-between gap-6 border-b border-deep-divider last:border-b-0"
-          >
-            <div className="flex flex-col gap-1">
-              <span className="font-display text-sm font-medium text-off-white">
-                {s.title}
-              </span>
-              <span className="font-mono text-[11px] text-warm-bright leading-relaxed">
-                {s.desc}
+        {SECTIONS.map((s) => {
+          const inner = (
+            <div className="flex items-start justify-between gap-6">
+              <div className="flex flex-col gap-1">
+                <span className="font-display text-sm font-medium text-off-white">
+                  {s.title}
+                </span>
+                <span className="font-mono text-[11px] text-warm-bright leading-relaxed">
+                  {s.desc}
+                </span>
+              </div>
+              <span className="font-mono text-[9px] uppercase tracking-[0.2em] text-warm-muted whitespace-nowrap mt-0.5">
+                {s.phase}
               </span>
             </div>
-            <span className="font-mono text-[9px] uppercase tracking-[0.2em] text-warm-muted whitespace-nowrap mt-0.5">
-              {s.phase}
-            </span>
-          </div>
-        ))}
+          );
+
+          // Live sections become Links with hover affordance; placeholder
+          // sections render as static rows so the surface visually
+          // communicates which doors are actually open.
+          if (s.href) {
+            return (
+              <Link
+                key={s.title}
+                href={s.href}
+                className="bg-ink px-5 py-5 border-b border-deep-divider last:border-b-0 transition-colors hover:bg-ink-warm focus-visible:outline-none focus-visible:bg-ink-warm"
+              >
+                {inner}
+              </Link>
+            );
+          }
+          return (
+            <div
+              key={s.title}
+              className="bg-ink px-5 py-5 border-b border-deep-divider last:border-b-0"
+            >
+              {inner}
+            </div>
+          );
+        })}
       </div>
 
       <p className="font-editorial text-warm-muted text-base mt-10 text-center">

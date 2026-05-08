@@ -1,36 +1,34 @@
-import { anthropic } from "@ai-sdk/anthropic";
-import { google } from "@ai-sdk/google";
 import type { LanguageModel } from "ai";
 import { getAgentConfig } from "./config-reader";
+import { resolveProvider } from "./providers";
 import type { AgentKey, ModelId } from "./types";
 
 /**
  * Resolve a model ID string to a Vercel AI SDK LanguageModel.
  *
- * Supports both bare IDs ("gemini-2.5-flash") and prefixed IDs
- * ("google/gemini-2.5-flash"). The router picks the provider based on
- * the ID's prefix or pattern.
+ * Phase 3.5 — backed by the providers registry (`src/lib/ai/providers.ts`).
+ * Adding a new provider lives entirely in providers.ts; this router
+ * just looks up the matching provider and delegates `make()`.
+ *
+ * Supports provider-prefixed IDs ("openai/gpt-4o", "anthropic/claude-sonnet-4.7",
+ * "openrouter/moonshotai/kimi-k2") and bare IDs ("gemini-3.1-flash-lite",
+ * "claude-haiku-4.5") for known providers (Anthropic, Google, OpenAI, xAI).
+ *
+ * For OpenAI-compatible providers (OpenRouter, Moonshot/Kimi, Groq,
+ * Together, Fireworks), the prefix form is required since their bare
+ * model names don't have a unique pattern.
  */
 export function getModel(modelId: ModelId): LanguageModel {
-  // Prefixed form wins if present
-  if (modelId.startsWith("anthropic/")) {
-    return anthropic(modelId.replace(/^anthropic\//, ""));
+  const resolved = resolveProvider(modelId);
+  if (!resolved) {
+    throw new Error(
+      `Unknown model: "${modelId}". Use a provider-prefixed form like ` +
+        `"openai/gpt-4o", "anthropic/claude-sonnet-4.7", "openrouter/moonshotai/kimi-k2", ` +
+        `or a bare known model id ("gemini-3.1-flash-lite", "claude-haiku-4.5", "gpt-4o", "grok-2"). ` +
+        `Add new providers to src/lib/ai/providers.ts.`,
+    );
   }
-  if (modelId.startsWith("google/")) {
-    return google(modelId.replace(/^google\//, ""));
-  }
-
-  // Heuristic fallback on bare ID
-  if (modelId.startsWith("claude-")) {
-    return anthropic(modelId);
-  }
-  if (modelId.startsWith("gemini-")) {
-    return google(modelId);
-  }
-
-  throw new Error(
-    `Unknown model: ${modelId}. Prefix with 'anthropic/' or 'google/', or use a known bare ID.`,
-  );
+  return resolved.provider.make(resolved.modelName);
 }
 
 /**

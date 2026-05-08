@@ -1,27 +1,54 @@
-import { streamText, stepCountIs, type ModelMessage, type ToolSet } from "ai";
+import {
+  generateText,
+  streamText,
+  stepCountIs,
+  type ModelMessage,
+  type ToolSet,
+} from "ai";
 import { getAgentConfig } from "./config-reader";
 import { getModel } from "./model-router";
 import { logAgentCall } from "./logger";
+import { isTransientError } from "./generate";
 import type { AgentKey } from "./types";
 
 /**
- * Streaming abstraction for ORC replies — Phase 8E.
+ * Streaming abstraction for ORC replies — Phase 8E + Phase 3.5 fallback.
  *
  * The structured-call cousin is `generateStructured()` in
  * `src/lib/ai/generate.ts`. Same model-routing rules, same
  * config-driven selection, same agent_logs correlation — just
  * produces a streaming Response instead of a parsed object.
  *
- * Scope choices for Phase 8 MVP:
- *   - One model per call; no fallback chain. A streaming call
- *     failing mid-stream is a different recovery problem than a
- *     structured call failing upfront. We'll layer retry/fallback
- *     in a later phase if the Flash tier proves flaky.
- *   - Tool loop capped at 5 steps via stepCountIs(5). Documented
- *     in agents/ORC.md Phase 8; matches agent-design default.
- *   - Caller is responsible for building the cached payload (see
- *     `src/lib/ai/cache.ts buildCachedMessages`); this wrapper just
- *     threads it through streamText + instruments logging.
+ * Phase 3.5 — added a fallback chain via "probe-then-stream":
+ *
+ *   For each model in modelFallbackChain:
+ *     1. Send a 1-token probe with generateText (sub-second on healthy
+ *        models). If it succeeds, the model is healthy → start the
+ *        streamText against that model and return.
+ *     2. If the probe fails with a transient error (capacity, overload,
+ *        rate limit), advance to the next model in the chain.
+ *     3. If the probe fails with a permanent error (auth, malformed
+ *        input), throw — no fallback fixes that.
+ *   If all models fail probe, throw a friendly aggregated error.
+ *
+ * Latency cost on the happy path: one extra probe call (~200-500ms on
+ * Gemini Flash). Worst case (3 unhealthy models): ~3-6s of probes
+ * before failing. Strictly better than the prior behavior (no fallback,
+ * primary outage = full failure for the entire turn).
+ *
+ * Why probe-then-stream rather than stream-then-detect: streamText
+ * returns a result whose first chunk would have to be peeked-then-
+ * replayed to detect early failure without losing data. The AI SDK
+ * doesn't expose a clean "did the request even start?" signal. Probe-
+ * then-stream is the simple-and-correct approach. We accept the
+ * latency hit on every turn for the reliability win.
+ *
+ * Tool loop capped at 5 steps via stepCountIs(5). Documented in
+ * agents/ORC.md Phase 8; matches agent-design default.
+ *
+ * Caller is responsible for building the cached payload (see
+ * `src/lib/ai/cache.ts buildCachedMessages`); this wrapper just
+ * threads it through streamText + instruments logging.
  *
  * What the caller gets back: the StreamTextResult object. The route
  * handler turns that into a `Response` via
@@ -31,6 +58,11 @@ import type { AgentKey } from "./types";
  */
 
 export const ORC_MAX_STEPS = 5;
+
+/** Probe latency soft cap. If a model's probe takes longer than this,
+ *  we treat it as failed and advance — better than letting a slow
+ *  primary cost the whole turn its full 30s timeout. */
+const PROBE_TIMEOUT_MS = 8_000;
 
 export interface StreamOrcReplyParams {
   agentKey: AgentKey;
@@ -58,6 +90,82 @@ export interface StreamOrcReplyParams {
 }
 
 /**
+ * 1-token probe — confirms the model is healthy enough to serve the
+ * upcoming streaming call. Cost: ~10 tokens of output, well under
+ * $0.0001 on every model in the catalog. Returns:
+ *   - "healthy" → model accepted the request, returned a token
+ *   - "transient" → model errored on a fallback-eligible signature
+ *     (capacity, overload, etc.); caller should try next model
+ *   - throws → permanent error (auth, malformed); no fallback fixes
+ */
+async function probeModel(
+  modelId: string,
+): Promise<"healthy" | "transient"> {
+  try {
+    await Promise.race([
+      generateText({
+        model: getModel(modelId),
+        prompt: ".",
+        // AI SDK v6 uses `maxOutputTokens` — older variants used `maxTokens`.
+        // generateText accepts maxOutputTokens; cap at 4 so this stays
+        // cheap regardless of model pricing tier.
+        maxOutputTokens: 4,
+        temperature: 0.0,
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(
+          () => reject(new Error(`probe timeout after ${PROBE_TIMEOUT_MS}ms`)),
+          PROBE_TIMEOUT_MS,
+        ),
+      ),
+    ]);
+    return "healthy";
+  } catch (e) {
+    const err = e instanceof Error ? e : new Error(String(e));
+    if (isTransientError(err)) return "transient";
+    throw err;
+  }
+}
+
+/**
+ * Walk the fallback chain to find the first healthy model. Returns
+ * the chosen model id and how many fallbacks were used (0 = primary
+ * served). Throws a friendly aggregated error if none are healthy.
+ */
+async function pickHealthyModel(
+  chain: string[],
+  agentKey: AgentKey,
+): Promise<{ modelId: string; fallbacksUsed: number }> {
+  let lastTransientError: Error | null = null;
+  for (let i = 0; i < chain.length; i++) {
+    const id = chain[i];
+    try {
+      const status = await probeModel(id);
+      if (status === "healthy") {
+        return { modelId: id, fallbacksUsed: i };
+      }
+      lastTransientError = new Error(`${id} probe returned transient error`);
+      console.warn(
+        `[streamOrcReply] ${id} probe failed transiently — trying next in chain`,
+      );
+    } catch (e) {
+      // Permanent error — re-throw so the route surfaces it cleanly.
+      throw e;
+    }
+  }
+  // All models failed probe.
+  const friendly = new Error(
+    `${agentKey}: all ${chain.length} model${
+      chain.length === 1 ? "" : "s"
+    } in the fallback chain failed health probes (likely a temporary capacity event — please try again in a few minutes).`,
+  );
+  if (lastTransientError) {
+    (friendly as Error & { cause?: unknown }).cause = lastTransientError;
+  }
+  throw friendly;
+}
+
+/**
  * Fire a streaming LLM call for ORC. Returns the raw streamText
  * result so the caller can:
  *   - convert to an HTTP response via `.toUIMessageStreamResponse()`
@@ -70,11 +178,17 @@ export interface StreamOrcReplyParams {
 export async function streamOrcReply(params: StreamOrcReplyParams) {
   const start = Date.now();
   const config = await getAgentConfig(params.orgId, params.agentKey);
-  // First entry of the fallback chain is the primary model. For
-  // streaming we just use primary; fallback handling for streams is
-  // deferred (see file comment).
-  const modelId = config.modelFallbackChain[0];
+  const chain = config.modelFallbackChain;
   const temperature = params.temperature ?? config.temperature;
+
+  // Probe-then-stream: find the first healthy model in the chain.
+  // Throws if all probes fail; surfaces as a 500 from the route, which
+  // the OrcPanel renders as a friendly "try again" message.
+  const { modelId, fallbacksUsed } = await pickHealthyModel(
+    chain,
+    params.agentKey,
+  );
+  const probeMs = Date.now() - start;
 
   const model = getModel(modelId);
 
@@ -117,6 +231,12 @@ export async function streamOrcReply(params: StreamOrcReplyParams) {
           streaming: true,
           steps: event.steps.length,
           finish_reason: event.finishReason,
+          // Phase 3.5 — record fallback usage so the agent_logs table
+          // surfaces "this turn used model X because primary was down."
+          // Useful for capacity dashboards + cost analysis.
+          fallbacks_used: fallbacksUsed,
+          primary_model: chain[0],
+          probe_ms: probeMs,
         },
       });
 
@@ -138,7 +258,12 @@ export async function streamOrcReply(params: StreamOrcReplyParams) {
         durationMs: Date.now() - start,
         status: "error",
         errorMessage: error instanceof Error ? error.message : String(error),
-        metadata: { streaming: true },
+        metadata: {
+          streaming: true,
+          fallbacks_used: fallbacksUsed,
+          primary_model: chain[0],
+          probe_passed: true, // probe said healthy but stream errored mid-flight
+        },
       });
     },
   });
