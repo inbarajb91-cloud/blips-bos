@@ -26,7 +26,9 @@ export type SignalStatus =
   | "FANNED_OUT" // STOKER produced 1+ approved manifestation children
   | "STOKER_REFUSED" // STOKER refused (no decade scored >= 50)
   // Phase 10 — FURNACE refusal state for manifestation children.
-  | "FURNACE_REFUSED"; // FURNACE refused (brand-fit < 50)
+  | "FURNACE_REFUSED" // FURNACE refused (brand-fit < 50)
+  // Phase 11 — BOILER refusal state for manifestation children.
+  | "BOILER_REFUSED"; // BOILER refused (brief had no design surface / contradictory)
 
 const STAGES = [
   "BUNKER",
