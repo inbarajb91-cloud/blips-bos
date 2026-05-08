@@ -350,15 +350,26 @@ export const boilerProcess = inngest.createFunction(
     const generated = await step.run(
       "generate-concept-images",
       async () => {
-        // Phase 11G fix: skillOutput.variants is `Variant[] | null` after
-        // the flat-with-nullable schema refactor. Refused branch returned
-        // above; here variants must be present. Throw with a clear error
-        // if not (model emitted inconsistent shape — refused=false but
-        // variants=null) so the failure is loud rather than silent.
+        // Phase 11G fix: skillOutput.variants and galleryMood are both
+        // `… | null` after the flat-with-nullable schema refactor.
+        // Refused branch returned above; here BOTH fields must be present
+        // and well-formed. Guard each independently — if the model emits
+        // an inconsistent shape (refused=false but either field null),
+        // throw a loud + specific error rather than letting the gallery
+        // persist with a null galleryMood (which the renderer would
+        // surface as "(no mood summary)" — silent quality regression).
+        // CR pass 1 on PR #27 caught this: variants was guarded but
+        // galleryMood wasn't.
         const variants = skillOutput.variants;
         if (!variants || variants.length === 0) {
           throw new Error(
             "[BOILER] Inconsistent skill output: refused=false but variants is null/empty. Model emitted invalid shape.",
+          );
+        }
+        const galleryMood = skillOutput.galleryMood;
+        if (!galleryMood || galleryMood.trim().length === 0) {
+          throw new Error(
+            "[BOILER] Inconsistent skill output: refused=false but galleryMood is null/empty. Model emitted invalid shape.",
           );
         }
         const results: Array<{
@@ -466,7 +477,12 @@ export const boilerProcess = inngest.createFunction(
         }
 
         return {
-          galleryMood: skillOutput.galleryMood,
+          // Use the locally-narrowed galleryMood — guard above ensures
+          // it's a non-empty string here, so the inferred return type
+          // is `string` (not `string | null`) and downstream consumers
+          // (memory write, agent_outputs persist, return shape) don't
+          // need to repeat the null check.
+          galleryMood,
           editorNotes: skillOutput.editorNotes,
           variants: results,
         };
