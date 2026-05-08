@@ -338,7 +338,14 @@ export const boilerProcess = inngest.createFunction(
           image_model_fallback_chain?: string[];
         }
       ).image_model_fallback_chain) ??
-      ["imagen-4.0-generate-001", "gemini-2.5-flash-image"];
+      // Phase 11G.1 — Google-first default (gemini-2.5-flash-image is
+      // "nano banana", $0.039 fast tier; imagen-4.0 as second hop for
+      // photographic / typography-critical fall-through). Prod env as
+      // of May 8 only carries GOOGLE_GENERATIVE_AI_API_KEY; OPENAI key
+      // not yet provisioned. When founder adds OPENAI_API_KEY to Vercel
+      // they can prepend "gpt-image-1" to this chain via the agent
+      // settings UI without code change.
+      ["gemini-2.5-flash-image", "imagen-4.0-generate-001"];
 
     const generated = await step.run(
       "generate-concept-images",
