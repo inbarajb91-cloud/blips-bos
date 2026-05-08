@@ -186,10 +186,14 @@ export function resolveImageProvider(
 ): { provider: ImageProviderDef; modelName: string } | null {
   for (const { prefix, id } of PREFIX_KEYS) {
     if (modelId.startsWith(prefix)) {
-      return {
-        provider: IMAGE_PROVIDERS[id],
-        modelName: modelId.slice(prefix.length),
-      };
+      const modelName = modelId.slice(prefix.length);
+      // CR pass 1 fix: reject inputs like "openai/" (empty suffix) before
+      // dispatching to provider.make() — the SDK factories don't validate
+      // empty model ids and return broken model instances that fail at
+      // call time with confusing errors. Caller should get a deterministic
+      // null here so the upstream "Unknown image model" error fires.
+      if (modelName.length === 0) return null;
+      return { provider: IMAGE_PROVIDERS[id], modelName };
     }
   }
   for (const provider of IMAGE_PROVIDER_LIST) {

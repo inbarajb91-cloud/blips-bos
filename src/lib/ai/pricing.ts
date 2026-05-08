@@ -144,6 +144,7 @@ export const IMAGE_PRICING: Record<string, ImagePrice> = {
   // Replicate — same models, slightly different prices
   "replicate/black-forest-labs/flux-1.1-pro-ultra": { perImage: 0.07, notes: "Replicate markup vs fal.ai" },
   "replicate/ideogram-ai/ideogram-v3": { perImage: 0.09 },
+  "replicate/stability-ai/stable-diffusion-3.5-large": { perImage: 0.025, notes: "Open-weights via Replicate" },
 
   // OpenRouter image endpoints (pass-through with small markup)
   "openrouter-image/black-forest-labs/flux-1.1-pro-ultra": { perImage: 0.065 },
@@ -154,9 +155,35 @@ export const IMAGE_PRICING: Record<string, ImagePrice> = {
  * Compute the USD cost for N image generations of a given model. Used
  * by the BOILER logger (Phase 11C) to write agent_logs.cost_usd. Unknown
  * models log cost = 0; same forgiving pattern as the text computeCost.
+ *
+ * CR pass 1 fix:
+ *   - Normalize model ids before lookup. The provider router accepts
+ *     prefixed forms ("openai/gpt-image-1") for OpenAI-compatible
+ *     dispatch, but the IMAGE_PRICING table keys for first-party
+ *     providers use the bare form ("gpt-image-1"). Strip a leading
+ *     "openai/" or "google/" prefix on direct lookup miss so a prefixed
+ *     id doesn't silently log as cost = 0.
+ *   - Validate imageCount: clamp to non-negative finite integers. Without
+ *     this, a programmatic error (NaN / -1 / Infinity) leaks negative or
+ *     NaN cost into agent_logs and the billing/usage page later breaks.
  */
 export function computeImageCost(model: string, imageCount: number): number {
-  const price = IMAGE_PRICING[model];
+  // Validate imageCount — clamp to non-negative integer, return 0 on
+  // anything weird. agent_logs.cost_usd should never carry NaN/negative.
+  if (!Number.isFinite(imageCount) || imageCount <= 0) return 0;
+  const count = Math.floor(imageCount);
+
+  // Direct lookup
+  let price = IMAGE_PRICING[model];
+
+  // Fallback — try stripping a first-party provider prefix. (Compatible
+  // providers like fal.ai / Replicate / OpenRouter keep their prefix
+  // since their pricing table keys include it.)
+  if (!price) {
+    if (model.startsWith("openai/")) price = IMAGE_PRICING[model.slice(7)];
+    else if (model.startsWith("google/")) price = IMAGE_PRICING[model.slice(7)];
+  }
+
   if (!price) return 0;
-  return price.perImage * imageCount;
+  return price.perImage * count;
 }
