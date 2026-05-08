@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { approveBoilerVariant } from "@/lib/actions/boiler";
 import type { RendererProps } from "./registry";
 
 /**
@@ -98,6 +99,7 @@ export function BoilerGallery(props: RendererProps) {
     return <BoilerProcessing manifestationShortcode={manifestation.shortcode} />;
   }
 
+  const galleryId = boilerOutput.id;
   const content = (boilerOutput.content ?? {}) as BoilerContent;
   const status = boilerOutput.status;
 
@@ -135,6 +137,7 @@ export function BoilerGallery(props: RendererProps) {
     <BoilerGalleryReview
       manifestationShortcode={manifestation.shortcode}
       content={content}
+      galleryId={galleryId}
     />
   );
 }
@@ -228,9 +231,11 @@ function BoilerRefused({
 function BoilerGalleryReview({
   manifestationShortcode,
   content,
+  galleryId,
 }: {
   manifestationShortcode: string;
   content: BoilerContent;
+  galleryId: string;
 }) {
   const variants = content.variants ?? [];
 
@@ -275,7 +280,11 @@ function BoilerGalleryReview({
       {/* 4-variant grid — 2×2 on desktop, 1col on mobile */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         {variants.map((variant) => (
-          <VariantCard key={variant.variantSlug} variant={variant} />
+          <VariantCard
+            key={variant.variantSlug}
+            variant={variant}
+            galleryId={galleryId}
+          />
         ))}
       </div>
 
@@ -296,8 +305,35 @@ function BoilerGalleryReview({
   );
 }
 
-function VariantCard({ variant }: { variant: BoilerVariant }) {
+function VariantCard({
+  variant,
+  galleryId,
+}: {
+  variant: BoilerVariant;
+  galleryId: string;
+}) {
   const imageSrc = variant.imageUrl ?? variant.imageDataUri ?? null;
+  const [isPending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+
+  const handlePick = () => {
+    setError(null);
+    startTransition(async () => {
+      try {
+        await approveBoilerVariant({
+          galleryId,
+          variantSlug: variant.variantSlug,
+        });
+        // The action revalidates the path; React Server Components
+        // re-render and the renderer flips into the APPROVED state.
+        // No need to set local state.
+      } catch (e) {
+        const msg =
+          e instanceof Error ? e.message : "Failed to approve variant.";
+        setError(msg);
+      }
+    });
+  };
 
   return (
     <article className="border border-rule-1 rounded-md overflow-hidden bg-wash-1 flex flex-col">
@@ -375,21 +411,38 @@ function VariantCard({ variant }: { variant: BoilerVariant }) {
         <div className="flex items-center gap-3 pt-2 border-t border-rule-1 mt-auto">
           <button
             type="button"
-            disabled
-            title="Phase 11E will wire this to the approve_concept_variant ORC tool. For now, ask ORC in the panel: 'approve the type-led variant' (or whichever)."
-            className="font-mono text-[10px] tracking-[0.18em] uppercase px-3 py-2 rounded-sm border-2 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2 disabled:opacity-50 disabled:cursor-not-allowed"
+            onClick={handlePick}
+            disabled={isPending}
+            title={
+              isPending
+                ? "Approving — manifestation advancing to ENGINE…"
+                : "Pick this concept → approves the variant + advances manifestation to ENGINE Step 1. ORC also wires this via 'approve the type-led variant' in the chat."
+            }
+            className="font-mono text-[10px] tracking-[0.18em] uppercase px-3 py-2 rounded-sm border-2 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[rgba(var(--d),0.18)]"
             style={{
               borderColor: "rgba(var(--d), 0.7)",
               background: "rgba(var(--d), 0.10)",
               color: "rgba(var(--d), 1)",
             }}
           >
-            Pick this concept
+            {isPending ? "Approving…" : "Pick this concept"}
           </button>
           <span className="ml-auto font-mono text-[9px] tracking-[0.18em] uppercase text-t5">
-            via ORC →
+            or ask ORC →
           </span>
         </div>
+        {error && (
+          <div
+            role="alert"
+            className="font-mono text-[10px] tracking-[0.04em] text-[rgba(var(--d-rck),0.95)] px-2 py-1.5 rounded-sm"
+            style={{
+              background: "rgba(var(--d-rck), 0.08)",
+              border: "1px solid rgba(var(--d-rck), 0.25)",
+            }}
+          >
+            {error}
+          </div>
+        )}
       </div>
     </article>
   );

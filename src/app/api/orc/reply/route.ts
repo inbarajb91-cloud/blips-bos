@@ -391,8 +391,15 @@ export async function POST(req: Request) {
   // dangerous stems entirely. Word boundaries (`\b`) on both sides so
   // "approval" / "approved" / "approving" all land but "approximate"
   // doesn't. "decline" / "cancel" cover the chip Decline path.
+  //
+  // Phase 11E additions: pick / picked / picking / picks (renderer's
+  // "Pick this concept" CTA; founder will say "pick this one"); gallery
+  // / galleries (whole-gallery dismiss); variant / variants (variant-
+  // level approve); concept / concepts (founder framing). "boiler" itself
+  // would be too broad (every BOILER-tab message would mention it) so
+  // we match action verbs only.
   const allowMutation =
-    /\b(approve|approved|approval|approving|dismiss|dismissed|dismissing|reject|rejected|advance|advanced|ship|shipped|shipping|edit|edited|editing|modify|modified|restart|restarted|re-?run|rerun|force|force-add|decline|declined|cancel|cancelled|regenerate|regenerated|regenerating|brief|section|addendum|addenda|refused|refusing|redo|rewrite|rewritten)\b/i.test(
+    /\b(approve|approved|approval|approving|dismiss|dismissed|dismissing|reject|rejected|advance|advanced|ship|shipped|shipping|edit|edited|editing|modify|modified|restart|restarted|re-?run|rerun|force|force-add|decline|declined|cancel|cancelled|regenerate|regenerated|regenerating|brief|section|addendum|addenda|refused|refusing|redo|rewrite|rewritten|pick|picked|picking|picks|gallery|galleries|variant|variants|concept|concepts)\b/i.test(
       userMessage,
     );
 
