@@ -219,7 +219,7 @@ function AgentRow({
           onChange={(e) => setDraftChain(e.target.value)}
           rows={Math.max(3, chainEntries.length + 1)}
           spellCheck={false}
-          className="bg-black/30 border border-rule-2 text-off-white font-mono text-[12.5px] px-3 py-2 rounded-sm outline-none focus:border-[rgba(242,239,233,0.4)] w-full resize-vertical"
+          className="bg-black/30 border border-rule-2 text-off-white font-mono text-[12.5px] px-3 py-2 rounded-sm outline-none focus:border-[rgba(242,239,233,0.4)] w-full resize-y"
           placeholder={`gemini-2.5-pro\ngemini-2.5-flash\ngemini-2.5-flash-lite`}
         />
         <div className="font-mono text-[9px] text-warm-muted mt-1.5">

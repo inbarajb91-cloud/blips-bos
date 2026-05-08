@@ -57,5 +57,5 @@ scratch/
 TODO.local.md
 .claude/
 
-# Lockfile — Vercel uses package.json; lockfile is regenerated on install
-pnpm-lock.yaml
+# Vercel CLI cache
+.vercel/

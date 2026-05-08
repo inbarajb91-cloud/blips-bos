@@ -136,7 +136,16 @@ async function pickHealthyModel(
   chain: string[],
   agentKey: AgentKey,
 ): Promise<{ modelId: string; fallbacksUsed: number }> {
-  let lastTransientError: Error | null = null;
+  // CR pass 1 fix: previously rethrew on any "permanent" probe error,
+  // which defeated the whole point of the fallback chain in a key
+  // failure mode — a missing per-provider API key (e.g. primary set
+  // to "openai/gpt-4o" via the bulk-apply UI when OPENAI_API_KEY isn't
+  // configured) is permanent for THAT model but the chain exists
+  // exactly to recover from "this provider can't serve right now."
+  // New behavior: advance on any probe failure, only throw if the
+  // whole chain is exhausted. The aggregated error attaches the last
+  // failure as `cause` for log/observability inspection.
+  let lastError: Error | null = null;
   for (let i = 0; i < chain.length; i++) {
     const id = chain[i];
     try {
@@ -144,23 +153,28 @@ async function pickHealthyModel(
       if (status === "healthy") {
         return { modelId: id, fallbacksUsed: i };
       }
-      lastTransientError = new Error(`${id} probe returned transient error`);
+      lastError = new Error(`${id} probe returned transient error`);
       console.warn(
         `[streamOrcReply] ${id} probe failed transiently — trying next in chain`,
       );
     } catch (e) {
-      // Permanent error — re-throw so the route surfaces it cleanly.
-      throw e;
+      // Permanent error for THIS model (missing key, auth, malformed
+      // model id, unknown provider). Record it + advance — the chain
+      // is the safety net for exactly this case.
+      lastError = e instanceof Error ? e : new Error(String(e));
+      console.warn(
+        `[streamOrcReply] ${id} probe failed permanently (${lastError.message.slice(0, 80)}) — trying next in chain`,
+      );
     }
   }
   // All models failed probe.
   const friendly = new Error(
     `${agentKey}: all ${chain.length} model${
       chain.length === 1 ? "" : "s"
-    } in the fallback chain failed health probes (likely a temporary capacity event — please try again in a few minutes).`,
+    } in the fallback chain failed health probes (likely a temporary capacity event or a misconfigured provider key — please check the Settings → Agent Models page or try again in a few minutes).`,
   );
-  if (lastTransientError) {
-    (friendly as Error & { cause?: unknown }).cause = lastTransientError;
+  if (lastError) {
+    (friendly as Error & { cause?: unknown }).cause = lastError;
   }
   throw friendly;
 }

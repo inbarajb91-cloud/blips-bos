@@ -17,10 +17,19 @@ if (existsSync(".env.local")) {
     const eq = t.indexOf("=");
     if (eq === -1) continue;
     const k = t.slice(0, eq).trim();
-    const v = t
-      .slice(eq + 1)
-      .trim()
-      .replace(/^["']|["']$/g, "");
+    let raw = t.slice(eq + 1).trim();
+    // CR pass 1 fix — strip inline comments. Without this, a line like
+    //   API_KEY=abc # this is the prod key
+    // would set API_KEY to "abc # this is the prod key" and every
+    // subsequent call would fail in confusing ways. Skip stripping
+    // when the value is wrapped in quotes (the # might be intentional
+    // inside the quoted string).
+    const isQuoted = /^["'].*["']$/.test(raw);
+    if (!isQuoted) {
+      const hashIdx = raw.indexOf(" #");
+      if (hashIdx >= 0) raw = raw.slice(0, hashIdx).trim();
+    }
+    const v = raw.replace(/^["']|["']$/g, "");
     if (!process.env[k]) process.env[k] = v;
   }
 }
@@ -66,8 +75,14 @@ async function main() {
   });
   const cookieValue = `base64-${Buffer.from(payload, "utf-8").toString("base64")}`;
 
-  // Output only the bits Playwright needs — no password, no full user
-  // object echoed to stdout.
+  // Output only the bits Playwright needs to plant the auth cookie:
+  // cookie name + base64 cookie value. Note: the cookieValue itself is
+  // a base64-encoded JSON that DOES include the access_token, refresh
+  // token, AND the full user object (Supabase's session shape — that's
+  // what `@supabase/ssr` expects in the cookie). The password is NOT
+  // included anywhere. So this output is sensitive: handle it like any
+  // other Supabase access token (write to a temp file with restrictive
+  // perms; don't paste into chat / commit / log files).
   console.log(JSON.stringify({ cookieName, cookieValue }));
 }
 

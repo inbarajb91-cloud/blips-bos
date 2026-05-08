@@ -27,8 +27,22 @@ export default async function AgentModelsSettingsPage() {
   let configs;
   try {
     configs = await listAgentConfigs();
-  } catch {
-    // requireFounder threw — non-founder hitting this URL.
+  } catch (err) {
+    // CR pass 1 — distinguish auth rejections (non-founder hitting this
+    // URL → redirect quietly) from real failures (DB outage, deserialization,
+    // etc. → log to server so it surfaces in observability + still redirect
+    // to keep the UI sane). requireFounder throws Error("Founder required")
+    // on the non-auth path; everything else needs a trace.
+    const message = err instanceof Error ? err.message : String(err);
+    if (
+      !message.toLowerCase().includes("founder") &&
+      !message.toLowerCase().includes("auth")
+    ) {
+      console.error(
+        "[AgentModelsSettingsPage] listAgentConfigs failed unexpectedly:",
+        err,
+      );
+    }
     redirect("/engine-room");
   }
 
