@@ -188,46 +188,62 @@ const variantSchema = z.object({
   referenceAnchors: z.array(z.string().min(3).max(60)).min(1).max(4),
 });
 
-const briefRefusalSchema = z.object({
-  /** When the brief is so weak BOILER refuses to produce a gallery. Same
-   *  refusal-as-quality ethos as STOKER + FURNACE. Manifestation moves
-   *  to BOILER_REFUSED status; founder reviews + decides force-advance
-   *  or dismiss. */
-  refused: z.literal(true),
+// Output is a FLAT object with nullable fields, NOT a Zod discriminated
+// union. Phase 11G eval surfaced the same Gemini structured-output bug
+// MEMORY.md flagged in Phase 10G: discriminated unions with z.literal
+// (boolean) are converted to JSON Schema oneOf with single-value
+// boolean enums, which Gemini rejects with "Invalid value at
+// 'generation_config.response_schema.one_of[0].properties[0].value.enum[0]'
+// (TYPE_STRING), true". Same fix as FURNACE — use flat-with-nullable +
+// the convention "refused=true → variants null + galleryMood null +
+// editorNotes null".
+//
+// Convention enforced by:
+//   - The system prompt (explicit instructions on the refused-vs-accepted
+//     branch).
+//   - The Inngest handler — checks `refused === true` first; ignores
+//     downstream fields on refusal.
+//   - The renderer — same check, surfaces the refusal banner instead
+//     of trying to read variants.
+//   - The eval suite — checks both branches' invariants.
+//
+// In rare cases the model emits an inconsistent shape (refused=true
+// with variants present, or refused=false with refusalReason populated).
+// Downstream code treats the refused boolean as authoritative; the
+// extra fields are ignored. Same pattern as FURNACE.
+
+const outputSchema = z.object({
+  /** True when BOILER refuses to produce a gallery (brief is internally
+   *  contradictory / too generic / brand-voice mismatch / asks for an
+   *  anti-pattern register). Same refusal-as-quality ethos as STOKER +
+   *  FURNACE. Manifestation status flips to BOILER_REFUSED; founder
+   *  reviews + decides force-advance or dismiss. */
+  refused: z.boolean(),
+  /** Specific failure mode (when refused=true). Null when accepted. */
   refusalReason: z
     .string()
     .min(120)
     .max(500)
+    .nullable()
     .describe(
-      "Specific failure mode — brief is internally contradictory / too generic / brand-voice mismatch / etc. Vague refusals are themselves refusals of the refusal job.",
+      "Specific failure mode — brief is internally contradictory / too generic / brand-voice mismatch / etc. Vague refusals are themselves refusals of the refusal job. Null when refused=false.",
     ),
-});
-
-const briefAcceptedSchema = z.object({
-  refused: z.literal(false),
   /** Brief overall mood-summary in 80-200 chars — the gallery's editorial
    *  framing. Founder reads this BEFORE seeing the 4 variants to set
-   *  expectations. */
-  galleryMood: z.string().min(80).max(200),
+   *  expectations. Null when refused=true. */
+  galleryMood: z.string().min(80).max(200).nullable(),
+  /** Exactly 4 variants when accepted; null when refused. */
   variants: z
     .array(variantSchema)
     .length(4)
+    .nullable()
     .describe(
-      "Exactly 4 variants. One per register class (per skills.md §6.1) UNLESS the brief explicitly specifies one register, in which case 2 explore that register and 2 explore the next-most-fitting register as honest alternatives.",
+      "Exactly 4 variants when refused=false. One per register class (per skills.md §6.1) UNLESS the brief explicitly specifies one register, in which case 2 explore that register and 2 explore the next-most-fitting register as honest alternatives. Null when refused=true.",
     ),
-  /** Free-text editor notes from BOILER for the founder. 0-300 chars.
-   *  E.g. "All 4 variants intentionally avoid faux-vintage washes per
-   *  skills.md §1.3 anti-patterns; if you'd like to explore that
-   *  direction explicitly let ORC know." */
-  editorNotes: z.string().max(300).optional(),
+  /** Free-text editor notes from BOILER for the founder. 0-300 chars
+   *  when accepted; null when refused. */
+  editorNotes: z.string().max(300).nullable(),
 });
-
-// Discriminated union: refused OR accepted. Schema rejects malformed
-// outputs where refused=true coexists with variants[], etc.
-const outputSchema = z.discriminatedUnion("refused", [
-  briefRefusalSchema,
-  briefAcceptedSchema,
-]);
 
 export type BoilerOutput = z.infer<typeof outputSchema>;
 
@@ -342,7 +358,11 @@ You refuse the gallery (refused=true) when ANY of:
 Vague refusals ("doesn't feel right") are themselves refusals of the refusal job. refusalReason must specify WHAT failed.
 
 OUTPUT FORMAT
-Valid JSON matching the schema. Discriminated by "refused" boolean. When refused=true, only refusalReason is populated. When refused=false, you must produce all 4 variants + galleryMood (80-200 chars).
+Valid JSON matching the schema. Always include every key in the response object — never omit a key.
+
+When refused=true: refusalReason carries 120-500 chars; galleryMood, variants, and editorNotes are all null.
+
+When refused=false: galleryMood carries 80-200 chars; variants is exactly 4 objects; refusalReason is null; editorNotes is null OR a short 0-300 char note.
 
 Aim for 60-80% of each character bound per field — long answers indicate unfocused thinking; tighten and ship.
 

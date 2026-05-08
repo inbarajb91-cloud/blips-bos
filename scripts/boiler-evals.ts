@@ -269,23 +269,28 @@ const EVAL_CASES: EvalCase[] = [
         "Friendships in WhatsApp groups — RCL connection-as-archive.",
       brief: {
         designDirection:
-          "Mix of type + abstract negative-space framing. The phrase 'last seen 2 years ago' anchored small in one corner; the rest is breathing room.",
+          "Mix of type + abstract negative-space framing. The phrase 'last seen 2 years ago' anchored small in one corner; the rest is breathing room. RCL quietness through restraint and absence.",
         tactileIntent:
-          "Heavyweight cotton, 320 GSM, garment-dyed. Premium hand.",
-        moodAndTone: "Weighted, RCL voice, quiet sadness without melodrama.",
+          "Heavyweight cotton, 320 GSM, garment-dyed for premium hand. Print as discharge so the type sinks into the cloth, not sits on top.",
+        moodAndTone:
+          "Weighted, RCL voice, quiet sadness without melodrama. The visual register matches a WhatsApp 'last seen' line — observational, accepting.",
         compositionApproach:
-          "Single small phrase top-left corner, ~8% of chest. Rest of chest is empty.",
+          "Single small phrase top-left corner, ~8% of chest. Rest of chest is empty. Negative space dominates as the design's loudest element.",
         colorTreatment:
-          "Muted palette — earth tones. Specific colors TBD per render.",
+          "Muted palette — earth tones. Specific colors TBD per render. Garment-dyed in a quiet middle-tone that lets the print disappear at distance.",
         typographicTreatment:
-          "DM Mono for the phrase, very small. Cormorant Garamond would feel too ornate.",
-        artDirection: "Pentagram quiet; Munari for the negative-space economy.",
-        referenceAnchors: "Munari; Pentagram editorial.",
-        placementIntent: "Top-left chest, very small.",
-        voiceInVisual: "The empty space carries the framing.",
+          "DM Mono for the phrase, very small (8-10pt). Cormorant Garamond would feel too ornate. Mono carries the data-point register the framing requires.",
+        artDirection:
+          "Pentagram quiet for the spacing economy; Munari for the negative-space discipline. Decisively NOT illustrative; reads at touch distance only.",
+        referenceAnchors:
+          "Bruno Munari Italian rationalism; Pentagram editorial restraint; mid-century data-point design from publications like Domus.",
+        placementIntent:
+          "Top-left chest, very small. Optional small repeat at the back hem in same scale and weight.",
+        voiceInVisual:
+          "The empty space carries the framing. Volume comes from absence, not from any single design element shouting.",
         brandFitScore: 64,
         brandFitRationale:
-          "Partial fit. Premise lands but colorTreatment is underspecified — risk of palette drift on regen.",
+          "Partial fit. Premise lands strongly on RCL connection-as-archive but colorTreatment is underspecified — risk of palette drift on regen. Tactile + composition compensate.",
       },
     },
     expected: "accept",
@@ -302,22 +307,23 @@ const EVAL_CASES: EvalCase[] = [
         designDirection:
           "Mixed register — small photographic frame of a cassette tape upper-left, hand-drawn track-list type running down the right edge in Cormorant Garamond italic.",
         tactileIntent:
-          "Garment-dyed cotton 300 GSM, slightly washed. Print as photographic discharge for the cassette image; standard pigment for the track-list type.",
+          "Garment-dyed cotton 300 GSM, slightly washed for the spectral RCD register. Print as photographic discharge for the cassette image; standard pigment for the track-list type.",
         moodAndTone:
-          "Spectral, RCD voice. Specific, archival, slightly humourous.",
+          "Spectral, RCD voice. Specific, archival, slightly humourous about the artefact's wear and age.",
         compositionApproach:
-          "Cassette image ~25% upper-left chest; track-list type runs down the right side, italic, varying line lengths.",
+          "Cassette image ~25% upper-left chest; track-list type runs down the right side, italic, varying line lengths matching real cassette liner-note typography.",
         colorTreatment:
-          "S02 Cold Cosmic for the cassette image desaturation; warm cream for the type.",
+          "S02 Cold Cosmic for the cassette image desaturation; warm cream for the type. Garment in bone-white so both elements read against neutral ground.",
         typographicTreatment:
-          "Cormorant Garamond italic for the track-list (this is one of the rare BLIPS uses of italic — justified by the mixtape register).",
+          "Cormorant Garamond italic for the track-list (this is one of the rare BLIPS uses of italic — justified by the mixtape liner-note register, not decorative).",
         artDirection:
-          "Tillmans for the documentary cassette frame; Tibor Kalman editorial for the track-list arrangement.",
+          "Wolfgang Tillmans for the documentary cassette frame; Tibor Kalman editorial for the track-list arrangement; archival mixtape liner notes for typography rhythm.",
         referenceAnchors:
-          "Tillmans; Tibor Kalman; archival mixtape liner notes.",
-        placementIntent: "Full chest with both elements coexisting.",
+          "Wolfgang Tillmans documentary frames; Tibor Kalman editorial; archival mixtape liner notes from late-80s through mid-90s independent labels.",
+        placementIntent:
+          "Full chest with both elements coexisting. Cassette upper-left, track-list down the right edge.",
         voiceInVisual:
-          "The voice is in the specific track-list — names, durations, the tape's wear.",
+          "The voice is in the specific track-list — names, durations, the tape's wear marks. The cassette is the artefact, the type is the witness.",
         brandFitScore: 72,
         brandFitRationale:
           "Partial-strong fit. Mixed register is risky but this brief justifies it (the mixtape framing requires both photo and type). Cormorant italic exception is intentional.",
@@ -350,17 +356,25 @@ const EVAL_CASES: EvalCase[] = [
       framingHook: "Time accelerating in your 40s — RCL temporal compression.",
       brief: {
         designDirection:
-          "Iconographic. A single hourglass rendered hairline, orthographic, with the upper bulb empty.",
+          "Iconographic. A single hourglass rendered hairline, orthographic, with the upper bulb empty. The empty upper bulb carries the framing — it's the visual joke RCL knows.",
         tactileIntent:
-          "Heavyweight cotton 320 GSM, garment-dyed. Premium hand.",
-        moodAndTone: "Weighted, RCL voice, dryly observational.",
-        compositionApproach: "Centered chest, single hourglass occupying ~30%.",
-        colorTreatment: "S03 Warm Reckoning — sand on charcoal.",
-        typographicTreatment: "No primary type.",
-        artDirection: "Aicher pictograms for the line discipline.",
-        referenceAnchors: "Aicher 1972 Munich; Eatock hairline icons.",
-        placementIntent: "Centered chest.",
-        voiceInVisual: "The empty upper bulb is the loudest detail.",
+          "Heavyweight cotton 320 GSM, garment-dyed in muted earth tones for premium hand. Print as discharge so the hairline icon sits inset on the cloth.",
+        moodAndTone:
+          "Weighted, RCL voice, dryly observational. The visual acknowledges the time-pressure without dramatising it.",
+        compositionApproach:
+          "Centered chest, single hourglass occupying ~30% of vertical chest. Generous negative space all around — the icon needs breathing room.",
+        colorTreatment:
+          "S03 Warm Reckoning — sand-coloured icon on charcoal garment. Justification: warmth grounds the metaphor without making it literal.",
+        typographicTreatment:
+          "No primary type. Optional small DM Mono caption beneath the icon at ~9pt; Cormorant would be too ornate against the hairline weight.",
+        artDirection:
+          "Otl Aicher 1972 Munich pictograms for the line discipline; Eatock hairline icon work; Schmid grid economy for the negative space.",
+        referenceAnchors:
+          "Otl Aicher 1972 Munich pictograms; Daniel Eatock hairline icons; Pentagram quiet editorial restraint.",
+        placementIntent:
+          "Centered chest. Optional small repeat at the back hem in the same hairline weight.",
+        voiceInVisual:
+          "The empty upper bulb is the loudest detail. Volume comes from the absence of sand at the top, not from any element shouting.",
         brandFitScore: 62,
         brandFitRationale:
           "Partial fit. The hourglass is the obvious metaphor for time — risk of cliche. Treatment specificity (empty upper bulb, hairline weight) helps differentiate.",
@@ -377,26 +391,32 @@ const EVAL_CASES: EvalCase[] = [
     input: {
       shortcode: "CTRPLT",
       decade: "RCK",
-      framingHook: "Career ambition.",
+      framingHook:
+        "Career ambition at 32 — the inflection point where every choice closes another door.",
       brief: {
         designDirection:
-          "Type-led declarative piece in editorial register, quiet and minimal.",
+          "Type-led declarative piece in editorial register, quiet and minimal. RCK declarative voice, single hero phrase carrying the weight.",
         tactileIntent:
-          "Heavyweight cotton 320 GSM garment-dyed for premium hand.",
-        moodAndTone: "Quiet, declarative, RCK voice.",
-        compositionApproach: "Centered chest, single hero phrase.",
+          "Heavyweight cotton 320 GSM garment-dyed for premium hand. Print as discharge so the type sinks into the cloth.",
+        moodAndTone:
+          "Quiet, declarative, RCK voice — but the visual must also feel maximally loud and attention-grabbing. Both at the same time.",
+        compositionApproach:
+          "Centered chest, single hero phrase, restrained spacing. But also edge-to-edge maximal density with no negative space anywhere on the chest.",
         colorTreatment:
-          "Warm earth tones AND high-contrast neon cyan. Both must be primary. The palette must read warm-and-neon at the same time.",
+          "Warm earth tones AND high-contrast neon cyan. Both must be primary. The palette must read warm-and-neon simultaneously without compromise.",
         typographicTreatment:
-          "Syne Bold for the hero phrase, set quietly with restrained tracking.",
+          "Syne Bold for the hero phrase, set quietly with restrained tracking — but ALSO set to scream for attention with shock-value typography effects.",
         artDirection:
-          "Editorial restraint. Pentagram quiet, Eatock minimal — but rendered with maximalist neon impact.",
-        referenceAnchors: "Pentagram quiet; Eatock minimal.",
-        placementIntent: "Centered chest.",
-        voiceInVisual: "Quiet but loud. Both at once.",
+          "Editorial restraint following Pentagram quiet and Eatock minimal — but rendered with maximalist neon impact and viral graphic-design energy.",
+        referenceAnchors:
+          "Pentagram quiet editorial; Daniel Eatock minimal; viral graphic design influencers; maximalist neon poster design from the 90s.",
+        placementIntent:
+          "Centered chest, scaled to fit a 32-44 chest range without deformation.",
+        voiceInVisual:
+          "Quiet but loud at the same time. Both registers must coexist within a single garment without compromise to either.",
         brandFitScore: 58,
         brandFitRationale:
-          "Partial fit on premise; palette is internally contradictory.",
+          "Partial fit on premise but every section pairs an editorial direction with a maximalist contradiction. Internally inconsistent — not solvable through generation.",
       },
     },
     expected: "refuse",
@@ -408,28 +428,32 @@ const EVAL_CASES: EvalCase[] = [
     input: {
       shortcode: "CTRVCE",
       decade: "RCD",
-      framingHook: "Mortality.",
+      framingHook:
+        "Mortality — RCD reckoning with what was it for, mortality-aware, ambition decay.",
       brief: {
         designDirection:
-          "Photographic-register design that screams attention, optimised for shock-value scrolling on social media.",
-        tactileIntent: "Cotton.",
+          "Photographic-register design that screams attention, optimised for shock-value scrolling on social media. Should also feel quiet and editorial.",
+        tactileIntent:
+          "Cotton or whatever fabric reads premium. Garment-dyed for premium hand. Print method TBD — should feel both archival and freshly-printed.",
         moodAndTone:
-          "Spectral, accepting, sharp-edged with grief — but ALSO loud, attention-grabbing, scroll-stopping. Both registers must coexist.",
+          "Spectral, accepting, sharp-edged with grief — but ALSO loud, attention-grabbing, scroll-stopping for social engagement. Both registers must coexist within the same piece.",
         compositionApproach:
-          "Maximum visual density. Edge-to-edge composition with no negative space.",
+          "Maximum visual density. Edge-to-edge composition with no negative space — but ALSO restrained editorial layout with generous breathing room.",
         colorTreatment:
-          "Bright, saturated, high-energy palette in the spectral RCD register.",
+          "Bright, saturated, high-energy palette in the spectral RCD register. Desaturated archival tones with high-contrast neon highlights — both must lead.",
         typographicTreatment:
-          "Cormorant Garamond italic at massive size, set against high-contrast scrim, designed to stop the scroll.",
+          "Cormorant Garamond italic at massive size, set against high-contrast scrim, designed to stop the scroll while also reading as quiet editorial restraint.",
         artDirection:
-          "Tillmans documentary clarity but with maximalist viral-content energy.",
+          "Wolfgang Tillmans documentary clarity but with maximalist viral-content energy and shock-value composition. Both registers required at once.",
         referenceAnchors:
-          "Tillmans for restraint; viral graphic design influencers for energy.",
-        placementIntent: "All-over print.",
-        voiceInVisual: "Spectral and loud at once.",
+          "Wolfgang Tillmans for restraint; viral graphic design influencers for energy; maximalist neon poster design alongside mid-century photo book restraint.",
+        placementIntent:
+          "All-over print. Also centered chest only. Also back-yoke only. Multiple placements simultaneously.",
+        voiceInVisual:
+          "Spectral and loud at once. Quiet and shocking at the same time. Both registers in the same garment without compromise to either.",
         brandFitScore: 53,
         brandFitRationale:
-          "Partial fit on RCD framing; voice direction is internally contradictory.",
+          "Partial fit on RCD framing but every section pairs a spectral direction with a maximalist contradiction. Internally contradictory throughout.",
       },
     },
     expected: "refuse",
@@ -440,27 +464,32 @@ const EVAL_CASES: EvalCase[] = [
     input: {
       shortcode: "FAUXVTG",
       decade: "RCD",
-      framingHook: "Nostalgia.",
+      framingHook:
+        "Nostalgia for a college era — RCD reckoning with what we inherited.",
       brief: {
         designDirection:
-          "Distressed faux-vintage tee aesthetic. Heavy washes, fake worn-in look, retro-collegiate type with cracked-paint texture overlays.",
+          "Distressed faux-vintage tee aesthetic. Heavy washes, fake worn-in look, retro-collegiate type with cracked-paint texture overlays. Aggressive faux-aging effects.",
         tactileIntent:
-          "Cotton, distressed garment finish, sandblasted look.",
-        moodAndTone: "Vintage, lived-in, retro-collegiate.",
+          "Cotton, distressed garment finish with sandblasted look. Pre-faded dye for that vintage thrift-store feel; surface treatment for fake worn-in patina.",
+        moodAndTone:
+          "Vintage, lived-in, retro-collegiate register popular on Etsy and Pinterest. The faux-aging carries the entire emotional weight.",
         compositionApproach:
-          "Center chest with arched 'BLIPS UNIVERSITY' type and an emblem.",
+          "Center chest with arched 'BLIPS UNIVERSITY' type and an emblem. Standard collegiate-merchandise crest layout with mascot underneath.",
         colorTreatment:
-          "Faded burgundy and cream — the standard faux-vintage college palette.",
+          "Faded burgundy and cream — the standard faux-vintage college palette. Print colours pre-distressed to look 30 years old straight off the press.",
         typographicTreatment:
-          "Bold collegiate serif with cracked-paint texture overlay.",
+          "Bold collegiate serif with cracked-paint texture overlay. Drop shadows and faux-distressed strokes. Multiple weights and decorative flourishes.",
         artDirection:
-          "Faux-vintage college merch register, popular on Etsy and Pinterest.",
-        referenceAnchors: "Vintage college merchandise; faux-distressed apparel.",
-        placementIntent: "Front centered chest crest.",
-        voiceInVisual: "Faux-nostalgic, lived-in.",
+          "Faux-vintage college merch register, popular on Etsy and Pinterest. Ironic-college aesthetic with deliberate fake-aging treatment throughout.",
+        referenceAnchors:
+          "Vintage college merchandise from 70s-90s; faux-distressed apparel from streetwear brands chasing retro authenticity; Etsy independent thrift-aesthetic sellers.",
+        placementIntent:
+          "Front centered chest crest with mascot below. Optional sleeve hits with athletic department type.",
+        voiceInVisual:
+          "Faux-nostalgic, lived-in, retro-collegiate. The voice mimics decades-old college merchandise without earning that age.",
         brandFitScore: 50,
         brandFitRationale:
-          "Borderline. Premise around nostalgia could work but execution direction is a documented BLIPS anti-pattern.",
+          "Borderline. Premise around nostalgia could work but execution direction is a documented BLIPS anti-pattern (faux-vintage washes per skills.md §1.3).",
       },
     },
     expected: "refuse",
@@ -472,24 +501,32 @@ const EVAL_CASES: EvalCase[] = [
     input: {
       shortcode: "GENERIC",
       decade: "RCK",
-      framingHook: "Being a person at work.",
+      framingHook:
+        "Being a person at work — generally about workplace identity and the day-to-day grind.",
       brief: {
         designDirection:
-          "A nice-looking design about life and work that resonates with people. Should look premium and thoughtful.",
+          "A nice-looking design about life and work that resonates with people. Should look premium and thoughtful and considered. Should feel high-end without being too much.",
         tactileIntent:
-          "Quality fabric. Premium feel. Soft hand. High-quality construction.",
-        moodAndTone: "Premium, quality, considered, thoughtful.",
-        compositionApproach: "A good composition that works visually.",
-        colorTreatment: "Tasteful colors that feel premium.",
-        typographicTreatment: "A good typeface that reads well.",
-        artDirection: "High-end, premium, thoughtful.",
+          "Quality fabric with premium feel and soft hand. High-quality construction throughout. Should feel expensive when you touch it but also accessible.",
+        moodAndTone:
+          "Premium, quality, considered, thoughtful, sophisticated. Should resonate emotionally without being too direct or specific. Universal feeling.",
+        compositionApproach:
+          "A good composition that works visually. Balanced and thoughtful with strong visual hierarchy. Should look intentional and considered throughout.",
+        colorTreatment:
+          "Tasteful colours that feel premium and sophisticated. Should work for everyone. Considered palette that complements the garment.",
+        typographicTreatment:
+          "A good typeface that reads well at multiple sizes. Should feel premium and considered. Modern but not too trendy. Classic but not too dated.",
+        artDirection:
+          "High-end, premium, thoughtful direction. Should feel like quality apparel without being too obvious about it. Considered execution throughout.",
         referenceAnchors:
-          "Premium apparel brands; thoughtful design movements.",
-        placementIntent: "Where it looks best.",
-        voiceInVisual: "Premium and considered.",
+          "Premium apparel brands generally; thoughtful design movements; quality-focused fashion houses with considered aesthetics.",
+        placementIntent:
+          "Where it looks best on the garment. Strategic placement that complements the overall composition.",
+        voiceInVisual:
+          "Premium and considered. Should feel sophisticated without being pretentious. Universal appeal that resonates broadly.",
         brandFitScore: 52,
         brandFitRationale:
-          "Partial fit. The brief uses premium-vocabulary without specifying any concrete framing — borderline marketing-copy register.",
+          "Partial fit. The brief uses premium-vocabulary throughout without specifying any concrete framing or specific design surface — borderline marketing-copy register.",
       },
     },
     expected: "refuse",

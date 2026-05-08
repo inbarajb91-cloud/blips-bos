@@ -320,7 +320,7 @@ export const boilerProcess = inngest.createFunction(
       return {
         refused: true,
         manifestationShortcode: context.child.shortcode,
-        reason: skillOutput.refusalReason,
+        reason: skillOutput.refusalReason ?? "(no rationale provided)",
       };
     }
 
@@ -343,7 +343,17 @@ export const boilerProcess = inngest.createFunction(
     const generated = await step.run(
       "generate-concept-images",
       async () => {
+        // Phase 11G fix: skillOutput.variants is `Variant[] | null` after
+        // the flat-with-nullable schema refactor. Refused branch returned
+        // above; here variants must be present. Throw with a clear error
+        // if not (model emitted inconsistent shape — refused=false but
+        // variants=null) so the failure is loud rather than silent.
         const variants = skillOutput.variants;
+        if (!variants || variants.length === 0) {
+          throw new Error(
+            "[BOILER] Inconsistent skill output: refused=false but variants is null/empty. Model emitted invalid shape.",
+          );
+        }
         const results: Array<{
           variantSlug: string;
           register: string;
