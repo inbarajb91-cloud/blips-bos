@@ -100,3 +100,63 @@ export function computeCost(
 
   return inputCost + cachedCost + outputCost;
 }
+
+// ─── Image generation pricing — Phase 11A ─────────────────────────
+//
+// Image gen is priced per-image, not per-token. Different surface from
+// the text PRICING table above. Used by BOILER's logger to compute
+// cost per concept generation.
+//
+// Pricing per provider's published rates as of the date noted next to
+// each entry. Updated when provider prices change. Quality tier ("high"
+// quality on gpt-image-1) noted separately since cost varies with size +
+// quality settings.
+
+export interface ImagePrice {
+  /** USD per generated image at the noted size. */
+  perImage: number;
+  /** Note about size / quality tier this price applies to. */
+  notes?: string;
+}
+
+export const IMAGE_PRICING: Record<string, ImagePrice> = {
+  // OpenAI — gpt-image-1 (formerly DALL-E 3)
+  "gpt-image-1": { perImage: 0.04, notes: "1024x1024 standard quality (May 2026 rates)" },
+  "gpt-image-1-mini": { perImage: 0.02, notes: "1024x1024 standard" },
+  "gpt-image-1.5": { perImage: 0.05, notes: "1024x1024 standard; ~25% premium over 1.0" },
+  "dall-e-3": { perImage: 0.04, notes: "1024x1024 standard; legacy" },
+  "dall-e-2": { perImage: 0.02, notes: "1024x1024; legacy, lower quality" },
+
+  // Google — Imagen 4 family
+  "imagen-4.0-generate-001": { perImage: 0.04, notes: "1024x1024 standard" },
+  "imagen-4.0-ultra-generate-001": { perImage: 0.06, notes: "1024x1024 ultra quality" },
+  "imagen-4.0-fast-generate-001": { perImage: 0.02, notes: "1024x1024 fast tier" },
+  "gemini-2.5-flash-image": { perImage: 0.039, notes: "Multi-modal image gen" },
+  "gemini-3-pro-image-preview": { perImage: 0.05, notes: "Preview rate (subject to change)" },
+  "gemini-3.1-flash-image-preview": { perImage: 0.025, notes: "Preview rate" },
+
+  // fal.ai — Flux 1.1 Pro Ultra (premium aesthetic tier)
+  "fal/flux-1.1-pro-ultra": { perImage: 0.06, notes: "Best aesthetic; via fal.ai endpoint" },
+  "fal/flux-1.1-pro": { perImage: 0.04, notes: "Standard Flux Pro" },
+  "fal/ideogram-v3": { perImage: 0.08, notes: "Best for type-in-image rendering" },
+  "fal/stable-diffusion-3.5-large": { perImage: 0.02, notes: "Cheapest open-weights tier" },
+
+  // Replicate — same models, slightly different prices
+  "replicate/black-forest-labs/flux-1.1-pro-ultra": { perImage: 0.07, notes: "Replicate markup vs fal.ai" },
+  "replicate/ideogram-ai/ideogram-v3": { perImage: 0.09 },
+
+  // OpenRouter image endpoints (pass-through with small markup)
+  "openrouter-image/black-forest-labs/flux-1.1-pro-ultra": { perImage: 0.065 },
+  "openrouter-image/ideogram-ai/ideogram-v3": { perImage: 0.085 },
+};
+
+/**
+ * Compute the USD cost for N image generations of a given model. Used
+ * by the BOILER logger (Phase 11C) to write agent_logs.cost_usd. Unknown
+ * models log cost = 0; same forgiving pattern as the text computeCost.
+ */
+export function computeImageCost(model: string, imageCount: number): number {
+  const price = IMAGE_PRICING[model];
+  if (!price) return 0;
+  return price.perImage * imageCount;
+}
