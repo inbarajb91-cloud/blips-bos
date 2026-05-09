@@ -388,12 +388,22 @@ export function WorkspaceFrame({
   // with a complete gallery in the database. Inba reported clicking
   // "BOILER" did nothing because the tab was disabled.
   //
-  // The original `states` (above) is preserved for `pickInitialTab` —
-  // that picks the workspace's initial tab on first load + on parent
-  // status changes, where the parent's stage is the right anchor (we
-  // want a freshly-fanned-out parent to land on FURNACE for the active
-  // manifestation, which IS what derived state computes when child
-  // overrides parent).
+  // The original `states` (above) is preserved for `pickInitialTab`. CR
+  // pass 1 caught my earlier comment claiming pickInitialTab "lands a
+  // freshly-fanned-out parent on FURNACE" — that's wrong. For a
+  // FANNED_OUT parent the parent-only `states` map has BUNKER + STOKER
+  // completed and FURNACE+ as future, so pickInitialTab walks backward
+  // through AGENT_KEYS and lands on STOKER (the furthest-completed
+  // stage). The user has to click BOILER manually to see the gallery.
+  //
+  // That's still a UX gap — when a user opens a workspace with an
+  // active manifestation past STOKER, the initial tab should match
+  // where the manifestation is. Wiring pickInitialTab to consume
+  // effectiveStates would fix it, but pickInitialTab is called inside
+  // the useState initializer (line 178) before activeManifestation is
+  // computed (line 376) — refactor required. Tracked as Phase 11G.5
+  // polish; PR #30 ships only the clickability fix (the actual blocker)
+  // to keep diff scope tight.
   //
   // `effectiveStates` consumes both parent status + active manifestation
   // status. AgentTabStrip and the per-renderer state prop both read
