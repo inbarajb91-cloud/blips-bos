@@ -317,7 +317,19 @@ function BoilerFailed({
         )}
         {error.persistedAt && (
           <div className="font-mono text-[9px] tracking-[0.18em] uppercase text-t5 mt-4">
-            failed at {new Date(error.persistedAt).toLocaleString()}
+            failed at{" "}
+            {/* CR pass 1 fix: pin locale + timeZone explicitly. Without
+                this, the SSR-rendered value uses Vercel's runtime locale
+                (en-US, UTC) and the client uses the browser's locale —
+                React 19 emits a hydration warning on the text mismatch.
+                Forcing UTC + en-US keeps server/client outputs identical;
+                the founder reads timestamps as UTC universally which is
+                also less ambiguous than IST/PT/whatever the client guesses. */}
+            {new Date(error.persistedAt).toLocaleString("en-US", {
+              timeZone: "UTC",
+              hour12: false,
+            })}{" "}
+            UTC
           </div>
         )}
       </div>

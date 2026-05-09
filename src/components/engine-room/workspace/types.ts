@@ -47,7 +47,32 @@ export type StageState = "completed" | "active" | "future";
  */
 export function computeStageStates(
   status: SignalStatus,
+  activeManifestationStatus?: SignalStatus | null,
 ): Record<AgentKey, StageState> {
+  // Phase 11G.4 — when the parent has fanned out and the user is viewing
+  // a specific manifestation child (RCK / RCL / RCD), the post-STOKER
+  // tab states (FURNACE / BOILER / ENGINE / PROPELLER) should reflect
+  // the manifestation's pipeline progress, not the parent's frozen
+  // FANNED_OUT terminal state. Without this, Inba reported that the
+  // BOILER tab pip stayed open ○ and the tab itself was disabled
+  // (isFuture = true), even though the active manifestation had a
+  // completed BOILER gallery in the database. The renderer would have
+  // shown the gallery if the user could click the tab, but the tab
+  // wasn't clickable.
+  //
+  // Resolution: when the parent status is FANNED_OUT and an
+  // activeManifestationStatus is provided, derive states from the
+  // manifestation's status instead. BUNKER + STOKER stay "completed"
+  // (parent finished those stages); the post-STOKER stages reflect
+  // where the manifestation actually is.
+  const childOverridesParent =
+    status === "FANNED_OUT" &&
+    activeManifestationStatus !== undefined &&
+    activeManifestationStatus !== null;
+  const effectiveStatus = childOverridesParent
+    ? (activeManifestationStatus as SignalStatus)
+    : status;
+
   const states: Record<AgentKey, StageState> = {
     BUNKER: "future",
     STOKER: "future",
@@ -57,7 +82,22 @@ export function computeStageStates(
     PROPELLER: "future",
   };
 
-  switch (status) {
+  // When deriving from manifestation status, BUNKER + STOKER are
+  // categorically completed regardless of the manifestation's
+  // post-STOKER state — the parent ran them and the manifestation
+  // exists as a result. Pre-set them so the switch below can focus
+  // on FURNACE+ progression for the manifestation.
+  if (childOverridesParent) {
+    states.BUNKER = "completed";
+    states.STOKER = "completed";
+  }
+
+  // The switch consumes effectiveStatus — either the parent status
+  // (default) or the manifestation status (when child overrides).
+  const status_ = effectiveStatus;
+  void status; // status is documented; effectiveStatus drives the switch.
+
+  switch (status_) {
     case "IN_BUNKER":
     case "BUNKER_FAILED":
     case "EXTRACTION_FAILED":
@@ -136,6 +176,19 @@ export function computeStageStates(
       states.BUNKER = "completed";
       states.STOKER = "completed";
       states.FURNACE = "completed";
+      break;
+    case "BOILER_REFUSED":
+      // Phase 11 — manifestation child terminal-ish state when BOILER
+      // refuses (brief had no design surface / contradictory) OR when a
+      // technical failure (Inngest exhausted retries on Gemini schema
+      // flakiness) wrote a REJECTED marker row. Either way, the BOILER
+      // tab carries the refusal/failure banner; FURNACE+ stages are all
+      // complete. Founder may dismiss + edit brief OR retry from the
+      // failure-marker UI.
+      states.BUNKER = "completed";
+      states.STOKER = "completed";
+      states.FURNACE = "completed";
+      states.BOILER = "completed";
       break;
   }
 

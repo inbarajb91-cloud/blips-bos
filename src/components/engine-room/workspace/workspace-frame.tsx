@@ -381,6 +381,42 @@ export function WorkspaceFrame({
     );
   }, [visibleManifestations, activeDecade]);
 
+  // Phase 11G.4 — `effectiveStates` factors in the active manifestation's
+  // status when the parent is FANNED_OUT. Without this, the tab strip
+  // showed FURNACE / BOILER / ENGINE as "future" (open ○ pip + disabled
+  // click) even when the active manifestation child was at IN_BOILER
+  // with a complete gallery in the database. Inba reported clicking
+  // "BOILER" did nothing because the tab was disabled.
+  //
+  // The original `states` (above) is preserved for `pickInitialTab`. CR
+  // pass 1 caught my earlier comment claiming pickInitialTab "lands a
+  // freshly-fanned-out parent on FURNACE" — that's wrong. For a
+  // FANNED_OUT parent the parent-only `states` map has BUNKER + STOKER
+  // completed and FURNACE+ as future, so pickInitialTab walks backward
+  // through AGENT_KEYS and lands on STOKER (the furthest-completed
+  // stage). The user has to click BOILER manually to see the gallery.
+  //
+  // That's still a UX gap — when a user opens a workspace with an
+  // active manifestation past STOKER, the initial tab should match
+  // where the manifestation is. Wiring pickInitialTab to consume
+  // effectiveStates would fix it, but pickInitialTab is called inside
+  // the useState initializer (line 178) before activeManifestation is
+  // computed (line 376) — refactor required. Tracked as Phase 11G.5
+  // polish; PR #30 ships only the clickability fix (the actual blocker)
+  // to keep diff scope tight.
+  //
+  // `effectiveStates` consumes both parent status + active manifestation
+  // status. AgentTabStrip and the per-renderer state prop both read
+  // from this — that's what drives clickability + completeness.
+  const effectiveStates = useMemo(
+    () =>
+      computeStageStates(
+        signal.status as SignalStatus,
+        activeManifestation?.status ?? null,
+      ),
+    [signal.status, activeManifestation?.status],
+  );
+
   // Remember the last-viewed signal so the Signal Workspace section tab
   // can return to it. Without this, clicking the section tab from another
   // section lands on an empty state — frustrating UX when the user had a
@@ -659,7 +695,7 @@ export function WorkspaceFrame({
       <div className="sticky top-0 z-10 bg-ink">
         <div className="border-b border-rule-1 px-11">
           <AgentTabStrip
-            states={states}
+            states={effectiveStates}
             activeTab={activeTab}
             onTabChange={setActiveTab}
           />
@@ -807,7 +843,7 @@ export function WorkspaceFrame({
             <Renderer
               signal={signal}
               collection={collection}
-              state={states[activeTab]}
+              state={effectiveStates[activeTab]}
               stokerData={stokerData}
               parentRef={parentRef}
               manifestationDetail={manifestationDetail}
