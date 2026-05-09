@@ -78,11 +78,107 @@ export const boilerProcess = inngest.createFunction(
     // see production patterns.
     concurrency: { limit: 2, key: "event.data.orgId" },
     onFailure: async ({ event }) => {
-      const data = (event.data as { event?: { data?: unknown } } | undefined)
-        ?.event?.data;
+      // Phase 11G.3 — when Inngest exhausts all retries (Gemini structured-
+      // output flakiness or other transient failure that never resolves),
+      // persist a FAILURE marker row so the renderer can surface a "Retry"
+      // affordance instead of spinning the breathing dot forever. Without
+      // this, the manifestation sits at IN_BOILER with no agent_outputs
+      // row, and the user has no way to know the run failed without
+      // reading agent_logs.
+      //
+      // Marker shape:
+      //   - agent_outputs.status = REJECTED
+      //   - content.refused = false  (distinguishes technical failure
+      //     from a skill-quality refusal — refusal sets refused=true)
+      //   - content.error = { ... }  (drives the retry UI)
+      //
+      // Manifestation status stays IN_BOILER (NOT BOILER_REFUSED) so the
+      // retry path can be a re-fire of furnace.brief.approved without
+      // needing to re-flip the status enum.
+      const failedEvent = event.data as
+        | {
+            event?: {
+              data?: {
+                orgId?: string;
+                manifestationSignalId?: string;
+                briefId?: string;
+              };
+            };
+            error?: { message?: string };
+          }
+        | undefined;
+      const inner = failedEvent?.event?.data;
+      const errMsg =
+        failedEvent?.error?.message ??
+        "BOILER exhausted retries (likely Gemini structured-output flakiness — try the retry button).";
+      try {
+        if (inner?.manifestationSignalId && inner?.orgId) {
+          // Don't double-write — if a row already exists (e.g. partial
+          // success on a prior retry), skip. Cheap idempotency: check
+          // first, then insert if missing.
+          const existing = await db
+            .select({ id: agentOutputs.id })
+            .from(agentOutputs)
+            .where(
+              and(
+                eq(agentOutputs.signalId, inner.manifestationSignalId),
+                eq(agentOutputs.agentName, "BOILER"),
+              ),
+            )
+            .limit(1);
+          if (existing.length === 0) {
+            // Resolve active journey for the FK constraint
+            const { journeys } = await import("@/db/schema");
+            const [activeJourney] = await db
+              .select({ id: journeys.id })
+              .from(journeys)
+              .where(
+                and(
+                  eq(journeys.signalId, inner.manifestationSignalId),
+                  eq(journeys.status, "active"),
+                ),
+              )
+              .limit(1);
+            if (activeJourney) {
+              await db.insert(agentOutputs).values({
+                signalId: inner.manifestationSignalId,
+                journeyId: activeJourney.id,
+                agentName: "BOILER",
+                outputType: "boiler",
+                content: {
+                  refused: false,
+                  error: {
+                    message: errMsg.slice(0, 500),
+                    persistedBy: "onFailure",
+                    persistedAt: new Date().toISOString(),
+                    retryable: true,
+                  },
+                },
+                status: "REJECTED",
+              });
+              console.error(
+                `[BOILER] onFailure persisted failure marker for manifestation ${inner.manifestationSignalId}`,
+              );
+            } else {
+              console.error(
+                `[BOILER] onFailure — no active journey for ${inner.manifestationSignalId}; skipping marker insert.`,
+              );
+            }
+          } else {
+            console.error(
+              `[BOILER] onFailure — agent_outputs row already exists for ${inner.manifestationSignalId}; not overwriting.`,
+            );
+          }
+        }
+      } catch (err) {
+        console.error(
+          "[BOILER] onFailure marker insert failed (best-effort):",
+          err,
+        );
+      }
       console.error(
         "[BOILER] onFailure — function exhausted retries:",
-        JSON.stringify(data),
+        JSON.stringify(inner),
       );
     },
   },

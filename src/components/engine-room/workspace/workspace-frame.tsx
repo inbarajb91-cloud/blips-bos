@@ -598,7 +598,27 @@ export function WorkspaceFrame({
   // realtime listener catches the parent-side fan-out + per-card
   // approve/dismiss transitions; the 2s poll fallback is the belt-
   // and-suspenders for Realtime channel hiccups.
-  const hasActiveWork = signal.status === "IN_STOKER";
+  //
+  // Phase 11G.3 fix — extended to cover the post-STOKER stages that also
+  // run async with handler-driven state changes. Without this, BOILER
+  // would land its agent_outputs row but the workspace wouldn't auto-
+  // refresh until the user F5'd. Inba reported "advancing to BOILER but
+  // nothing happens" — the BOILER row WAS landing, the page just wasn't
+  // re-fetching. Includes parent's own status AND any manifestation
+  // child being in an active processing state (each child's BOILER /
+  // FURNACE / ENGINE phase is its own async pipeline). Realtime channel
+  // already covers signals + agent_outputs whole-table, so the poll
+  // fallback only kicks in when something is genuinely in flight.
+  const hasActiveWork =
+    signal.status === "IN_STOKER" ||
+    signal.status === "IN_BOILER" ||
+    signal.status === "IN_ENGINE" ||
+    manifestations.some(
+      (m) =>
+        m.status === "IN_FURNACE" ||
+        m.status === "IN_BOILER" ||
+        m.status === "IN_ENGINE",
+    );
 
   return (
     <div className={`${typeClass} flex flex-col bg-ink`}>

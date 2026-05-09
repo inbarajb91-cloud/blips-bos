@@ -1,6 +1,6 @@
 "use server";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, desc } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import {
   db,
@@ -319,4 +319,123 @@ export async function dismissBoilerGallery(opts: {
 
   await revalidateGalleryPaths(gallery);
   return { ok: true, manifestationShortcode: gallery.childShortcode };
+}
+
+// ─── Retry a failed gallery (Phase 11G.3) ─────────────────────────
+
+/**
+ * Retry a BOILER gallery that hit a technical failure (Inngest exhausted
+ * retries, Gemini structured-output flakiness, etc.).
+ *
+ * Detects the failure marker row (status=REJECTED + content.refused=false +
+ * content.error present) written by the handler's `onFailure` callback,
+ * deletes it, and re-fires `furnace.brief.approved` so the now-fresh
+ * Gemini call has a chance at landing valid JSON. Idempotent: if no
+ * failure marker exists (e.g. someone retried twice in parallel), the
+ * action is a no-op apart from re-firing the event.
+ *
+ * The renderer's `BoilerFailed` state surfaces the Retry button that
+ * calls this action; ORC also gets a tool path for "retry the BOILER
+ * run" if the founder asks.
+ *
+ * NOT to be confused with `dismissBoilerGallery` (kills the gallery for
+ * good) or a future `regenerate_boiler_gallery` (founder wants a new
+ * direction; not just a retry of the same prompt).
+ */
+export async function retryBoilerGallery(opts: {
+  /** The manifestation child signal id (NOT the agent_outputs id —
+   *  the failure marker may not exist if onFailure didn't run yet). */
+  manifestationSignalId: string;
+}): Promise<{ ok: true; manifestationShortcode: string }> {
+  const user = await getCurrentUserWithOrg();
+  if (!user) throw new Error("Unauthenticated");
+
+  // Scope-check the manifestation child + look up its current FURNACE
+  // brief (the event's briefId payload).
+  const [child] = await db
+    .select({
+      id: signalsTable.id,
+      shortcode: signalsTable.shortcode,
+      status: signalsTable.status,
+      orgId: signalsTable.orgId,
+    })
+    .from(signalsTable)
+    .where(
+      and(
+        eq(signalsTable.id, opts.manifestationSignalId),
+        eq(signalsTable.orgId, user.orgId),
+      ),
+    )
+    .limit(1);
+  if (!child) {
+    throw new Error("Manifestation not found.");
+  }
+  if (child.status !== "IN_BOILER") {
+    throw new Error(
+      `Manifestation status is ${child.status} — retry is only valid at IN_BOILER. ` +
+        `If status is BOILER_REFUSED, use dismiss + a new approach. If past IN_BOILER, the gallery already advanced.`,
+    );
+  }
+
+  // Latest APPROVED FURNACE brief for the manifestation
+  const [brief] = await db
+    .select({ id: agentOutputs.id, status: agentOutputs.status })
+    .from(agentOutputs)
+    .where(
+      and(
+        eq(agentOutputs.signalId, child.id),
+        eq(agentOutputs.agentName, "FURNACE"),
+      ),
+    )
+    .orderBy(desc(agentOutputs.createdAt))
+    .limit(1);
+  if (!brief || brief.status !== "APPROVED") {
+    throw new Error(
+      "No APPROVED FURNACE brief found on this manifestation. Cannot retry without an approved brief.",
+    );
+  }
+
+  // Delete any existing BOILER agent_outputs row (could be the failure
+  // marker, OR a stuck PENDING row with no images). The fresh handler
+  // run will INSERT a new row.
+  const cleared = await db
+    .delete(agentOutputs)
+    .where(
+      and(
+        eq(agentOutputs.signalId, child.id),
+        eq(agentOutputs.agentName, "BOILER"),
+      ),
+    )
+    .returning({ id: agentOutputs.id });
+
+  // Best-effort fire `furnace.brief.approved` to re-trigger the BOILER
+  // handler. Inngest dedup keys are time-based so a fresh send always
+  // creates a new run.
+  try {
+    const { inngest } = await import("@/lib/inngest/client");
+    await inngest.send({
+      name: "furnace.brief.approved",
+      data: {
+        orgId: user.orgId,
+        manifestationSignalId: child.id,
+        briefId: brief.id,
+      },
+    });
+  } catch (err) {
+    console.error(
+      "[retryBoilerGallery] inngest.send failed; the action did clear the prior row but the handler won't re-fire automatically:",
+      err,
+    );
+    throw new Error(
+      "Cleared the failure marker but couldn't re-fire the event. Try the retry button again, or contact engineering.",
+    );
+  }
+
+  console.info(
+    `[retryBoilerGallery] cleared ${cleared.length} prior row(s) for ${child.shortcode}; re-fired furnace.brief.approved`,
+  );
+
+  revalidatePath(`/engine-room/signals/${child.shortcode}`);
+  revalidatePath("/engine-room");
+  return { ok: true, manifestationShortcode: child.shortcode };
 }

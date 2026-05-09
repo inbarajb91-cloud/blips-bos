@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { approveBoilerVariant } from "@/lib/actions/boiler";
+import { approveBoilerVariant, retryBoilerGallery } from "@/lib/actions/boiler";
 import type { RendererProps } from "./registry";
 
 /**
@@ -69,6 +69,19 @@ interface BoilerContent {
   /** Set by approve_concept_variant ORC tool (Phase 11E) — which variant
    *  the founder picked for this gallery. */
   approvedVariantSlug?: string;
+  /** Phase 11G.3 — set by the BOILER handler's onFailure callback when
+   *  Inngest exhausts all retries (Gemini structured-output flakiness or
+   *  other transient failures that don't recover). Distinguishes a
+   *  TECHNICAL failure (refused=false + error present) from a SKILL
+   *  refusal (refused=true + refusalReason present). The renderer uses
+   *  the presence of `error` to switch into the BoilerFailed state with
+   *  a Retry button. */
+  error?: {
+    message: string;
+    persistedBy?: string;
+    persistedAt?: string;
+    retryable?: boolean;
+  };
 }
 
 const REGISTER_LABELS: Record<BoilerVariant["register"], string> = {
@@ -103,7 +116,26 @@ export function BoilerGallery(props: RendererProps) {
   const content = (boilerOutput.content ?? {}) as BoilerContent;
   const status = boilerOutput.status;
 
-  // Refused / dismissed — show refusal banner
+  // Phase 11G.3 — TECHNICAL failure (Inngest retries exhausted on
+  // Gemini structured-output flakiness or other transient error). Marker
+  // is { refused: false, error: {...} } at REJECTED status. Distinct
+  // from a SKILL refusal which is { refused: true, refusalReason: "..." }.
+  // Surface a retry affordance instead of the refusal banner.
+  if (
+    status === "REJECTED" &&
+    content.refused !== true &&
+    content.error !== undefined
+  ) {
+    return (
+      <BoilerFailed
+        manifestationShortcode={manifestation.shortcode}
+        manifestationSignalId={manifestation.id}
+        error={content.error}
+      />
+    );
+  }
+
+  // Refused / dismissed — show refusal banner (skill-quality refusal)
   if (content.refused === true || status === "REJECTED") {
     return (
       <BoilerRefused
@@ -193,6 +225,102 @@ function BoilerProcessing({
         generation takes 30-90 seconds total. The gallery appears here
         when ready.
       </p>
+    </div>
+  );
+}
+
+function BoilerFailed({
+  manifestationShortcode,
+  manifestationSignalId,
+  error,
+}: {
+  manifestationShortcode: string;
+  manifestationSignalId: string;
+  error: NonNullable<BoilerContent["error"]>;
+}) {
+  const [isPending, startTransition] = useTransition();
+  const [retryError, setRetryError] = useState<string | null>(null);
+
+  const handleRetry = () => {
+    setRetryError(null);
+    startTransition(async () => {
+      try {
+        await retryBoilerGallery({ manifestationSignalId });
+        // The action revalidates the path; RSC re-render flips the
+        // tab back into BoilerProcessing as the handler runs again.
+      } catch (e) {
+        setRetryError(
+          e instanceof Error ? e.message : "Retry failed.",
+        );
+      }
+    });
+  };
+
+  return (
+    <div className="py-12 px-7">
+      <div
+        className="border rounded-md px-7 py-6 mb-6"
+        style={{
+          borderColor: "rgba(var(--d-rck), 0.45)",
+          background: "rgba(var(--d-rck), 0.06)",
+        }}
+      >
+        <div
+          className="font-mono text-[9px] tracking-[0.24em] uppercase mb-2.5"
+          style={{ color: "rgba(var(--d-rck), 0.95)" }}
+        >
+          BOILER GENERATION FAILED · technical
+        </div>
+        <div className="font-display text-lg font-semibold text-t1 mb-3">
+          BOILER couldn&apos;t produce a gallery for {manifestationShortcode}
+        </div>
+        <p className="font-display font-normal text-[14.5px] leading-[1.6] text-t2 mb-4 max-w-3xl">
+          {error.message}
+        </p>
+        <div className="flex items-center gap-3 flex-wrap">
+          <button
+            type="button"
+            onClick={handleRetry}
+            disabled={isPending || error.retryable === false}
+            title={
+              error.retryable === false
+                ? "This failure isn't auto-retryable. Edit the FURNACE brief and re-approve to start fresh."
+                : isPending
+                  ? "Retrying — re-firing the BOILER pipeline…"
+                  : "Re-fire the BOILER pipeline. The next Gemini call may land valid JSON; if it fails again, edit the brief and re-approve."
+            }
+            className="font-mono text-[10px] tracking-[0.18em] uppercase px-3.5 py-2 rounded-sm border-2 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-t2 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[rgba(var(--d),0.18)]"
+            style={{
+              borderColor: "rgba(var(--d), 0.7)",
+              background: "rgba(var(--d), 0.10)",
+              color: "rgba(var(--d), 1)",
+            }}
+          >
+            {isPending ? "Retrying…" : "Retry generation"}
+          </button>
+          <span className="font-mono text-[9px] tracking-[0.18em] uppercase text-t5">
+            or ask ORC to retry / dismiss →
+          </span>
+        </div>
+        {retryError && (
+          <div
+            role="alert"
+            className="mt-4 font-mono text-[10.5px] tracking-[0.04em] px-3 py-2 rounded-sm"
+            style={{
+              color: "rgba(var(--d-rck), 0.95)",
+              background: "rgba(var(--d-rck), 0.10)",
+              border: "1px solid rgba(var(--d-rck), 0.35)",
+            }}
+          >
+            {retryError}
+          </div>
+        )}
+        {error.persistedAt && (
+          <div className="font-mono text-[9px] tracking-[0.18em] uppercase text-t5 mt-4">
+            failed at {new Date(error.persistedAt).toLocaleString()}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
