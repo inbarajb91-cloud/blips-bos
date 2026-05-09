@@ -347,19 +347,35 @@ export const boilerProcess = inngest.createFunction(
       // settings UI without code change.
       ["gemini-2.5-flash-image", "imagen-4.0-generate-001"];
 
-    const generated = await step.run(
-      "generate-concept-images",
+    // ─── 6+7 combined — image gen + persist within ONE Inngest step ─
+    //
+    // Phase 11G.2 fix: previously this was 2 steps. Step 6 returned the
+    // 4 generated images (each ~1-3MB base64, ~5-15MB total) as the
+    // step result; step 7 read that result and UPDATEd the agent_outputs
+    // row. Inngest's step result has a serialization size limit
+    // (~4MB on Vercel/Inngest Cloud); 4 base64 images blew past that.
+    // Symptom: image gen succeeded (agent_logs showed 4 successful
+    // generateImage calls + costs), step 6 looked done, but step 7
+    // never fired and the agent_outputs row stayed at the skill-written
+    // shape (4 variants without imageDataUri / actualModel / storageMode).
+    //
+    // Combining the steps means the base64 payloads stay inside the step's
+    // execution, never cross the Inngest step boundary. The step's
+    // RETURN value is now thin summary metadata only — galleryMood,
+    // variant slugs/registers/models — under 1KB. Step 8 (memory write)
+    // consumes that summary.
+    //
+    // Tradeoff: combining steps loses Inngest's per-step retry granularity
+    // (an image-gen failure now retries the entire step including the
+    // already-succeeded images). The fallback chain in the inner loop
+    // already handles transient image-gen errors per variant, so the
+    // outer retry rarely matters in practice.
+    const summary = await step.run(
+      "generate-and-persist-gallery",
       async () => {
-        // Phase 11G fix: skillOutput.variants and galleryMood are both
-        // `… | null` after the flat-with-nullable schema refactor.
-        // Refused branch returned above; here BOTH fields must be present
-        // and well-formed. Guard each independently — if the model emits
-        // an inconsistent shape (refused=false but either field null),
-        // throw a loud + specific error rather than letting the gallery
-        // persist with a null galleryMood (which the renderer would
-        // surface as "(no mood summary)" — silent quality regression).
-        // CR pass 1 on PR #27 caught this: variants was guarded but
-        // galleryMood wasn't.
+        // Schema-narrow guards (same as before — refused branch returned
+        // above; here BOTH variants and galleryMood must be present and
+        // well-formed).
         const variants = skillOutput.variants;
         if (!variants || variants.length === 0) {
           throw new Error(
@@ -372,6 +388,7 @@ export const boilerProcess = inngest.createFunction(
             "[BOILER] Inconsistent skill output: refused=false but galleryMood is null/empty. Model emitted invalid shape.",
           );
         }
+
         const results: Array<{
           variantSlug: string;
           register: string;
@@ -476,48 +493,41 @@ export const boilerProcess = inngest.createFunction(
           });
         }
 
+        // INLINE the DB UPDATE inside this same step — the base64 payloads
+        // never leave this execution context. Single-row pattern means
+        // the workspace renderer reads one location.
+        await db
+          .update(agentOutputs)
+          .set({
+            content: {
+              refused: false,
+              galleryMood,
+              editorNotes: skillOutput.editorNotes,
+              variants: results,
+              briefId: context.briefId,
+              mockups: null, // Phase 11C.1: Dynamic Mockups fills this in
+              mockupsPendingReason:
+                "Dynamic Mockups API key not configured. Set DYNAMIC_MOCKUPS_API_KEY in .env.local + redeploy to enable multi-angle mockup rendering.",
+              // Note: Phase 11C.1 will replace each variant.imageDataUri
+              // with a Cloudinary URL. Renderer's <img> tag handles both
+              // (it's just a src string).
+              storageMode: "inline-base64-data-uri",
+              storagePendingReason:
+                "Cloudinary upload not configured. Set CLOUDINARY_URL in .env.local + redeploy to swap to hosted URLs (4× ~2.5MB images per row is fine in JSONB but not ideal long-term).",
+            },
+          })
+          .where(eq(agentOutputs.id, skillResult.outputId));
+
+        // Thin summary — no base64. Crosses the step boundary safely.
         return {
-          // Use the locally-narrowed galleryMood — guard above ensures
-          // it's a non-empty string here, so the inferred return type
-          // is `string` (not `string | null`) and downstream consumers
-          // (memory write, agent_outputs persist, return shape) don't
-          // need to repeat the null check.
           galleryMood,
-          editorNotes: skillOutput.editorNotes,
-          variants: results,
+          variantCount: results.length,
+          registers: results.map((v) => v.register),
+          modelsUsed: results.map((v) => v.actualModel),
+          anyFallbacks: results.some((v) => v.fallbacksUsed > 0),
         };
       },
     );
-
-    // ─── 7. Update the runSkill-written row with images + mockup hint ─
-    //
-    // runSkill wrote a row with the prompts (4 variants without imageDataUri).
-    // Now that we've generated the images, UPDATE the row's content to
-    // include the data URIs + mockup pending status. Single-row pattern
-    // means the workspace renderer reads one location.
-    await step.run("update-boiler-output-with-images", async () => {
-      await db
-        .update(agentOutputs)
-        .set({
-          content: {
-            refused: false,
-            galleryMood: generated.galleryMood,
-            editorNotes: generated.editorNotes,
-            variants: generated.variants,
-            briefId: context.briefId,
-            mockups: null, // Phase 11C.1: Dynamic Mockups fills this in
-            mockupsPendingReason:
-              "Dynamic Mockups API key not configured. Set DYNAMIC_MOCKUPS_API_KEY in .env.local + redeploy to enable multi-angle mockup rendering.",
-            // Note: Phase 11C.1 will replace each variant.imageDataUri
-            // with a Cloudinary URL. Renderer's <img> tag handles both
-            // (it's just a src string).
-            storageMode: "inline-base64-data-uri",
-            storagePendingReason:
-              "Cloudinary upload not configured. Set CLOUDINARY_URL in .env.local + redeploy to swap to hosted URLs (4× ~2.5MB images per row is fine in JSONB but not ideal long-term).",
-          },
-        })
-        .where(eq(agentOutputs.id, skillResult.outputId));
-    });
 
     // ─── 8. Best-effort memory write (Tier 3 learning) ──────────
     //
@@ -525,24 +535,29 @@ export const boilerProcess = inngest.createFunction(
     // scoped by (signalId, orgId). Cross-signal recall can surface
     // patterns ("we've used type-led for 4 of last 5 RCK pieces") for
     // future BOILER calls. Best-effort — non-awaited IIFE so transient
-    // memory failures don't extend this Inngest step's runtime.
+    // memory failures don't extend this Inngest step's runtime. Reads
+    // from the thin `summary` returned by the combined step above (no
+    // base64 payload crosses this boundary either).
     void (async () => {
       try {
         const memory = await getMemoryBackend();
+        const variantsForMemory = summary.registers.map(
+          (r, i) => `${r} (${summary.modelsUsed[i]})`,
+        );
         await memory.remember({
           orgId,
           container: "events",
           kind: "stage_completion",
-          content: `BOILER generated 4-variant concept gallery for ${context.child.shortcode} (${decade}). Mood: ${generated.galleryMood}. Variants: ${generated.variants.map((v) => `${v.register} (${v.actualModel})`).join(", ")}. Awaiting founder pick.`,
+          content: `BOILER generated 4-variant concept gallery for ${context.child.shortcode} (${decade}). Mood: ${summary.galleryMood}. Variants: ${variantsForMemory.join(", ")}. Awaiting founder pick.`,
           signalId: context.child.id,
           metadata: {
             stage: "boiler",
             decade,
             shortcode: context.child.shortcode,
-            variantCount: generated.variants.length,
-            registers: generated.variants.map((v) => v.register),
-            modelsUsed: generated.variants.map((v) => v.actualModel),
-            anyFallbacks: generated.variants.some((v) => v.fallbacksUsed > 0),
+            variantCount: summary.variantCount,
+            registers: summary.registers,
+            modelsUsed: summary.modelsUsed,
+            anyFallbacks: summary.anyFallbacks,
           },
         });
       } catch (err) {
@@ -554,8 +569,8 @@ export const boilerProcess = inngest.createFunction(
       refused: false,
       manifestationShortcode: context.child.shortcode,
       decade,
-      variantCount: generated.variants.length,
-      mood: generated.galleryMood,
+      variantCount: summary.variantCount,
+      mood: summary.galleryMood,
     };
   },
 );
