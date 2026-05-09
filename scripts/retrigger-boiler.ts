@@ -43,7 +43,12 @@ async function main() {
   const { eq, and, desc } = await import("drizzle-orm");
   const { inngest } = await import("../src/lib/inngest/client");
 
-  const [child] = await db
+  // CR pass 1 fix: shortcode is not globally unique across orgs in the
+  // schema. If two orgs ever shared a shortcode, picking `[child]` from
+  // a multi-row result silently selects the wrong tenant — we'd then
+  // delete that org's BOILER rows + re-fire an event against it. Low
+  // blast-radius today (single-tenant prod), but the guard is cheap.
+  const matches = await db
     .select({
       id: signals.id,
       orgId: signals.orgId,
@@ -53,10 +58,17 @@ async function main() {
     .from(signals)
     .where(eq(signals.shortcode, shortcode));
 
-  if (!child) {
+  if (matches.length === 0) {
     console.error(`✗ Signal ${shortcode} not found.`);
     process.exit(1);
   }
+  if (matches.length > 1) {
+    console.error(
+      `✗ Shortcode ${shortcode} matches ${matches.length} signals across orgs (${matches.map((m) => m.orgId).join(", ")}). Refusing to proceed without an explicit org filter — this script is single-tenant only.`,
+    );
+    process.exit(1);
+  }
+  const child = matches[0];
 
   console.log(
     `[retrigger] Found ${shortcode} → id ${child.id} status=${child.status}`,

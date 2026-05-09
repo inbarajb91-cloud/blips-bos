@@ -395,44 +395,60 @@ export async function retryBoilerGallery(opts: {
     );
   }
 
-  // Delete any existing BOILER agent_outputs row (could be the failure
-  // marker, OR a stuck PENDING row with no images). The fresh handler
-  // run will INSERT a new row.
-  const cleared = await db
-    .delete(agentOutputs)
-    .where(
-      and(
-        eq(agentOutputs.signalId, child.id),
-        eq(agentOutputs.agentName, "BOILER"),
-      ),
-    )
-    .returning({ id: agentOutputs.id });
-
-  // Best-effort fire `furnace.brief.approved` to re-trigger the BOILER
-  // handler. Inngest dedup keys are time-based so a fresh send always
-  // creates a new run.
+  // CR pass 1 fix: atomic delete + send via transaction. Two failure
+  // modes were possible with naive ordering:
+  //
+  // (A) delete-first-then-send: if inngest.send throws, the failure
+  //     marker is gone but no new run fires. User stuck — renderer
+  //     falls through to BoilerProcessing (breathing dot forever)
+  //     because `boilerOutput` is null, and the Retry button is only
+  //     mounted from BoilerFailed which needs `content.error`.
+  //
+  // (B) send-first-then-delete: if delete throws, an orphan failure
+  //     marker persists alongside the new gallery row. The page query
+  //     uses `asc(createdAt)` + first-wins (`if !outputByAgent.has`),
+  //     so the orphan WINS and the user sees the stale failure state
+  //     even after the new gallery succeeds.
+  //
+  // Wrap delete + send in a transaction. If inngest.send throws, the
+  // transaction rolls back the delete and the failure marker stays
+  // intact — Retry button still mounted. If the delete throws (rare),
+  // the send doesn't fire either. Either both happen or neither does.
+  let cleared: Array<{ id: string }> = [];
   try {
-    const { inngest } = await import("@/lib/inngest/client");
-    await inngest.send({
-      name: "furnace.brief.approved",
-      data: {
-        orgId: user.orgId,
-        manifestationSignalId: child.id,
-        briefId: brief.id,
-      },
+    await db.transaction(async (tx) => {
+      cleared = await tx
+        .delete(agentOutputs)
+        .where(
+          and(
+            eq(agentOutputs.signalId, child.id),
+            eq(agentOutputs.agentName, "BOILER"),
+          ),
+        )
+        .returning({ id: agentOutputs.id });
+
+      const { inngest } = await import("@/lib/inngest/client");
+      await inngest.send({
+        name: "furnace.brief.approved",
+        data: {
+          orgId: user.orgId,
+          manifestationSignalId: child.id,
+          briefId: brief.id,
+        },
+      });
     });
   } catch (err) {
     console.error(
-      "[retryBoilerGallery] inngest.send failed; the action did clear the prior row but the handler won't re-fire automatically:",
+      "[retryBoilerGallery] retry transaction failed; failure marker preserved so the Retry button stays mounted:",
       err,
     );
     throw new Error(
-      "Cleared the failure marker but couldn't re-fire the event. Try the retry button again, or contact engineering.",
+      "Couldn't re-fire the BOILER event. Try the retry button again, or check Inngest connectivity.",
     );
   }
 
   console.info(
-    `[retryBoilerGallery] cleared ${cleared.length} prior row(s) for ${child.shortcode}; re-fired furnace.brief.approved`,
+    `[retryBoilerGallery] re-fired furnace.brief.approved for ${child.shortcode}; cleared ${cleared.length} prior row(s) atomically`,
   );
 
   revalidatePath(`/engine-room/signals/${child.shortcode}`);
