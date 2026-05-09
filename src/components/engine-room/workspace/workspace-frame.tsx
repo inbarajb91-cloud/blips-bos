@@ -381,6 +381,32 @@ export function WorkspaceFrame({
     );
   }, [visibleManifestations, activeDecade]);
 
+  // Phase 11G.4 — `effectiveStates` factors in the active manifestation's
+  // status when the parent is FANNED_OUT. Without this, the tab strip
+  // showed FURNACE / BOILER / ENGINE as "future" (open ○ pip + disabled
+  // click) even when the active manifestation child was at IN_BOILER
+  // with a complete gallery in the database. Inba reported clicking
+  // "BOILER" did nothing because the tab was disabled.
+  //
+  // The original `states` (above) is preserved for `pickInitialTab` —
+  // that picks the workspace's initial tab on first load + on parent
+  // status changes, where the parent's stage is the right anchor (we
+  // want a freshly-fanned-out parent to land on FURNACE for the active
+  // manifestation, which IS what derived state computes when child
+  // overrides parent).
+  //
+  // `effectiveStates` consumes both parent status + active manifestation
+  // status. AgentTabStrip and the per-renderer state prop both read
+  // from this — that's what drives clickability + completeness.
+  const effectiveStates = useMemo(
+    () =>
+      computeStageStates(
+        signal.status as SignalStatus,
+        activeManifestation?.status ?? null,
+      ),
+    [signal.status, activeManifestation?.status],
+  );
+
   // Remember the last-viewed signal so the Signal Workspace section tab
   // can return to it. Without this, clicking the section tab from another
   // section lands on an empty state — frustrating UX when the user had a
@@ -659,7 +685,7 @@ export function WorkspaceFrame({
       <div className="sticky top-0 z-10 bg-ink">
         <div className="border-b border-rule-1 px-11">
           <AgentTabStrip
-            states={states}
+            states={effectiveStates}
             activeTab={activeTab}
             onTabChange={setActiveTab}
           />
@@ -807,7 +833,7 @@ export function WorkspaceFrame({
             <Renderer
               signal={signal}
               collection={collection}
-              state={states[activeTab]}
+              state={effectiveStates[activeTab]}
               stokerData={stokerData}
               parentRef={parentRef}
               manifestationDetail={manifestationDetail}
