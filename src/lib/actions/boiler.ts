@@ -1,6 +1,6 @@
 "use server";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, desc } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import {
   db,
@@ -319,4 +319,139 @@ export async function dismissBoilerGallery(opts: {
 
   await revalidateGalleryPaths(gallery);
   return { ok: true, manifestationShortcode: gallery.childShortcode };
+}
+
+// ─── Retry a failed gallery (Phase 11G.3) ─────────────────────────
+
+/**
+ * Retry a BOILER gallery that hit a technical failure (Inngest exhausted
+ * retries, Gemini structured-output flakiness, etc.).
+ *
+ * Detects the failure marker row (status=REJECTED + content.refused=false +
+ * content.error present) written by the handler's `onFailure` callback,
+ * deletes it, and re-fires `furnace.brief.approved` so the now-fresh
+ * Gemini call has a chance at landing valid JSON. Idempotent: if no
+ * failure marker exists (e.g. someone retried twice in parallel), the
+ * action is a no-op apart from re-firing the event.
+ *
+ * The renderer's `BoilerFailed` state surfaces the Retry button that
+ * calls this action; ORC also gets a tool path for "retry the BOILER
+ * run" if the founder asks.
+ *
+ * NOT to be confused with `dismissBoilerGallery` (kills the gallery for
+ * good) or a future `regenerate_boiler_gallery` (founder wants a new
+ * direction; not just a retry of the same prompt).
+ */
+export async function retryBoilerGallery(opts: {
+  /** The manifestation child signal id (NOT the agent_outputs id —
+   *  the failure marker may not exist if onFailure didn't run yet). */
+  manifestationSignalId: string;
+}): Promise<{ ok: true; manifestationShortcode: string }> {
+  const user = await getCurrentUserWithOrg();
+  if (!user) throw new Error("Unauthenticated");
+
+  // Scope-check the manifestation child + look up its current FURNACE
+  // brief (the event's briefId payload).
+  const [child] = await db
+    .select({
+      id: signalsTable.id,
+      shortcode: signalsTable.shortcode,
+      status: signalsTable.status,
+      orgId: signalsTable.orgId,
+    })
+    .from(signalsTable)
+    .where(
+      and(
+        eq(signalsTable.id, opts.manifestationSignalId),
+        eq(signalsTable.orgId, user.orgId),
+      ),
+    )
+    .limit(1);
+  if (!child) {
+    throw new Error("Manifestation not found.");
+  }
+  if (child.status !== "IN_BOILER") {
+    throw new Error(
+      `Manifestation status is ${child.status} — retry is only valid at IN_BOILER. ` +
+        `If status is BOILER_REFUSED, use dismiss + a new approach. If past IN_BOILER, the gallery already advanced.`,
+    );
+  }
+
+  // Latest APPROVED FURNACE brief for the manifestation
+  const [brief] = await db
+    .select({ id: agentOutputs.id, status: agentOutputs.status })
+    .from(agentOutputs)
+    .where(
+      and(
+        eq(agentOutputs.signalId, child.id),
+        eq(agentOutputs.agentName, "FURNACE"),
+      ),
+    )
+    .orderBy(desc(agentOutputs.createdAt))
+    .limit(1);
+  if (!brief || brief.status !== "APPROVED") {
+    throw new Error(
+      "No APPROVED FURNACE brief found on this manifestation. Cannot retry without an approved brief.",
+    );
+  }
+
+  // CR pass 1 fix: atomic delete + send via transaction. Two failure
+  // modes were possible with naive ordering:
+  //
+  // (A) delete-first-then-send: if inngest.send throws, the failure
+  //     marker is gone but no new run fires. User stuck — renderer
+  //     falls through to BoilerProcessing (breathing dot forever)
+  //     because `boilerOutput` is null, and the Retry button is only
+  //     mounted from BoilerFailed which needs `content.error`.
+  //
+  // (B) send-first-then-delete: if delete throws, an orphan failure
+  //     marker persists alongside the new gallery row. The page query
+  //     uses `asc(createdAt)` + first-wins (`if !outputByAgent.has`),
+  //     so the orphan WINS and the user sees the stale failure state
+  //     even after the new gallery succeeds.
+  //
+  // Wrap delete + send in a transaction. If inngest.send throws, the
+  // transaction rolls back the delete and the failure marker stays
+  // intact — Retry button still mounted. If the delete throws (rare),
+  // the send doesn't fire either. Either both happen or neither does.
+  let cleared: Array<{ id: string }> = [];
+  try {
+    await db.transaction(async (tx) => {
+      cleared = await tx
+        .delete(agentOutputs)
+        .where(
+          and(
+            eq(agentOutputs.signalId, child.id),
+            eq(agentOutputs.agentName, "BOILER"),
+          ),
+        )
+        .returning({ id: agentOutputs.id });
+
+      const { inngest } = await import("@/lib/inngest/client");
+      await inngest.send({
+        name: "furnace.brief.approved",
+        data: {
+          orgId: user.orgId,
+          manifestationSignalId: child.id,
+          briefId: brief.id,
+        },
+      });
+    });
+  } catch (err) {
+    console.error(
+      "[retryBoilerGallery] retry transaction failed; failure marker preserved so the Retry button stays mounted:",
+      err,
+    );
+    throw new Error(
+      "Couldn't re-fire the BOILER event. Try the retry button again, or check Inngest connectivity.",
+    );
+  }
+
+  console.info(
+    `[retryBoilerGallery] re-fired furnace.brief.approved for ${child.shortcode}; cleared ${cleared.length} prior row(s) atomically`,
+  );
+
+  revalidatePath(`/engine-room/signals/${child.shortcode}`);
+  revalidatePath("/engine-room");
+  return { ok: true, manifestationShortcode: child.shortcode };
 }
