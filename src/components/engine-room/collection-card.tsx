@@ -253,7 +253,17 @@ export function CollectionCard({
             {!isActive && (
               <>
                 <span className="text-t5">·</span>
-                <span>{timeMeta}</span>
+                {/* `timeMeta` is derived from `Date.now()` (formatAge /
+                    formatUntil), so server-rendered text drifts from
+                    client-rendered text by the RSC fetch latency. That
+                    drift tripped React error #418 (hydration text
+                    mismatch), which tore down the whole CollectionCard
+                    tree on every Bridge load and killed BridgeRealtime's
+                    effect chain — so the page appeared dead to live
+                    updates and ran a layout-shift on mount. Suppressing
+                    the warning on the text element lets React accept
+                    the client value during hydration without aborting. */}
+                <span suppressHydrationWarning>{timeMeta}</span>
               </>
             )}
             {isRunning && (
@@ -597,7 +607,12 @@ function CandidateRow({ c }: { c: CandidateForCard }) {
           </span>
         )}
       </div>
-      <span className="font-mono text-[10.5px] tracking-[0.18em] uppercase text-t4 whitespace-nowrap">
+      <span
+        className="font-mono text-[10.5px] tracking-[0.18em] uppercase text-t4 whitespace-nowrap"
+        // `age` (formatAge) is Date.now()-based; see CollectionCard meta
+        // row for the same hydration-mismatch fix.
+        suppressHydrationWarning
+      >
         {c.source} · {age}
       </span>
       <div className="flex gap-1.5">
@@ -750,7 +765,12 @@ function SignalRow({
         <span className="font-mono text-[10.5px] tracking-[0.18em] uppercase text-t2 whitespace-nowrap">
           {currentStageLabel(s.status)}
         </span>
-        <span className="font-mono text-[10.5px] tracking-[0.18em] uppercase text-t5 whitespace-nowrap">
+        <span
+          className="font-mono text-[10.5px] tracking-[0.18em] uppercase text-t5 whitespace-nowrap"
+          // `age` (formatAge) is Date.now()-based; same hydration-safety
+          // reason as the meta row + triage candidate timestamp.
+          suppressHydrationWarning
+        >
           {age} &rsaquo;
         </span>
       </Link>
