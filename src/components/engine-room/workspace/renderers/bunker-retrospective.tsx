@@ -303,7 +303,14 @@ function TimelineEvent({
         }`}
       />
       <span className="text-t2 text-[12.5px] leading-[1.45]">{what}</span>
-      <span className="font-mono text-[9.5px] tracking-[0.18em] uppercase text-t5 whitespace-nowrap">
+      <span
+        className="font-mono text-[9.5px] tracking-[0.18em] uppercase text-t5 whitespace-nowrap"
+        // `when` is from formatAge(date) which uses Date.now() — drift
+        // between server-rendered RSC and client hydration produces React
+        // error #418 text mismatches. See collection-card.tsx for the
+        // same fix on Bridge.
+        suppressHydrationWarning
+      >
         {when}
       </span>
     </div>
