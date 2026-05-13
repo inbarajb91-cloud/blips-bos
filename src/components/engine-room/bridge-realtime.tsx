@@ -58,23 +58,32 @@ interface BridgeRealtimeProps {
  *   refetches just the affected query (no nav, no reload).
  */
 
-// Minimum gap between hard reloads. Less = jankier (multiple reloads
-// during BUNKER's 60s run); more = staler (UI lags behind DB writes).
-// 2500ms is empirically a good balance: BUNKER produces a candidate
-// every 5-15s, so most events get their own reload window with no
-// rate-limiting drops.
+// Quiet-window after a fresh page load before any auto-reload may fire.
+// Without this gate, the active-work poll fires schedule() ~3s after
+// every page load, the rate-limit window has elapsed, and the page
+// reloads immediately — producing an infinite reload loop on Bridge
+// while any collection is queued/running.
+const POST_LOAD_QUIET_MS = 8000;
+// Minimum gap between hard reloads on top of the post-load window.
+// Coalesces a burst of realtime events into a single reload.
 const RELOAD_MIN_INTERVAL_MS = 2500;
 
 export function BridgeRealtime({ hasActiveWork }: BridgeRealtimeProps) {
-  const lastReloadRef = useRef<number>(Date.now());
+  const mountTimeRef = useRef<number>(Date.now());
+  const lastReloadRef = useRef<number>(0);
   const pendingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const schedule = useCallback(() => {
     if (pendingRef.current) return; // already queued; drop this event
-    const sinceLast = Date.now() - lastReloadRef.current;
-    // If we're outside the rate-limit window, fire immediately (no debounce).
-    // If we're inside it, schedule a single fire-at-end-of-window reload.
-    const delay = Math.max(0, RELOAD_MIN_INTERVAL_MS - sinceLast);
+    const now = Date.now();
+    const sinceMount = now - mountTimeRef.current;
+    const sinceReload = now - lastReloadRef.current;
+    // Two gates compose: a fresh-load quiet window (so the active-work
+    // poll can't reload us into oblivion after every reload), and a
+    // rate-limit window between reloads.
+    const quietDelay = Math.max(0, POST_LOAD_QUIET_MS - sinceMount);
+    const rateDelay = Math.max(0, RELOAD_MIN_INTERVAL_MS - sinceReload);
+    const delay = Math.max(quietDelay, rateDelay);
     pendingRef.current = setTimeout(() => {
       pendingRef.current = null;
       lastReloadRef.current = Date.now();
@@ -92,8 +101,9 @@ export function BridgeRealtime({ hasActiveWork }: BridgeRealtimeProps) {
 
   // Poll fallback — only while there's active work. Realtime sometimes
   // takes 30+ seconds to deliver an event on this Supabase project;
-  // polling catches anything Realtime misses. Same throttle so the two
-  // paths can't double-reload.
+  // polling catches anything Realtime misses. The POST_LOAD_QUIET_MS
+  // gate above prevents the poll from triggering a reload loop on
+  // fresh page load.
   useEffect(() => {
     if (!hasActiveWork) return;
     const id = setInterval(() => schedule(), 3000);
