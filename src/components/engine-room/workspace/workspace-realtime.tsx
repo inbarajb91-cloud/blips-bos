@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
+import { refreshEngineRoom } from "@/app/(app)/engine-room/_actions/refresh";
 import { useRealtimeChannel } from "@/lib/realtime/use-realtime";
 
 interface WorkspaceRealtimeProps {
@@ -56,26 +57,25 @@ export function WorkspaceRealtime({
 }: WorkspaceRealtimeProps) {
   void signalId; // reserved for future row-level filtering
   const router = useRouter();
-  const pathname = usePathname();
   const pendingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const schedule = useCallback(() => {
     if (pendingRef.current) return;
-    pendingRef.current = setTimeout(() => {
+    pendingRef.current = setTimeout(async () => {
       pendingRef.current = null;
-      // Cache-bust navigation — see bridge-realtime.tsx for full
-      // rationale. Short version: same-URL `router.refresh()` /
-      // `router.replace(pathname)` are silently deduplicated by
-      // Next.js 16 during sustained-event scenarios, so STOKER /
-      // FURNACE / BOILER UPDATEs never apply to the live DOM. A
-      // navigation with a unique `_rt=<timestamp>` query param
-      // forces a real refresh.
-      const url = new URL(window.location.href);
-      url.searchParams.set("_rt", String(Date.now()));
-      router.replace(url.pathname + url.search, { scroll: false });
+      // Server-action revalidation + router.refresh — same pattern as
+      // BridgeRealtime. See that file for the full rationale on why
+      // `router.refresh()` alone gets dedup'd and `?_rt=` cache-bust
+      // resets JS state. revalidatePath via server action is the
+      // path that bypasses both failure modes.
+      try {
+        await refreshEngineRoom();
+      } catch {
+        // best-effort — next event retries
+      }
+      router.refresh();
     }, 800);
-  }, [router, pathname]);
-  void pathname; // kept in deps for future, currently unused in body
+  }, [router]);
 
   useEffect(() => {
     return () => {
