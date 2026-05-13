@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
+import { refreshEngineRoom } from "@/app/(app)/engine-room/_actions/refresh";
 import { useRealtimeChannel } from "@/lib/realtime/use-realtime";
 
 interface BridgeRealtimeProps {
@@ -35,34 +36,39 @@ interface BridgeRealtimeProps {
  */
 export function BridgeRealtime({ hasActiveWork }: BridgeRealtimeProps) {
   const router = useRouter();
-  const pathname = usePathname();
   const pendingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const schedule = useCallback(() => {
     if (pendingRef.current) return; // already queued; drop this event
-    pendingRef.current = setTimeout(() => {
+    pendingRef.current = setTimeout(async () => {
       pendingRef.current = null;
-      // Cache-bust navigation: Next.js 16 + React 19 treats same-URL
-      // `router.refresh()` / `router.replace(pathname)` as a no-op during
-      // sustained-event scenarios (Inngest BUNKER worker producing 5
-      // candidates over 60s, with multiple status UPDATEs in between).
-      // The dedup logic in the router silently drops repeated identical
-      // refresh requests, so the client never receives the fresh RSC
-      // payload — even though the server WOULD have rendered it freshly
-      // (verified: a full-nav fetch returns the updated state).
+      // Two-step refresh that survives Next.js 16's `router.refresh()`
+      // dedup AND the cache-bust nav side-effect of resetting JS state.
       //
-      // Fix: each scheduled refresh navigates to the same path but with
-      // a unique `_rt=<timestamp>` query param. Different URL → real
-      // navigation → fresh RSC fetch → DOM updates. The query param is
-      // harmless (page query ignores it), and `scroll: false` keeps the
-      // user's position. Reading the current URL preserves any other
-      // legitimate search params the user has set.
-      const url = new URL(window.location.href);
-      url.searchParams.set("_rt", String(Date.now()));
-      router.replace(url.pathname + url.search, { scroll: false });
+      // (1) `refreshEngineRoom()` is a server action that calls
+      //     `revalidatePath("/engine-room")`. Server actions bypass the
+      //     client router's dedup logic entirely. This invalidates the
+      //     server-side data cache for the route.
+      // (2) `router.refresh()` after the action settles tells the
+      //     client-side router cache to re-fetch + re-render with the
+      //     now-fresh server data. Without (1) above, this step alone
+      //     was getting deduped; with (1) feeding fresh data in, the
+      //     client correctly applies the new payload to the live DOM.
+      //
+      // Net effect: realtime event → fresh DB query → DOM updates,
+      // WITHOUT navigation (URL stays canonical), WITHOUT JS state
+      // reset (subscriptions, scroll, transient UI all preserved).
+      try {
+        await refreshEngineRoom();
+      } catch {
+        // Server action can fail under transient conditions (network,
+        // rate limit). Don't let it crash the realtime loop — the next
+        // event will retry. router.refresh() below is still useful as a
+        // best-effort fallback even if the action failed.
+      }
+      router.refresh();
     }, 800);
-  }, [router, pathname]);
-  void pathname; // kept in deps for future, currently unused in body
+  }, [router]);
 
   useEffect(() => {
     return () => {
