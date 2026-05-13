@@ -48,6 +48,10 @@ interface WorkspaceRealtimeProps {
  * and the page-level fetch is already org-scoped.
  */
 
+// Quiet window after page load before any auto-reload may fire (gates
+// the active-work poll from causing an infinite reload loop). Same
+// pattern as bridge-realtime.tsx — see that file for full rationale.
+const POST_LOAD_QUIET_MS = 8000;
 const RELOAD_MIN_INTERVAL_MS = 2500;
 
 export function WorkspaceRealtime({
@@ -55,13 +59,18 @@ export function WorkspaceRealtime({
   hasActiveWork,
 }: WorkspaceRealtimeProps) {
   void signalId; // reserved for future row-level filtering
-  const lastReloadRef = useRef<number>(Date.now());
+  const mountTimeRef = useRef<number>(Date.now());
+  const lastReloadRef = useRef<number>(0);
   const pendingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const schedule = useCallback(() => {
     if (pendingRef.current) return;
-    const sinceLast = Date.now() - lastReloadRef.current;
-    const delay = Math.max(0, RELOAD_MIN_INTERVAL_MS - sinceLast);
+    const now = Date.now();
+    const sinceMount = now - mountTimeRef.current;
+    const sinceReload = now - lastReloadRef.current;
+    const quietDelay = Math.max(0, POST_LOAD_QUIET_MS - sinceMount);
+    const rateDelay = Math.max(0, RELOAD_MIN_INTERVAL_MS - sinceReload);
+    const delay = Math.max(quietDelay, rateDelay);
     pendingRef.current = setTimeout(() => {
       pendingRef.current = null;
       lastReloadRef.current = Date.now();
