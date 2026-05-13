@@ -68,11 +68,12 @@ export function WorkspaceRealtime({
     };
   }, []);
 
-  // Poll fallback — only while there's active STOKER work. Same throttle
-  // dedupes poll + realtime hits in the same tick.
+  // Poll fallback — only while there's active STOKER work. 10s interval
+  // (not 2s) so it doesn't cancel in-flight RSC fetches; see Bridge
+  // realtime for the full explanation of the cancellation cascade.
   useEffect(() => {
     if (!hasActiveWork) return;
-    const id = setInterval(() => schedule(), 2000);
+    const id = setInterval(() => schedule(), 10_000);
     return () => clearInterval(id);
   }, [hasActiveWork, schedule]);
 
