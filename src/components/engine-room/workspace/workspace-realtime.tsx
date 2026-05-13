@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useTransition } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useRealtimeChannel } from "@/lib/realtime/use-realtime";
 
@@ -57,27 +57,25 @@ export function WorkspaceRealtime({
   void signalId; // reserved for future row-level filtering
   const router = useRouter();
   const pathname = usePathname();
-  const [, startTransition] = useTransition();
   const pendingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const schedule = useCallback(() => {
     if (pendingRef.current) return;
     pendingRef.current = setTimeout(() => {
       pendingRef.current = null;
-      // Same router.replace + router.refresh + startTransition trio as
-      // BridgeRealtime — see that file for the rationale. Short version:
-      // `router.refresh()` alone on Next.js 16 sometimes leaves the
-      // client-side router cache holding the prior RSC payload, so
-      // STOKER status flips (IN_STOKER → FANNED_OUT) get rendered with
-      // the stale snapshot. Adding `router.replace(pathname)` bypasses
-      // that cache; `startTransition` ensures React commits the
-      // resulting state change instead of deferring it indefinitely.
-      startTransition(() => {
-        router.replace(pathname, { scroll: false });
-        router.refresh();
-      });
+      // Cache-bust navigation — see bridge-realtime.tsx for full
+      // rationale. Short version: same-URL `router.refresh()` /
+      // `router.replace(pathname)` are silently deduplicated by
+      // Next.js 16 during sustained-event scenarios, so STOKER /
+      // FURNACE / BOILER UPDATEs never apply to the live DOM. A
+      // navigation with a unique `_rt=<timestamp>` query param
+      // forces a real refresh.
+      const url = new URL(window.location.href);
+      url.searchParams.set("_rt", String(Date.now()));
+      router.replace(url.pathname + url.search, { scroll: false });
     }, 800);
   }, [router, pathname]);
+  void pathname; // kept in deps for future, currently unused in body
 
   useEffect(() => {
     return () => {

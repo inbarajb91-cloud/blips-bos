@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useTransition } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useRealtimeChannel } from "@/lib/realtime/use-realtime";
 
@@ -36,31 +36,33 @@ interface BridgeRealtimeProps {
 export function BridgeRealtime({ hasActiveWork }: BridgeRealtimeProps) {
   const router = useRouter();
   const pathname = usePathname();
-  const [, startTransition] = useTransition();
   const pendingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const schedule = useCallback(() => {
     if (pendingRef.current) return; // already queued; drop this event
     pendingRef.current = setTimeout(() => {
       pendingRef.current = null;
-      // React 19 + Next.js 16: `router.refresh()` alone sometimes fails to
-      // apply the fresh RSC payload to the live DOM tree, even when the
-      // route is pinned `force-dynamic` and the server returns updated
-      // data (verified via curl during the same window). Symptom: row
-      // statuses like `queued -> running` get rendered with the initial
-      // queued snapshot, and only a hard navigation surfaces the new
-      // server state. Wrapping the refresh in `startTransition` forces
-      // React to commit the new RSC payload as a deferred-but-applied
-      // state update; pairing it with an explicit `router.replace(
-      // pathname)` (same URL, scroll preserved) bypasses the
-      // client-side router cache that otherwise serves the stale prior
-      // RSC payload for the duration of the in-page session.
-      startTransition(() => {
-        router.replace(pathname, { scroll: false });
-        router.refresh();
-      });
+      // Cache-bust navigation: Next.js 16 + React 19 treats same-URL
+      // `router.refresh()` / `router.replace(pathname)` as a no-op during
+      // sustained-event scenarios (Inngest BUNKER worker producing 5
+      // candidates over 60s, with multiple status UPDATEs in between).
+      // The dedup logic in the router silently drops repeated identical
+      // refresh requests, so the client never receives the fresh RSC
+      // payload — even though the server WOULD have rendered it freshly
+      // (verified: a full-nav fetch returns the updated state).
+      //
+      // Fix: each scheduled refresh navigates to the same path but with
+      // a unique `_rt=<timestamp>` query param. Different URL → real
+      // navigation → fresh RSC fetch → DOM updates. The query param is
+      // harmless (page query ignores it), and `scroll: false` keeps the
+      // user's position. Reading the current URL preserves any other
+      // legitimate search params the user has set.
+      const url = new URL(window.location.href);
+      url.searchParams.set("_rt", String(Date.now()));
+      router.replace(url.pathname + url.search, { scroll: false });
     }, 800);
   }, [router, pathname]);
+  void pathname; // kept in deps for future, currently unused in body
 
   useEffect(() => {
     return () => {
