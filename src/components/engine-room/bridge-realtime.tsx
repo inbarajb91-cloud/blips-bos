@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useRef, useTransition } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import { useRealtimeChannel } from "@/lib/realtime/use-realtime";
 
 interface BridgeRealtimeProps {
@@ -35,15 +35,32 @@ interface BridgeRealtimeProps {
  */
 export function BridgeRealtime({ hasActiveWork }: BridgeRealtimeProps) {
   const router = useRouter();
+  const pathname = usePathname();
+  const [, startTransition] = useTransition();
   const pendingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const schedule = useCallback(() => {
     if (pendingRef.current) return; // already queued; drop this event
     pendingRef.current = setTimeout(() => {
       pendingRef.current = null;
-      router.refresh();
+      // React 19 + Next.js 16: `router.refresh()` alone sometimes fails to
+      // apply the fresh RSC payload to the live DOM tree, even when the
+      // route is pinned `force-dynamic` and the server returns updated
+      // data (verified via curl during the same window). Symptom: row
+      // statuses like `queued -> running` get rendered with the initial
+      // queued snapshot, and only a hard navigation surfaces the new
+      // server state. Wrapping the refresh in `startTransition` forces
+      // React to commit the new RSC payload as a deferred-but-applied
+      // state update; pairing it with an explicit `router.replace(
+      // pathname)` (same URL, scroll preserved) bypasses the
+      // client-side router cache that otherwise serves the stale prior
+      // RSC payload for the duration of the in-page session.
+      startTransition(() => {
+        router.replace(pathname, { scroll: false });
+        router.refresh();
+      });
     }, 800);
-  }, [router]);
+  }, [router, pathname]);
 
   useEffect(() => {
     return () => {

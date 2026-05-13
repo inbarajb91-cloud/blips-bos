@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useRef, useTransition } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import { useRealtimeChannel } from "@/lib/realtime/use-realtime";
 
 interface WorkspaceRealtimeProps {
@@ -56,15 +56,28 @@ export function WorkspaceRealtime({
 }: WorkspaceRealtimeProps) {
   void signalId; // reserved for future row-level filtering
   const router = useRouter();
+  const pathname = usePathname();
+  const [, startTransition] = useTransition();
   const pendingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const schedule = useCallback(() => {
     if (pendingRef.current) return;
     pendingRef.current = setTimeout(() => {
       pendingRef.current = null;
-      router.refresh();
+      // Same router.replace + router.refresh + startTransition trio as
+      // BridgeRealtime — see that file for the rationale. Short version:
+      // `router.refresh()` alone on Next.js 16 sometimes leaves the
+      // client-side router cache holding the prior RSC payload, so
+      // STOKER status flips (IN_STOKER → FANNED_OUT) get rendered with
+      // the stale snapshot. Adding `router.replace(pathname)` bypasses
+      // that cache; `startTransition` ensures React commits the
+      // resulting state change instead of deferring it indefinitely.
+      startTransition(() => {
+        router.replace(pathname, { scroll: false });
+        router.refresh();
+      });
     }, 800);
-  }, [router]);
+  }, [router, pathname]);
 
   useEffect(() => {
     return () => {
