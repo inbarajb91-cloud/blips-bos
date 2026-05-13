@@ -1,8 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useRef } from "react";
-import { useRouter } from "next/navigation";
-import { refreshEngineRoom } from "@/app/(app)/engine-room/_actions/refresh";
 import { useRealtimeChannel } from "@/lib/realtime/use-realtime";
 
 interface WorkspaceRealtimeProps {
@@ -20,7 +18,7 @@ interface WorkspaceRealtimeProps {
   /**
    * True while we expect imminent updates — currently scoped to
    * "signal in IN_STOKER status" since that's when STOKER is mid-
-   * flight or its output is awaiting founder review. Drives a 2s
+   * flight or its output is awaiting founder review. Drives a 3s
    * poll fallback (same belt-and-suspenders pattern as Bridge).
    */
   hasActiveWork: boolean;
@@ -29,16 +27,14 @@ interface WorkspaceRealtimeProps {
 /**
  * Silent client component that keeps the Signal Workspace live.
  *
- * Mirrors the Bridge realtime pattern (src/components/engine-room/
- * bridge-realtime.tsx) — Supabase Realtime as primary, 2s poll
- * fallback when something is in flight. Throttled at 800ms so an
- * Inngest-driven burst (parent flip + 1-3 child inserts + agent_
- * outputs writes, all within seconds) collapses into one smooth
- * router.refresh().
- *
- * Phase 9 polish — added when Inba reported STOKER finishing without
- * the workspace auto-refreshing. Without this, the user has to F5
- * to see the resonance card grid populate.
+ * Mirrors the Bridge realtime pattern — see `bridge-realtime.tsx` for
+ * the full history of why we ended up at `window.location.replace()`
+ * instead of `router.refresh()`. Short version: post-migration to the
+ * new Supabase + Vercel infra, `router.refresh()` and its variants get
+ * silently dedup'd by Next.js 16 during sustained-write scenarios
+ * (STOKER flipping IN_STOKER → FANNED_OUT, FURNACE / BOILER stage
+ * outputs landing, manifestation children appearing). The only
+ * fully-reliable refresh is a full navigation, so that's what we do.
  *
  * Realtime channels subscribed:
  *   - signals: catches the parent flipping IN_STOKER → FANNED_OUT /
@@ -51,31 +47,27 @@ interface WorkspaceRealtimeProps {
  * scoped to the user's RLS). That's fine — we throttle aggressively
  * and the page-level fetch is already org-scoped.
  */
+
+const RELOAD_MIN_INTERVAL_MS = 2500;
+
 export function WorkspaceRealtime({
   signalId,
   hasActiveWork,
 }: WorkspaceRealtimeProps) {
   void signalId; // reserved for future row-level filtering
-  const router = useRouter();
+  const lastReloadRef = useRef<number>(Date.now());
   const pendingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const schedule = useCallback(() => {
     if (pendingRef.current) return;
-    pendingRef.current = setTimeout(async () => {
+    const sinceLast = Date.now() - lastReloadRef.current;
+    const delay = Math.max(0, RELOAD_MIN_INTERVAL_MS - sinceLast);
+    pendingRef.current = setTimeout(() => {
       pendingRef.current = null;
-      // Server-action revalidation + router.refresh — same pattern as
-      // BridgeRealtime. See that file for the full rationale on why
-      // `router.refresh()` alone gets dedup'd and `?_rt=` cache-bust
-      // resets JS state. revalidatePath via server action is the
-      // path that bypasses both failure modes.
-      try {
-        await refreshEngineRoom();
-      } catch {
-        // best-effort — next event retries
-      }
-      router.refresh();
-    }, 800);
-  }, [router]);
+      lastReloadRef.current = Date.now();
+      window.location.replace(window.location.href);
+    }, delay);
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -83,11 +75,9 @@ export function WorkspaceRealtime({
     };
   }, []);
 
-  // Poll fallback — only while there's active STOKER work. Same throttle
-  // dedupes poll + realtime hits in the same tick.
   useEffect(() => {
     if (!hasActiveWork) return;
-    const id = setInterval(() => schedule(), 2000);
+    const id = setInterval(() => schedule(), 3000);
     return () => clearInterval(id);
   }, [hasActiveWork, schedule]);
 
