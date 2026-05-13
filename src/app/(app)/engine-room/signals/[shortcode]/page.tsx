@@ -19,6 +19,15 @@ import type { SignalStatus } from "@/components/engine-room/stage-pips";
 
 export const metadata = { title: "Signal · Engine Room · BLIPS BOS" };
 
+// Signal Workspace is realtime-driven (STOKER manifestations, FURNACE
+// brief sections, BOILER gallery, agent_outputs streams). Same reasoning
+// as `/engine-room/page.tsx` — pin to fully dynamic + no-cache so every
+// `router.refresh()` from the workspace's realtime subscriptions returns
+// a freshly-queried Server Component render.
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+export const fetchCache = "force-no-store";
+
 /**
  * Signal Workspace — Phase 7.
  *
