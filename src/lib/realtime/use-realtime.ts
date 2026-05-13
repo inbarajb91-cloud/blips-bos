@@ -60,10 +60,17 @@ export function useRealtimeChannel(
           "postgres_changes",
           { event: "*", schema: "public", table },
           (payload) => {
+            // DIAG: log every event arrival before forwarding.
+            console.log(`[realtime:${table}] EVENT`, {
+              type: (payload as { eventType?: string }).eventType,
+              ts: new Date().toISOString(),
+            });
             onChangeRef.current(payload);
           },
         )
         .subscribe((status) => {
+          // DIAG: log every status change.
+          console.log(`[realtime:${table}] status=${status}`);
           if (
             status === "CHANNEL_ERROR" ||
             status === "TIMED_OUT" ||
