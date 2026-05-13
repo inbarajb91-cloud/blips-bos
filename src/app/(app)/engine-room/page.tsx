@@ -15,6 +15,27 @@ import { BridgeRealtime } from "@/components/engine-room/bridge-realtime";
 
 export const metadata = { title: "Bridge · Engine Room · BLIPS BOS" };
 
+// Bridge is realtime-driven: every `router.refresh()` triggered by a
+// Supabase Postgres-changes event needs to read the freshest DB state.
+// Next.js 16 auto-detects this route as dynamic (cookies via
+// getCurrentUserWithOrg), but the default behavior still allows the
+// route-segment cache + the fetch cache to serve stale RSC payloads when
+// the same URL is fetched in rapid succession from `router.refresh()`
+// (which is what BridgeRealtime calls on every event). Pinning the route
+// explicitly to `force-dynamic` + `revalidate = 0` + `fetchCache =
+// "force-no-store"` forces a fresh Server Component render + fresh
+// Drizzle queries on every request — no caching at any Next.js layer.
+//
+// Trade-off: marginally higher per-render cost. The route is render-on-
+// demand anyway (cookies), so the cost increase is negligible.
+//
+// The same directive ships for `/engine-room/signals/[shortcode]` (Phase
+// 7) and the manifestation children, both of which are also realtime-
+// driven and exhibited the same stale-RSC behavior in testing.
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+export const fetchCache = "force-no-store";
+
 /**
  * Bridge — the Engine Room's home view.
  *
