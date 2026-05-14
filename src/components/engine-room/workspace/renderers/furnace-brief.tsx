@@ -15,6 +15,8 @@ import {
   SECTION_BOUNDS,
   type SectionName,
 } from "@/lib/actions/furnace-shared";
+import { FurnacePromptDownload } from "@/components/engine-room/workspace/furnace-prompt-download";
+import type { FurnacePromptContext } from "@/lib/furnace-prompt";
 
 /**
  * FURNACE Brief Renderer — Phase 10D + Phase 10.4 layout revision.
@@ -95,7 +97,7 @@ function sectionAnchorId(section: SectionName): string {
 }
 
 export function FurnaceBrief(props: RendererProps) {
-  const { activeManifestation, signal } = props;
+  const { activeManifestation, signal, parentRef } = props;
 
   // FURNACE only runs on manifestation children; raw signals don't have
   // briefs. Show an empty state for the parent view.
@@ -109,6 +111,20 @@ export function FurnaceBrief(props: RendererProps) {
   }
 
   const briefDetail = manifestation.outputs?.FURNACE ?? null;
+
+  // Context for the "Download prompt" affordance — manifestation identity
+  // + the parent cultural signal it descends from. `parentRef` is
+  // populated when viewing a manifestation child workspace; when viewing
+  // the parent workspace directly, `signal` IS the parent. Fall back
+  // across both so the prompt always has a complete header.
+  const promptContext: FurnacePromptContext = {
+    manifestationShortcode: manifestation.shortcode,
+    manifestationTitle: manifestation.title,
+    decade: manifestation.decade,
+    parentShortcode: parentRef?.shortcode ?? signal.shortcode,
+    parentWorkingTitle: parentRef?.workingTitle ?? signal.workingTitle,
+    parentConcept: parentRef?.concept ?? signal.concept,
+  };
 
   // No brief yet — FURNACE hasn't run or is processing
   if (!briefDetail) {
@@ -142,6 +158,7 @@ export function FurnaceBrief(props: RendererProps) {
         content={content}
         manifestationShortcode={manifestation.shortcode}
         stokerHasCascade={stokerHasCascade}
+        promptContext={promptContext}
       />
     );
   }
@@ -171,6 +188,7 @@ export function FurnaceBrief(props: RendererProps) {
       manifestationShortcode={manifestation.shortcode}
       revisionsCount={briefDetail.revisionsCount}
       stokerHasCascade={stokerHasCascade}
+      promptContext={promptContext}
     />
   );
 }
@@ -299,11 +317,13 @@ function FurnaceApproved({
   content,
   manifestationShortcode,
   stokerHasCascade,
+  promptContext,
 }: {
   briefId: string;
   content: BriefContent;
   manifestationShortcode: string;
   stokerHasCascade: boolean;
+  promptContext: FurnacePromptContext;
 }) {
   // Approved state has no per-section actions, so the nav rail's pip
   // state is "all approved" and there's no Approve-all CTA. The rest
@@ -328,6 +348,8 @@ function FurnaceApproved({
         manifestationShortcode={manifestationShortcode}
         score={content.brandFitScore ?? 0}
         rationale={content.brandFitRationale ?? null}
+        content={content}
+        promptContext={promptContext}
       />
 
       <BriefBody
@@ -344,10 +366,14 @@ function ApprovedHero({
   manifestationShortcode,
   score,
   rationale,
+  content,
+  promptContext,
 }: {
   manifestationShortcode: string;
   score: number;
   rationale: string | null;
+  content: BriefContent;
+  promptContext: FurnacePromptContext;
 }) {
   return (
     <div className="bg-wash-1 border border-rule-1 rounded-md px-6 py-5 mb-7 flex items-center justify-between gap-6">
@@ -367,6 +393,7 @@ function ApprovedHero({
           )}
         </div>
       </div>
+      <FurnacePromptDownload content={content} context={promptContext} />
     </div>
   );
 }
@@ -380,6 +407,7 @@ function FurnaceBriefReview({
   manifestationShortcode,
   revisionsCount,
   stokerHasCascade,
+  promptContext,
 }: {
   briefId: string;
   content: BriefContent;
@@ -387,6 +415,7 @@ function FurnaceBriefReview({
   manifestationShortcode: string;
   revisionsCount: number;
   stokerHasCascade: boolean;
+  promptContext: FurnacePromptContext;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -450,6 +479,7 @@ function FurnaceBriefReview({
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          <FurnacePromptDownload content={content} context={promptContext} />
           <button
             type="button"
             onClick={handleDismiss}
