@@ -3,6 +3,7 @@ import { getFullSignalField } from "./get-full-signal-field";
 import { getStageOutput } from "./get-stage-output";
 import { searchCollection } from "./search-collection";
 import { recall } from "./recall";
+import { webSearch } from "./web-search";
 import { flagConcern } from "./flag-concern";
 import { requestReRun } from "./request-re-run";
 import { dismissSignal } from "./dismiss";
@@ -63,6 +64,12 @@ export function buildOrcTools(ctx: OrcToolContext) {
     get_stage_output: getStageOutput(ctx),
     search_collection: searchCollection(ctx),
     recall: recall(ctx),
+    // Phase 11.5 — web_search is an always-bound data tool. Backend
+    // (default: Gemini grounded search subroutine) lives at
+    // src/lib/orc/web-search/. Swappable in one file. Returns a bounded
+    // digest + source list — never raw SERP — so it doesn't blow ORC's
+    // per-turn token budget.
+    web_search: webSearch(ctx),
     flag_concern: flagConcern(ctx),
     request_re_run: requestReRun(ctx),
     // Phase 9G — propose_action emits a chip with Approve / Decline /
