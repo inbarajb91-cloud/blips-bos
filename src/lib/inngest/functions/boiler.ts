@@ -13,6 +13,10 @@ import { getImageModel } from "@/lib/ai/image-providers";
 import { getAgentConfig } from "@/lib/ai/config-reader";
 import { computeImageCost } from "@/lib/ai/pricing";
 import { logAgentCall } from "@/lib/ai/logger";
+import {
+  uploadBase64Image,
+  isCloudinaryConfigured,
+} from "@/lib/cloudinary";
 import "@/skills"; // ensure skill registry is populated
 import type { BoilerInput, BoilerOutput } from "@/skills/boiler";
 
@@ -44,11 +48,14 @@ type DecadeKey = "RCK" | "RCL" | "RCD";
  *   5. For each variant prompt: call AI SDK `generateImage` with the
  *      recommended model. Walks the agent's `image_model_fallback_chain`
  *      on transient errors. Returns base64 image data + usage metadata.
- *   6. Store images. Phase 11C ships with inline base64 data URIs in
- *      agent_outputs.content (heavy on JSONB but works without external
- *      storage). Phase 11C.1 swaps in Cloudinary upload when Inba sets
- *      CLOUDINARY_URL in env. Phase 11D swaps in Dynamic Mockups for
- *      multi-angle mockup rendering when DYNAMIC_MOCKUPS_API_KEY is set.
+ *   6. Store images on Cloudinary (Phase 11C.1, shipped May 15). Each
+ *      base64 PNG is uploaded via src/lib/cloudinary; the variant row
+ *      stores `imageUrl` (with f_auto,q_auto applied) + `cloudinaryPublicId`,
+ *      NOT the inline data URI. Drops Vercel Fast Origin Transfer +
+ *      Supabase DB row size ~99%. Falls back to inline base64 only when
+ *      CLOUDINARY_URL is unset (local dev only). Phase 11D will later
+ *      swap in Dynamic Mockups for multi-angle mockup rendering when
+ *      DYNAMIC_MOCKUPS_API_KEY is set.
  *   7. Write agent_outputs row (outputType='boiler_gallery') + advance
  *      manifestation status (IN_BOILER → keep IN_BOILER; concept gallery
  *      is a sub-state with status=PENDING awaiting founder pick).
@@ -485,6 +492,17 @@ export const boilerProcess = inngest.createFunction(
           );
         }
 
+        // Phase 11C.1 — check Cloudinary availability ONCE per run. In
+        // production this is always true (CLOUDINARY_URL is set on Vercel
+        // env). Local dev without the key falls back to inline base64 per
+        // variant — single dev-mode flow, never produces production data.
+        const cloudinaryConfigured = isCloudinaryConfigured();
+        if (!cloudinaryConfigured) {
+          console.warn(
+            "[BOILER] CLOUDINARY_URL not configured — gallery will store inline base64 (legacy Phase 11C path). Set CLOUDINARY_URL to swap to hosted URLs (~99% reduction in transfer + row size).",
+          );
+        }
+
         const results: Array<{
           variantSlug: string;
           register: string;
@@ -493,8 +511,17 @@ export const boilerProcess = inngest.createFunction(
           recommendedModel: string;
           paletteAnchors: string[];
           referenceAnchors: string[];
-          /** data URI (data:image/png;base64,...) — until Cloudinary lands. */
-          imageDataUri: string;
+          /** Cloudinary delivery URL with f_auto,q_auto applied. Set when
+           *  Cloudinary is configured (production). Renderer reads this
+           *  first via `variant.imageUrl ?? variant.imageDataUri`. */
+          imageUrl?: string;
+          /** Cloudinary public id ("blips/boiler/{shortcode}/{variantSlug}").
+           *  Stored for future delete / re-transform operations. */
+          cloudinaryPublicId?: string;
+          /** Legacy inline base64 (data:image/png;base64,...). Populated
+           *  ONLY when Cloudinary is not configured (local dev fallback).
+           *  Production rows have imageUrl and no imageDataUri. */
+          imageDataUri?: string;
           actualModel: string;
           fallbacksUsed: number;
           imageGenMs: number;
@@ -574,6 +601,43 @@ export const boilerProcess = inngest.createFunction(
             },
           });
 
+          // Phase 11C.1 — upload to Cloudinary. In production (CLOUDINARY_URL
+          // set) this is required; failures throw and Inngest's retry handles
+          // them (onFailure persists a marker row after retries exhaust). In
+          // local dev without the key, falls back to inline base64 so dev
+          // flows aren't blocked — never produces production data via the
+          // fallback path.
+          let imageUrl: string | undefined;
+          let cloudinaryPublicId: string | undefined;
+          let imageDataUri: string | undefined;
+          if (cloudinaryConfigured) {
+            const uploadStart = Date.now();
+            const uploadResult = await uploadBase64Image(chosen.base64, {
+              folder: `blips/boiler/${context.child.shortcode}`,
+              publicIdHint: variant.variantSlug,
+              overwrite: true,
+            });
+            imageUrl = uploadResult.optimizedUrl;
+            cloudinaryPublicId = uploadResult.publicId;
+            void logAgentCall({
+              orgId,
+              signalId: context.child.id,
+              agentName: "BOILER",
+              action: "output_written",
+              durationMs: Date.now() - uploadStart,
+              status: "success",
+              metadata: {
+                cloudinaryUpload: true,
+                variantSlug: variant.variantSlug,
+                publicId: uploadResult.publicId,
+                bytes: uploadResult.bytes,
+                format: uploadResult.format,
+              },
+            });
+          } else {
+            imageDataUri = `data:image/png;base64,${chosen.base64}`;
+          }
+
           results.push({
             variantSlug: variant.variantSlug,
             register: variant.register,
@@ -582,7 +646,9 @@ export const boilerProcess = inngest.createFunction(
             recommendedModel: variant.recommendedModel,
             paletteAnchors: variant.paletteAnchors,
             referenceAnchors: variant.referenceAnchors,
-            imageDataUri: `data:image/png;base64,${chosen.base64}`,
+            imageUrl,
+            cloudinaryPublicId,
+            imageDataUri,
             actualModel: chosen.modelId,
             fallbacksUsed: chosen.fallbacks,
             imageGenMs: chosen.ms,
@@ -601,15 +667,15 @@ export const boilerProcess = inngest.createFunction(
               editorNotes: skillOutput.editorNotes,
               variants: results,
               briefId: context.briefId,
-              mockups: null, // Phase 11C.1: Dynamic Mockups fills this in
+              mockups: null, // Phase 11D: Dynamic Mockups fills this in
               mockupsPendingReason:
                 "Dynamic Mockups API key not configured. Set DYNAMIC_MOCKUPS_API_KEY in .env.local + redeploy to enable multi-angle mockup rendering.",
-              // Note: Phase 11C.1 will replace each variant.imageDataUri
-              // with a Cloudinary URL. Renderer's <img> tag handles both
-              // (it's just a src string).
-              storageMode: "inline-base64-data-uri",
-              storagePendingReason:
-                "Cloudinary upload not configured. Set CLOUDINARY_URL in .env.local + redeploy to swap to hosted URLs (4× ~2.5MB images per row is fine in JSONB but not ideal long-term).",
+              storageMode: cloudinaryConfigured
+                ? "cloudinary"
+                : "inline-base64-data-uri",
+              storagePendingReason: cloudinaryConfigured
+                ? null
+                : "Cloudinary upload not configured. Set CLOUDINARY_URL in .env.local + redeploy to swap to hosted URLs (~99% reduction in Fast Origin Transfer + DB row size).",
             },
           })
           .where(eq(agentOutputs.id, skillResult.outputId));
