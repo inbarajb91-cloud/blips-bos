@@ -1,6 +1,18 @@
 -- 0011_boiler_v2.sql
 -- Phase 11D.1 — BOILER v2 schema migration.
 --
+-- May 16 hotfix: the bare `update_updated_at_column()` calls below assumed
+-- the function exists in public schema. On the prod DB it only existed in
+-- Supabase's `storage` schema. Adding the public-schema shim defensively so
+-- any fresh DB (CI, future re-applies, dev) gets the function created.
+CREATE OR REPLACE FUNCTION public.update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+--
 -- The original Phase 11 BOILER (May 8) stored 4 variants[] in agent_outputs.content,
 -- where each variant was nano-banana's guess at "what designed apparel looks like."
 -- Per founder review of the live gallery (May 15), those outputs were placeholder-
