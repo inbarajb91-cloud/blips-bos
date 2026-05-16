@@ -21,6 +21,7 @@ import {
   jsonb,
   integer,
   numeric,
+  boolean,
   uniqueIndex,
   unique,
   index,
@@ -879,6 +880,165 @@ export const configAgents = pgTable(
 );
 
 // ══════════════════════════════════════════════════════════════════
+// Phase 11D — BOILER v2 tables
+// ══════════════════════════════════════════════════════════════════
+// design_versions, mockup_renders, boiler_state.
+// See drizzle/0011_boiler_v2.sql for the canonical migration + comments.
+// New architecture: single design + ORC iteration loop (not 4-variant fan-out),
+// gpt-image-2 Responses API with previous_response_id chaining, Dynamic Mockups
+// API for photo-real mockup composition. Detailed in agents/BOILER.md + PIPELINE-v2.md.
+
+export const designTier = pgEnum("design_tier", ["low", "medium", "high"]);
+export const designFace = pgEnum("design_face", ["front", "back"]);
+export const mockupRenderer = pgEnum("mockup_renderer", [
+  "dynamic_mockups",
+  "svg_flatlay",
+]);
+
+export const designVersions = pgTable(
+  "design_versions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id, { onDelete: "cascade" }),
+    signalId: uuid("signal_id")
+      .notNull()
+      .references(() => signals.id, { onDelete: "cascade" }),
+    journeyId: uuid("journey_id").references(() => journeys.id, {
+      onDelete: "set null",
+    }),
+    parentVersionId: uuid("parent_version_id").references(
+      (): AnyPgColumn => designVersions.id,
+      { onDelete: "set null" },
+    ),
+
+    tier: text("tier", { enum: ["low", "medium", "high"] }).notNull(),
+    promptUsed: text("prompt_used").notNull(),
+    refinementInstruction: text("refinement_instruction"),
+    previousResponseId: text("previous_response_id"),
+    gptImage2ResponseId: text("gpt_image_2_response_id"),
+
+    flatArtworkUrl: text("flat_artwork_url"),
+    cloudinaryPublicId: text("cloudinary_public_id"),
+    widthPx: integer("width_px"),
+    heightPx: integer("height_px"),
+
+    paletteRoles: jsonb("palette_roles").notNull().default(sql`'{}'::jsonb`),
+    compositionMeta: jsonb("composition_meta").notNull().default(sql`'{}'::jsonb`),
+
+    costUsd: numeric("cost_usd", { precision: 8, scale: 4 }),
+    generatedAt: timestamp("generated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    createdBy: uuid("created_by").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    discarded: boolean("discarded").notNull().default(false),
+    discardedAt: timestamp("discarded_at", { withTimezone: true }),
+
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("design_versions_signal_idx").on(t.signalId),
+    index("design_versions_journey_idx").on(t.journeyId),
+    index("design_versions_parent_idx").on(t.parentVersionId),
+    index("design_versions_org_idx").on(t.orgId),
+    index("design_versions_generated_at_idx").on(t.generatedAt),
+  ],
+);
+
+export const mockupRenders = pgTable(
+  "mockup_renders",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id, { onDelete: "cascade" }),
+    designVersionId: uuid("design_version_id")
+      .notNull()
+      .references(() => designVersions.id, { onDelete: "cascade" }),
+    colorwayHex: text("colorway_hex").notNull(),
+    face: text("face", { enum: ["front", "back"] }).notNull(),
+    renderer: text("renderer", {
+      enum: ["dynamic_mockups", "svg_flatlay"],
+    })
+      .notNull()
+      .default("dynamic_mockups"),
+
+    templateUuid: text("template_uuid"),
+    smartObjectUuid: text("smart_object_uuid"),
+    cloudinaryUrl: text("cloudinary_url"),
+    cloudinaryPublicId: text("cloudinary_public_id"),
+    widthPx: integer("width_px"),
+    heightPx: integer("height_px"),
+
+    renderedAt: timestamp("rendered_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    costUsd: numeric("cost_usd", { precision: 8, scale: 4 }),
+
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    unique("mockup_renders_unique").on(t.designVersionId, t.colorwayHex, t.face),
+    index("mockup_renders_design_idx").on(t.designVersionId),
+    index("mockup_renders_org_idx").on(t.orgId),
+  ],
+);
+
+export const boilerState = pgTable(
+  "boiler_state",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id, { onDelete: "cascade" }),
+    signalId: uuid("signal_id")
+      .notNull()
+      .references(() => signals.id, { onDelete: "cascade" }),
+    journeyId: uuid("journey_id").references(() => journeys.id, {
+      onDelete: "set null",
+    }),
+
+    activeVersionId: uuid("active_version_id").references(
+      () => designVersions.id,
+      { onDelete: "set null" },
+    ),
+    activeGarmentHex: text("active_garment_hex"),
+    activePaletteRoles: jsonb("active_palette_roles")
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+
+    finalized: boolean("finalized").notNull().default(false),
+    finalizedAt: timestamp("finalized_at", { withTimezone: true }),
+    finalizedVersionId: uuid("finalized_version_id").references(
+      () => designVersions.id,
+      { onDelete: "set null" },
+    ),
+
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    unique("boiler_state_signal_journey_unique").on(t.signalId, t.journeyId),
+    index("boiler_state_signal_idx").on(t.signalId),
+    index("boiler_state_org_idx").on(t.orgId),
+  ],
+);
+
+// ══════════════════════════════════════════════════════════════════
 // TABLE EXPORTS for convenience
 // ══════════════════════════════════════════════════════════════════
 
@@ -902,4 +1062,8 @@ export const allTables = {
   configBos,
   configEngineRoom,
   configAgents,
+  // Phase 11D — BOILER v2
+  designVersions,
+  mockupRenders,
+  boilerState,
 };

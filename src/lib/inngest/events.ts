@@ -86,6 +86,34 @@ export type BlipsEvents = {
     data: { orgId: string; signalId: string; outputId: string };
   };
 
+  // ─── BOILER v2 — Phase 11D ────────────────────────────────────
+  // One unified event for all generation flavors. The orchestrator dispatches
+  // on `mode` to pick fresh / refine / branch / finalize logic. Auto-retry
+  // on verifier failure (low tier only) re-fires this event with `parent`
+  // set + `refinementInstruction` set from the verifier suggestions, so the
+  // same handler walks the same path.
+  "boiler.v2.generate": {
+    data: {
+      orgId: string;
+      signalId: string;
+      journeyId?: string;
+      tier: "low" | "medium" | "high";
+      /** Mode determines payload semantics + how parent/refinement are used. */
+      mode: "fresh" | "refine" | "branch" | "finalize";
+      /** Set on refine/branch/finalize — the design_versions row to chain off. */
+      parentVersionId?: string;
+      /** Set on refine only — the natural-language change to apply. */
+      refinementInstruction?: string;
+      /** Optional override of palette roles (e.g. after a set_color call). */
+      paletteRolesOverride?: Record<string, string>;
+      /** How many auto-retries this attempt has already gone through.
+       *  Used to cap auto-retry depth (default cap: 2 retries on low tier). */
+      retryDepth?: number;
+      /** User who triggered the generation (for created_by audit). */
+      triggeredBy?: string;
+    };
+  };
+
   // ─── ENGINE — tech pack (Phase 12) ───────────────────────────
   "engine.ready": {
     data: { orgId: string; signalId: string };

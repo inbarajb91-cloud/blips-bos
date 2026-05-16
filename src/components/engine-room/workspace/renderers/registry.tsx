@@ -7,7 +7,7 @@ import {
   type ParentStokerData,
 } from "./stoker-resonance";
 import { FurnaceBrief } from "./furnace-brief";
-import { BoilerGallery } from "./boiler-gallery";
+import { BoilerSwitch } from "./boiler-switch";
 import type {
   ParentReference,
   ManifestationOwnDetail,
@@ -102,7 +102,7 @@ export const RENDERERS: Record<AgentKey, Renderer> = {
   BUNKER: BunkerRetrospective,
   STOKER: StokerResonance,
   FURNACE: FurnaceBrief,
-  BOILER: BoilerGallery,
+  BOILER: BoilerSwitch,
   ENGINE: (props) => (
     <StagePlaceholder
       stage="ENGINE"

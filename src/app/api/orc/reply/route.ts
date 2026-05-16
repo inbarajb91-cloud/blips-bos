@@ -399,7 +399,7 @@ export async function POST(req: Request) {
   // would be too broad (every BOILER-tab message would mention it) so
   // we match action verbs only.
   const allowMutation =
-    /\b(approve|approved|approval|approving|dismiss|dismissed|dismissing|reject|rejected|advance|advanced|ship|shipped|shipping|edit|edited|editing|modify|modified|restart|restarted|re-?run|rerun|force|force-add|decline|declined|cancel|cancelled|regenerate|regenerated|regenerating|brief|section|addendum|addenda|refused|refusing|redo|rewrite|rewritten|pick|picked|picking|picks|gallery|galleries|variant|variants|concept|concepts)\b/i.test(
+    /\b(approve|approved|approval|approving|dismiss|dismissed|dismissing|reject|rejected|advance|advanced|ship|shipped|shipping|edit|edited|editing|modify|modified|restart|restarted|re-?run|rerun|force|force-add|decline|declined|cancel|cancelled|regenerate|regenerated|regenerating|brief|section|addendum|addenda|refused|refusing|redo|rewrite|rewritten|pick|picked|picking|picks|gallery|galleries|variant|variants|concept|concepts|finalize|finalized|finalizing|discard|discarded|discarding|commit|committed|trash|delete|deleted|remove|removed)\b/i.test(
       userMessage,
     );
 
