@@ -30,10 +30,14 @@
  * not secret) so the founder can see what each verify run cost.
  */
 
-// Load .env.local explicitly — dotenv/config only loads .env by default.
-import dotenv from "dotenv";
-dotenv.config({ path: ".env.local", quiet: true });
-dotenv.config({ path: ".env", quiet: true });
+// IMPORTANT: this script requires `tsx --env-file=.env.local` for env loading.
+// Don't `import "dotenv"` here — dotenv isn't a project dep, and module-import
+// hoisting puts the env load after lib imports anyway (cloudinary auto-init
+// reads process.env at import time). See MEMORY.md § May 16 "dotenv import-
+// order trap" for the full story.
+//
+// Run:
+//   pnpm tsx --env-file=.env.local scripts/verify-boiler-v2-openai.ts [--skip-chain]
 
 import { isCloudinaryConfigured } from "@/lib/cloudinary";
 import { generateDesign as runGenerateDesign } from "@/lib/boiler/generate-design";

@@ -33,11 +33,14 @@
  *   4 — script crashed
  */
 
-// Load .env.local explicitly (dotenv/config only loads .env by default; the
-// secret lives in .env.local).
-import dotenv from "dotenv";
-dotenv.config({ path: ".env.local", quiet: true });
-dotenv.config({ path: ".env", quiet: true });
+// IMPORTANT: this script requires `tsx --env-file=.env.local` for env loading.
+// Don't `import "dotenv"` here — dotenv isn't a project dep, and module-import
+// hoisting puts the env load after lib imports anyway (cloudinary auto-init
+// reads process.env at import time, before any in-source dotenv.config()).
+// See MEMORY.md § May 16 "dotenv import-order trap" for the full story.
+//
+// Run:
+//   pnpm tsx --env-file=.env.local scripts/discover-dynamic-mockups.ts [flags]
 
 import { listMockups, getMockup } from "@/lib/dynamic-mockups/client";
 import type { MockupTemplate } from "@/lib/dynamic-mockups/types";
