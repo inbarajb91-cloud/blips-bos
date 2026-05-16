@@ -1,6 +1,6 @@
 "use server";
 
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import {
   db,
   designVersions,
@@ -9,6 +9,7 @@ import {
   configEngineRoom,
 } from "@/db";
 import { getCurrentUserWithOrg } from "@/lib/auth/current-user";
+import { findActiveJourney } from "@/lib/orc/journey";
 import type {
   PaletteRoles,
   CompositionMeta,
@@ -92,21 +93,43 @@ export interface BoilerV2LoadedState {
 // ─── Loader ──────────────────────────────────────────────────────────
 
 /**
- * Load the full BOILER v2 state for one (signalId, journeyId) pair.
+ * Load the full BOILER v2 state for a manifestation signal.
  *
- * Called from the workspace page when the BOILER tab is active on a
- * manifestation. Returns a single composite shape the renderer can read
- * without further fetches.
+ * Resolves the active journey internally via `findActiveJourney()` — caller
+ * passes only `signalId`. This mirrors how ORC tools work (they read
+ * `ctx.journeyId` which is server-resolved at the route boundary), so the
+ * renderer's read and the tools' writes converge on the same
+ * `(signalId, journeyId)` boilerState row.
+ *
+ * Returns an empty-state object (state=null, versions=[]) when:
+ *   - The signal has no active journey (data oddity — should never happen)
+ *   - No boiler_state row exists yet (BOILER hasn't been run on this signal)
+ *   - No design_versions exist yet
  *
  * Org scoping enforced via `getCurrentUserWithOrg()` — every query filters
  * by `eq(*.orgId, user.orgId)`.
  */
 export async function loadBoilerV2State(opts: {
   signalId: string;
-  journeyId: string;
 }): Promise<BoilerV2LoadedState> {
   const user = await getCurrentUserWithOrg();
   if (!user) throw new Error("Not authenticated");
+
+  // Resolve the active journey for this manifestation. Read path: degrade
+  // gracefully if no journey exists (return empty state). Production data
+  // always has exactly one active journey per signal (Phase 8 invariant).
+  const journey = await findActiveJourney(opts.signalId);
+  if (!journey) {
+    return {
+      state: null,
+      versions: [],
+      visibleVersions: [],
+      activeVersion: null,
+      finalizedVersion: null,
+      mockupRenders: [],
+    };
+  }
+  const journeyId = journey.id;
 
   // 1. boiler_state row (may be null if no generation has run yet)
   const [stateRow] = await db
@@ -116,7 +139,7 @@ export async function loadBoilerV2State(opts: {
       and(
         eq(boilerState.orgId, user.orgId),
         eq(boilerState.signalId, opts.signalId),
-        eq(boilerState.journeyId, opts.journeyId),
+        eq(boilerState.journeyId, journeyId),
       ),
     )
     .limit(1);
@@ -129,12 +152,15 @@ export async function loadBoilerV2State(opts: {
       and(
         eq(designVersions.orgId, user.orgId),
         eq(designVersions.signalId, opts.signalId),
-        eq(designVersions.journeyId, opts.journeyId),
+        eq(designVersions.journeyId, journeyId),
       ),
     )
     .orderBy(desc(designVersions.generatedAt));
 
-  // 3. All mockup_renders for those design versions
+  // 3. All mockup_renders for those design versions (single batched fetch).
+  // Uses `inArray()` so multi-version signals get their mockup rows. The
+  // earlier single-version fallback silently dropped mockups on signals
+  // with ≥2 versions — fixed in PR #46 critical-fix follow-up.
   const versionIds = versionRows.map((v) => v.id);
   const mockupRows =
     versionIds.length > 0
@@ -144,16 +170,10 @@ export async function loadBoilerV2State(opts: {
           .where(
             and(
               eq(mockupRenders.orgId, user.orgId),
-              // We can't do `in (...)` with an empty array elegantly; just skip when empty
-              ...(versionIds.length === 1
-                ? [eq(mockupRenders.designVersionId, versionIds[0])]
-                : []),
+              inArray(mockupRenders.designVersionId, versionIds),
             ),
           )
       : [];
-  // For multi-version case fetch separately to keep it simple — small N, no
-  // join needed. (`in` operator skipped for brevity; small scale.)
-  // TODO: when version counts grow > 10, switch to `inArray()` from drizzle-orm.
 
   const versions: BoilerV2VersionRow[] = versionRows.map((v) => ({
     id: v.id,

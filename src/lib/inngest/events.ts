@@ -109,6 +109,14 @@ export type BlipsEvents = {
       /** How many auto-retries this attempt has already gone through.
        *  Used to cap auto-retry depth (default cap: 2 retries on low tier). */
       retryDepth?: number;
+      /**
+       * True when this event was fired by the BOILER handler's auto-retry path
+       * (NOT by a founder-driven refine_design tool call). The handler's
+       * shouldAutoRetry gate uses this to allow continuation: founder-driven
+       * refines NEVER auto-retry on failure (they're an explicit choice), but
+       * the auto-retry chain itself can continue up to MAX_AUTO_RETRY_DEPTH.
+       */
+      autoRetried?: boolean;
       /** User who triggered the generation (for created_by audit). */
       triggeredBy?: string;
     };

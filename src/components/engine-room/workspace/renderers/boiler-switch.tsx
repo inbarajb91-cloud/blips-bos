@@ -43,17 +43,14 @@ export function BoilerSwitch(props: RendererProps) {
     staleTime: 5 * 60 * 1000, // 5min — flag rarely changes
   });
 
-  // v2 state — signal-scoped, only loaded when flag is on AND manifestation present.
-  // Journey id is the manifestation's currently-active journey (carried in
-  // activeManifestation by Phase 9.5+ workspace plumbing).
-  // TODO: thread the actual journeyId. For now use manifestation.id as fallback.
+  // v2 state — signal-scoped. loadBoilerV2State resolves the active journey
+  // server-side via findActiveJourney() so the renderer's read and ORC tools'
+  // writes converge on the same (signalId, journeyId) boilerState row. Earlier
+  // version of this file passed signalId as both signal and journey — that was
+  // a real bug (renderer read a row that no ORC tool ever wrote to). Fixed.
   const v2Query = useQuery({
     queryKey: ["boiler-v2-state", signalId],
-    queryFn: () =>
-      loadBoilerV2State({
-        signalId: signalId!,
-        journeyId: signalId!, // TODO: replace with real journey id from manifestation
-      }),
+    queryFn: () => loadBoilerV2State({ signalId: signalId! }),
     enabled: flagQuery.data === true && signalId !== null,
     staleTime: 30 * 1000,
   });

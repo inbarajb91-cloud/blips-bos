@@ -129,6 +129,7 @@ export const boilerV2Generate = inngest.createFunction(
       refinementInstruction,
       paletteRolesOverride,
       retryDepth = 0,
+      autoRetried = false,
       triggeredBy,
     } = data;
 
@@ -196,6 +197,7 @@ export const boilerV2Generate = inngest.createFunction(
         .from(boilerState)
         .where(
           and(
+            eq(boilerState.orgId, orgId),
             eq(boilerState.signalId, signalId),
             ...(journeyId
               ? [eq(boilerState.journeyId, journeyId)]
@@ -414,12 +416,18 @@ export const boilerV2Generate = inngest.createFunction(
     });
 
     // ─── 6. Auto-retry on verifier failure (low tier only) ───────────
+    // Gate fires for: (a) initial fresh generations that failed verification,
+    // OR (b) prior auto-retry refines that ALSO failed (so the chain can
+    // continue up to MAX_AUTO_RETRY_DEPTH). Founder-driven refine_design
+    // calls never auto-retry (autoRetried defaults to false on those — only
+    // the BOILER handler itself sets autoRetried=true when re-firing).
     const v = result.verification;
+    const eligibleForAutoRetry = mode === "fresh" || (mode === "refine" && autoRetried);
     const shouldAutoRetry =
       v &&
       v.passed === false &&
       effectiveTier === "low" &&
-      mode === "fresh" &&
+      eligibleForAutoRetry &&
       retryDepth < MAX_AUTO_RETRY_DEPTH;
 
     if (shouldAutoRetry) {
@@ -459,6 +467,7 @@ export const boilerV2Generate = inngest.createFunction(
           refinementInstruction: refinement,
           paletteRolesOverride: paletteRolesOverride,
           retryDepth: retryDepth + 1,
+          autoRetried: true, // <- handler-fired chain; gates the next firing
           triggeredBy,
         },
       });

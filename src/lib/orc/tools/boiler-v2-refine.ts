@@ -54,6 +54,7 @@ export function boilerV2RefineTool(ctx: OrcToolContext) {
         .from(boilerState)
         .where(
           and(
+            eq(boilerState.orgId, ctx.orgId),
             eq(boilerState.signalId, ctx.signalId),
             eq(boilerState.journeyId, ctx.journeyId),
           ),
