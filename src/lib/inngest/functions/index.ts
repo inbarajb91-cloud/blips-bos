@@ -8,6 +8,7 @@ import {
 import { stokerProcess } from "./stoker";
 import { furnaceProcess } from "./furnace";
 import { boilerProcess } from "./boiler";
+import { boilerV2Generate } from "./boiler-v2";
 
 /**
  * Inngest function registry — every function the app exposes.
@@ -24,4 +25,5 @@ export const functions = [
   stokerProcess, // Phase 9C
   furnaceProcess, // Phase 10C
   boilerProcess, // Phase 11C
+  boilerV2Generate, // Phase 11D.3a
 ];

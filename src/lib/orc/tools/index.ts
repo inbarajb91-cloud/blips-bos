@@ -30,6 +30,16 @@ import { approveBoilerVariantTool } from "./approve-boiler-variant";
 import { dismissBoilerGalleryTool } from "./dismiss-boiler-gallery";
 import { proposeBoilerDirectionTool } from "./propose-boiler-direction";
 import { flagBoilerConcernTool } from "./flag-boiler-concern";
+// Phase 11D — BOILER v2 tools (7 total: 4 Inngest-backed + 3 direct DB writes).
+// These supersede the 4 v1 tools above when config_engine_room.boiler_v2_renderer
+// is true. Both sets coexist behind the feature flag during the transition.
+import { boilerV2GenerateTool } from "./boiler-v2-generate";
+import { boilerV2RefineTool } from "./boiler-v2-refine";
+import { boilerV2BranchTool } from "./boiler-v2-branch";
+import { boilerV2FinalizeTool } from "./boiler-v2-finalize";
+import { boilerV2SetColorTool } from "./boiler-v2-set-color";
+import { boilerV2DiscardVersionTool } from "./boiler-v2-discard-version";
+import { boilerV2ApproveAndAdvanceTool } from "./boiler-v2-approve-and-advance";
 
 /**
  * Build the ORC tool set, bound to a specific turn's context.
@@ -86,6 +96,20 @@ export function buildOrcTools(ctx: OrcToolContext) {
     // dismiss_boiler_gallery) is in the allowMutation block below.
     propose_boiler_direction: proposeBoilerDirectionTool(ctx),
     flag_boiler_concern: flagBoilerConcernTool(ctx),
+    // Phase 11D — BOILER v2 design-iteration tools. Bound regardless of
+    // allowMutation because they spend money on gpt-image-1 but aren't
+    // destructive (every output is a new design_versions row; nothing is
+    // overwritten or deleted). The destructive trio (discard / finalize /
+    // approve_and_advance) sits in the allowMutation block below.
+    //
+    // Cost guard: generate ($0.006-0.211), refine ($0.006-0.211), branch
+    // ($0.006-0.211) per call. Auto-retry on verify failure caps at depth 2.
+    // set_color is free (DB write only). Concurrency capped per-org at 3 by
+    // the Inngest function definition.
+    boiler_v2_generate: boilerV2GenerateTool(ctx),
+    boiler_v2_refine: boilerV2RefineTool(ctx),
+    boiler_v2_branch: boilerV2BranchTool(ctx),
+    boiler_v2_set_color: boilerV2SetColorTool(ctx),
     ...(ctx.allowMutation && {
       approve_and_advance: approveAndAdvance(ctx),
       dismiss: dismissSignal(ctx),
@@ -116,6 +140,16 @@ export function buildOrcTools(ctx: OrcToolContext) {
       // when the user said one of those words in this turn.
       approve_boiler_variant: approveBoilerVariantTool(ctx),
       dismiss_boiler_gallery: dismissBoilerGalleryTool(ctx),
+      // Phase 11D — BOILER v2 destructive trio. discard removes a version
+      // from the history strip; finalize re-runs at HIGH tier ($0.211)
+      // producing the canonical artwork; approve_and_advance commits the
+      // finalized version and advances the journey to ENGINE Step 1.
+      // The route-level regex should pick up: discard / finalize /
+      // approve / commit / ship — same gate pattern as the existing
+      // approve_and_advance tool above.
+      boiler_v2_discard_version: boilerV2DiscardVersionTool(ctx),
+      boiler_v2_finalize: boilerV2FinalizeTool(ctx),
+      boiler_v2_approve_and_advance: boilerV2ApproveAndAdvanceTool(ctx),
     }),
   };
 }
