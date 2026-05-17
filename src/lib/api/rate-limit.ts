@@ -84,6 +84,23 @@ export function checkRateLimit(params: RateLimitParams): RateLimitResult {
   }
   state.timestamps = kept;
 
+  // REVIEW.md F11 (High): if the user has no live requests in the window
+  // (all their previous timestamps expired), drop the key entirely. The
+  // Map otherwise grows by one entry per distinct userId forever per
+  // Vercel function instance — eventually exhausting function memory on
+  // a long-lived hot instance. Next request from this user creates a
+  // fresh bucket either way; semantics unchanged, memory freed.
+  if (kept.length === 0) {
+    windows.delete(key);
+    state.timestamps.push(now);
+    windows.set(key, state);
+    return {
+      allowed: true,
+      remaining: params.limit - 1,
+      retryAfterMs: 0,
+    };
+  }
+
   if (kept.length >= params.limit) {
     // Denied. The earliest timestamp dictates when this user can
     // try again (that one has to fall out of the window first).

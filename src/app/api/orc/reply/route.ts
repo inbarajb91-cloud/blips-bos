@@ -3,7 +3,6 @@ import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, signals, agentConversations } from "@/db";
 import type { signals as signalsTable } from "@/db/schema";
-import { requireSession } from "@/lib/api/auth-helpers";
 import { checkOrcReplyRateLimit } from "@/lib/api/rate-limit";
 import { getCurrentUserWithOrg } from "@/lib/auth/current-user";
 import { getActiveJourney } from "@/lib/orc/journey";
@@ -82,14 +81,28 @@ const BodySchema = z.object({
 });
 
 export async function POST(req: Request) {
-  const auth = await requireSession();
-  if (auth instanceof NextResponse) return auth;
+  // REVIEW.md F7 (High): collapse the previous double auth roundtrip.
+  // We used to call `requireSession()` (which does supabase.auth.getUser())
+  // and then `getCurrentUserWithOrg()` (which calls supabase.auth.getUser()
+  // again — React.cache only dedups within a single render tree, NOT across
+  // separate awaits in a route handler). That cost an extra ~50-150ms of
+  // Supabase auth round-trip latency per ORC reply. Identical security
+  // posture: `getCurrentUserWithOrg` does the auth check AND joins to
+  // public.users for org_id. If null, return 401 (was previously a
+  // requireSession-driven 401 of the same shape).
+  const user = await getCurrentUserWithOrg();
+  if (!user) {
+    return NextResponse.json(
+      { error: "Unauthenticated or no linked profile for this session" },
+      { status: 401 },
+    );
+  }
 
   // Rate limit — 30 reply requests per minute per user. Protects
   // against frontend loops (abort-retry cycles), rapid-click Send,
   // and future multi-user abuse. See lib/api/rate-limit.ts for
   // config + the single-instance caveat.
-  const rl = checkOrcReplyRateLimit(auth.id);
+  const rl = checkOrcReplyRateLimit(user.authId);
   if (!rl.allowed) {
     return NextResponse.json(
       {
@@ -106,21 +119,19 @@ export async function POST(req: Request) {
     );
   }
 
-  // Org scope resolution — requireSession gives us the Supabase user;
-  // getCurrentUserWithOrg joins it with public.users to get org_id.
-  const user = await getCurrentUserWithOrg();
-  if (!user) {
-    return NextResponse.json(
-      { error: "No linked profile for this session" },
-      { status: 401 },
-    );
-  }
-
-  // REVIEW.md F22 (Medium): reject oversized bodies BEFORE req.json() parses
-  // them. Zod's userMessage.max(2000) only catches it post-parse — a 10 MB
-  // POST gets parsed before being rejected, wasting CPU + memory. Combined
-  // with the 30 req/min limit, a single user could shed serverless memory.
-  // 16 KB covers a 2k userMessage + UUIDs + JSON envelope with generous margin.
+  // REVIEW.md F22 (Medium, from PR #54): reject oversized bodies BEFORE
+  // req.json() parses them. Zod's userMessage.max(2000) only catches it
+  // post-parse — a 10 MB POST gets parsed before being rejected, wasting
+  // CPU + memory. Combined with the 30 req/min limit, a single user could
+  // shed serverless memory. 16 KB covers a 2k userMessage + UUIDs + JSON
+  // envelope with generous margin.
+  //
+  // Conflict resolution note (May 18): when this branch rebased on main
+  // after PR #54 (hygiene bundle) merged, the duplicate `const user =
+  // await getCurrentUserWithOrg()` block PR #54 had here was removed in
+  // favor of the version at the top of the handler (F7's collapse of the
+  // double auth roundtrip — user is already resolved above). F22's
+  // Content-Length check kept as-is.
   const contentLength = parseInt(req.headers.get("content-length") ?? "0", 10);
   if (contentLength > 16_000) {
     return NextResponse.json(
