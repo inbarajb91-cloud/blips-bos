@@ -623,7 +623,14 @@ export const agentOutputs = pgTable(
     // Sections not in the map are treated as not-yet-approved.
     // Reused across stages where granular approval makes sense (FURNACE
     // for brief sections, future ENGINE for tech pack sections, etc.).
-    sectionApprovals: jsonb("section_approvals").notNull().default({}),
+    // REVIEW.md F27 (Medium): use sql`'{}'::jsonb` instead of the TS
+    // literal `{}` for consistency with every other jsonb column in this
+    // schema (messages, metadata, etc. all use the sql template). Drizzle
+    // may serialize the TS literal differently across versions; keeping
+    // one syntax means schema introspection diffs stay clean.
+    sectionApprovals: jsonb("section_approvals")
+      .notNull()
+      .default(sql`'{}'::jsonb`),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

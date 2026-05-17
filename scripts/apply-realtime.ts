@@ -22,12 +22,30 @@ for (const line of envFile.split("\n")) {
   if (!process.env[k]) process.env[k] = v;
 }
 
+// REVIEW.md F18 (Medium): make this script the SINGLE SOURCE OF TRUTH for
+// supabase_realtime publication membership. Previously the script only listed
+// 5 tables, but follow-on phase scripts (migrate-phase-6-5.ts, individual
+// 0010+ migrations) added 6 more tables to the publication directly. Result:
+// a fresh DB run through apply-realtime.ts alone would silently miss 6
+// tables that the live app subscribes to (collections, collection_runs,
+// knowledge_documents, design_versions, boiler_state, mockup_renders), so
+// the Bridge / BOILER v2 / knowledge UIs would silently miss live updates
+// until the 10s poll fallback fires. Listing every table here closes the gap.
+//
+// Verified May 17 against prod publication via Supabase MCP — all 11 tables
+// currently in supabase_realtime are listed below.
 const TARGET_TABLES = [
   "signals",
   "bunker_candidates",
   "agent_outputs",
   "agent_logs",
   "signal_locks",
+  "collections",
+  "collection_runs",
+  "knowledge_documents",
+  "design_versions",
+  "boiler_state",
+  "mockup_renders",
 ] as const;
 
 async function main() {
