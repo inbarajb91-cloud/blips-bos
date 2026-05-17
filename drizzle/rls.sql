@@ -109,15 +109,60 @@ CREATE POLICY "decision_history_all" ON public.decision_history
   USING (org_id = public.current_org_id())
   WITH CHECK (org_id = public.current_org_id());
 
--- ─── signal_locks (scoped via parent signal) ──────────────────────
+-- ─── signal_locks (per-user policies) ─────────────────────────────
+-- F30 fix from REVIEW.md (May 17, 2026): the old `signal_locks_all FOR ALL`
+-- policy let any org member DELETE/UPDATE another user's lock through the
+-- anon/authenticated client. Once DECK ships (multi-user-per-org), any
+-- employee could drop another employee's lock from the browser, bypassing
+-- the server action's locked_by check.
+--
+-- Server actions run via Drizzle's service-role pooler which bypasses RLS,
+-- so the takeover-expired-lock flow inside acquireSignalLock still works.
+-- These per-operation policies only constrain DIRECT browser (authenticated)
+-- access. Applied to prod via Supabase MCP migration `signal_locks_per_user_rls`
+-- (May 17 evening) — this block is the durable copy.
+
 DROP POLICY IF EXISTS "signal_locks_all" ON public.signal_locks;
-CREATE POLICY "signal_locks_all" ON public.signal_locks
-  FOR ALL TO authenticated
+
+-- SELECT: any org member can see all locks in their org (so the UI can
+-- render "locked by X" chips for everyone)
+DROP POLICY IF EXISTS "signal_locks_select" ON public.signal_locks;
+CREATE POLICY "signal_locks_select" ON public.signal_locks
+  FOR SELECT TO authenticated
   USING (
     signal_id IN (SELECT id FROM public.signals WHERE org_id = public.current_org_id())
+  );
+
+-- INSERT: any org member can acquire, must lock as themselves
+DROP POLICY IF EXISTS "signal_locks_insert" ON public.signal_locks;
+CREATE POLICY "signal_locks_insert" ON public.signal_locks
+  FOR INSERT TO authenticated
+  WITH CHECK (
+    signal_id IN (SELECT id FROM public.signals WHERE org_id = public.current_org_id())
+    AND locked_by = auth.uid()
+  );
+
+-- UPDATE: only the lock holder can modify their lock (renew) via the
+-- authenticated path. Takeover-expired flows through service-role.
+DROP POLICY IF EXISTS "signal_locks_update" ON public.signal_locks;
+CREATE POLICY "signal_locks_update" ON public.signal_locks
+  FOR UPDATE TO authenticated
+  USING (
+    signal_id IN (SELECT id FROM public.signals WHERE org_id = public.current_org_id())
+    AND locked_by = auth.uid()
   )
   WITH CHECK (
     signal_id IN (SELECT id FROM public.signals WHERE org_id = public.current_org_id())
+    AND locked_by = auth.uid()
+  );
+
+-- DELETE: only the lock holder can release their lock via authenticated path
+DROP POLICY IF EXISTS "signal_locks_delete" ON public.signal_locks;
+CREATE POLICY "signal_locks_delete" ON public.signal_locks
+  FOR DELETE TO authenticated
+  USING (
+    signal_id IN (SELECT id FROM public.signals WHERE org_id = public.current_org_id())
+    AND locked_by = auth.uid()
   );
 
 -- ─── config_bos ──────────────────────────────────────────────────
