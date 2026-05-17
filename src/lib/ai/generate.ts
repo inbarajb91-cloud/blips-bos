@@ -7,6 +7,7 @@ import type { ZodSchema } from "zod";
 import { getAgentConfig } from "./config-reader";
 import { getModel } from "./model-router";
 import { logAgentCall } from "./logger";
+import { pickHealthyModel } from "./probe";
 import type { AgentKey } from "./types";
 
 export interface GenerateStructuredParams<T> {
@@ -44,19 +45,45 @@ export interface GenerateStructuredResult<T> {
 }
 
 /**
- * One unified LLM call for all agent skills, with automatic fallback chain.
+ * One unified structured LLM call for all agent skills, with automatic
+ * probe-then-call fallback chain.
  *
- * Steps:
- *   1. Resolve fallback chain from config_agents (primary first, then backups)
- *   2. Try each model in order, calling generateObject with the Zod schema
- *   3. On transient errors (rate limit, overload, schema mismatch) → try next model
- *   4. On non-transient errors (auth, malformed request) → fail fast, don't waste retries
- *   5. Log to agent_logs with the model that actually served + fallbacks_used count
- *   6. Return the validated object
+ * Phase 3.5 (May 8) wired probe-then-stream for ORC's streaming path.
+ * The structured-call path shipped with a narrower fallback policy that
+ * only advanced on classified-transient errors — which left a real
+ * failure mode unguarded and surfaced on May 15 (BOILER incident):
+ * a primary model id that doesn't exist plus a misconfigured provider
+ * key throws a permanent-shaped error that failed the whole call
+ * instead of walking the chain to a healthy slot #2.
  *
- * All skills call this; adding a new skill = define a Zod schema and a prompt,
- * not writing new LLM plumbing. Switching a skill from Gemini -> Claude is a
- * config_agents update, no code change.
+ * Fixed May 17 — both paths now share `pickHealthyModel` from probe.ts:
+ *
+ *   1. Walk fallback chain, sending a tiny probe to each model.
+ *   2. First healthy probe wins — return that model id.
+ *   3. Advance on ANY probe failure (transient or permanent — both are
+ *      what the chain is for; differentiating bugs us, see Phase 3.5
+ *      CR pass 1 catch).
+ *   4. All probes fail → friendly aggregated error.
+ *
+ * After picking a healthy model, run `generateObject` once. The probe
+ * already filtered out dead-primary failures; mid-call failures are
+ * either:
+ *   - schema validation issues (Zod / model JSON mismatch) — rare per
+ *     model after Phase 11G.1's flat-with-nullable schema rule
+ *   - genuine capacity drops after a healthy probe — surface them
+ *     rather than retrying silently
+ *
+ * Either way, surface the failure rather than silently retrying — a
+ * thrown error gets caught by the cascade-banner regen flow / ORC tool
+ * surfaces / Inngest handler so the founder sees "try again."
+ *
+ * Latency cost on the happy path: one extra probe call (~200-500ms on
+ * Gemini Flash). Worst case (3 unhealthy models): ~3-6s of probes
+ * before the friendly error. Same envelope as the streaming path.
+ *
+ * All skills call this; adding a new skill = define a Zod schema and
+ * a prompt, not writing new LLM plumbing. Switching a skill from
+ * Gemini -> Claude is a config_agents update, no code change.
  */
 export async function generateStructured<T>(
   params: GenerateStructuredParams<T>,
@@ -66,188 +93,91 @@ export async function generateStructured<T>(
   const chain = config.modelFallbackChain;
   const temperature = params.temperature ?? config.temperature;
 
-  let lastError: Error | undefined;
-  let fallbacksUsed = 0;
+  // Probe-then-call: find the first healthy model in the chain. Throws
+  // a friendly aggregated error if every probe fails — the BUNKER /
+  // STOKER / FURNACE / BOILER call surfaces (Inngest handler, ORC tool
+  // result, server action) all catch and present this as "try again in
+  // a few minutes."
+  const { modelId, fallbacksUsed } = await pickHealthyModel(
+    chain,
+    params.agentKey,
+    "generateStructured",
+  );
+  const probeMs = Date.now() - start;
 
-  for (const modelId of chain) {
-    const attemptStart = Date.now();
-    try {
-      const model = getModel(modelId);
-      const r = await generateObject({
-        model,
-        system: params.system,
-        prompt: params.prompt,
-        schema: params.schema,
-        temperature,
-      });
+  try {
+    const model = getModel(modelId);
+    const r = await generateObject({
+      model,
+      system: params.system,
+      prompt: params.prompt,
+      schema: params.schema,
+      temperature,
+    });
 
-      // Extract token usage (v3/v4 AI SDK shapes differ)
-      const u = r.usage as unknown as {
-        inputTokens?: number;
-        outputTokens?: number;
-        promptTokens?: number;
-        completionTokens?: number;
-      };
-      const tokensInput = u.inputTokens ?? u.promptTokens ?? 0;
-      const tokensOutput = u.outputTokens ?? u.completionTokens ?? 0;
+    // Extract token usage (v3/v4 AI SDK shapes differ)
+    const u = r.usage as unknown as {
+      inputTokens?: number;
+      outputTokens?: number;
+      promptTokens?: number;
+      completionTokens?: number;
+    };
+    const tokensInput = u.inputTokens ?? u.promptTokens ?? 0;
+    const tokensOutput = u.outputTokens ?? u.completionTokens ?? 0;
 
-      // Success — log and return
-      const durationMs = Date.now() - start;
-      void logAgentCall({
-        orgId: params.orgId,
-        signalId: params.signalId,
-        agentName: params.agentKey,
-        action: "llm_call",
-        model: modelId,
+    const durationMs = Date.now() - start;
+    void logAgentCall({
+      orgId: params.orgId,
+      signalId: params.signalId,
+      agentName: params.agentKey,
+      action: "llm_call",
+      model: modelId,
+      tokensInput,
+      tokensOutput,
+      durationMs,
+      status: "success",
+      metadata: {
+        fallbacks_used: fallbacksUsed,
+        primary_model: chain[0],
+        probe_ms: probeMs,
+      },
+    });
+
+    return {
+      object: r.object,
+      usage: {
         tokensInput,
         tokensOutput,
-        durationMs,
-        status: "success",
-        metadata:
-          fallbacksUsed > 0
-            ? {
-                fallbacks_used: fallbacksUsed,
-                primary_model: chain[0],
-                attempt_duration_ms: Date.now() - attemptStart,
-              }
-            : undefined,
-      });
-
-      return {
-        object: r.object,
-        usage: {
-          tokensInput,
-          tokensOutput,
-          totalTokens: tokensInput + tokensOutput,
-        },
-        model: modelId,
-        fallbacksUsed,
-        durationMs,
-      };
-    } catch (e) {
-      lastError = e as Error;
-
-      if (!isTransientError(lastError)) {
-        // Permanent error (auth, malformed request, unknown model) — different
-        // model won't fix it. Fail fast.
-        void logAgentCall({
-          orgId: params.orgId,
-          signalId: params.signalId,
-          agentName: params.agentKey,
-          action: "llm_call",
-          model: modelId,
-          durationMs: Date.now() - start,
-          status: "error",
-          errorMessage: lastError.message,
-          metadata: { non_transient: true },
-        });
-        throw lastError;
-      }
-
-      fallbacksUsed++;
-      console.warn(
-        `[generateStructured] ${modelId} failed (transient: ${lastError.message.slice(0, 80)}...), trying next in chain`,
-      );
-    }
+        totalTokens: tokensInput + tokensOutput,
+      },
+      model: modelId,
+      fallbacksUsed,
+      durationMs,
+    };
+  } catch (e) {
+    // Probe said healthy but the real structured call failed — surface
+    // it rather than silently fall through. Most likely shape: schema
+    // mismatch (Gemini structured output failing a discriminated union
+    // is the canonical case, addressed at the schema level in 11G.1)
+    // or a genuine capacity drop after a healthy probe.
+    const err = e instanceof Error ? e : new Error(String(e));
+    const durationMs = Date.now() - start;
+    void logAgentCall({
+      orgId: params.orgId,
+      signalId: params.signalId,
+      agentName: params.agentKey,
+      action: "llm_call",
+      model: modelId,
+      durationMs,
+      status: "error",
+      errorMessage: err.message,
+      metadata: {
+        fallbacks_used: fallbacksUsed,
+        primary_model: chain[0],
+        probe_passed: true,
+        probe_ms: probeMs,
+      },
+    });
+    throw err;
   }
-
-  // All models in chain exhausted — every model returned a transient
-  // error in the same call. Most often this is a Gemini-wide capacity
-  // event (every model in our chain shares the same backend) or a
-  // structured-output reliability flake on a particular schema. Either
-  // way, "try again in a few minutes" is the right user-facing advice.
-  const durationMs = Date.now() - start;
-  void logAgentCall({
-    orgId: params.orgId,
-    signalId: params.signalId,
-    agentName: params.agentKey,
-    action: "llm_call",
-    model: chain[chain.length - 1],
-    durationMs,
-    status: "error",
-    errorMessage: lastError?.message ?? "All models in fallback chain failed",
-    metadata: {
-      exhausted_chain: chain,
-      fallbacks_used: fallbacksUsed,
-    },
-  });
-  // Re-throw with a friendly user-facing message + preserved cause so
-  // surfacing UIs (ORC tools, server actions, the cascade-banner regen
-  // flow) can show "try again in a few minutes" without exposing raw
-  // AI SDK retry counts to the founder. The original error sits on
-  // `cause` for log inspection / future error-classification work.
-  const friendly = new Error(
-    `${params.agentKey}: all ${chain.length} model${
-      chain.length === 1 ? "" : "s"
-    } in the fallback chain failed (likely a temporary Gemini capacity event — please try again in a few minutes).`,
-  );
-  if (lastError) {
-    (friendly as Error & { cause?: unknown }).cause = lastError;
-  }
-  throw friendly;
-}
-
-/**
- * Classify an error as transient (fallback to next model) vs. permanent (fail fast).
- *
- * Transient: the problem is with the specific model or its current capacity.
- * Another model might succeed.
- *
- * Permanent: the problem is with the request itself (auth, malformed input,
- * unknown model ID). No other model will fix it.
- */
-/**
- * "Transient" here means "this specific model can't serve the request right
- * now — try the next model in the chain." Includes:
- *   - Capacity issues (rate limit, overload, high demand)
- *   - Transport issues (timeout, connection reset)
- *   - Schema mismatches (different model may handle it better)
- *   - Model-availability issues (deprecated, not found, not available) —
- *     these are permanent for THAT model but resolvable by another model
- *
- * Only NON-fallback-eligible errors are:
- *   - Auth (bad API key — same for all models)
- *   - Quota exhausted at org/project level (not model-specific)
- *   - Zod validation of input (our code is wrong, not the model's)
- */
-export function isTransientError(err: Error): boolean {
-  const msg = (err.message || "").toLowerCase();
-  const transientSignatures = [
-    // Capacity / rate limits
-    "high demand",
-    "experiencing high demand",
-    "rate limit",
-    "rate-limit",
-    "429",
-    "503",
-    "502",
-    "500",
-    "service unavailable",
-    "internal server error",
-    "overloaded",
-    "capacity",
-    "try again later",
-    "failed after",
-    // Transport
-    "timeout",
-    "timed out",
-    "econnreset",
-    "econnrefused",
-    "etimedout",
-    "fetch failed",
-    // Schema / output issues
-    "no object generated",
-    "response did not match schema",
-    "invalid response",
-    // Model availability — permanent for this model, another may work
-    "no longer available",
-    "not available",
-    "not found",
-    "deprecated",
-    "does not exist",
-    "invalid model",
-    "unknown model",
-    "model not supported",
-  ];
-  return transientSignatures.some((sig) => msg.includes(sig));
 }

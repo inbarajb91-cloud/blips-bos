@@ -1,5 +1,4 @@
 import {
-  generateText,
   streamText,
   stepCountIs,
   type ModelMessage,
@@ -8,7 +7,7 @@ import {
 import { getAgentConfig } from "./config-reader";
 import { getModel } from "./model-router";
 import { logAgentCall } from "./logger";
-import { isTransientError } from "./generate";
+import { pickHealthyModel } from "./probe";
 import type { AgentKey } from "./types";
 
 /**
@@ -19,17 +18,10 @@ import type { AgentKey } from "./types";
  * config-driven selection, same agent_logs correlation — just
  * produces a streaming Response instead of a parsed object.
  *
- * Phase 3.5 — added a fallback chain via "probe-then-stream":
- *
- *   For each model in modelFallbackChain:
- *     1. Send a 1-token probe with generateText (sub-second on healthy
- *        models). If it succeeds, the model is healthy → start the
- *        streamText against that model and return.
- *     2. If the probe fails with a transient error (capacity, overload,
- *        rate limit), advance to the next model in the chain.
- *     3. If the probe fails with a permanent error (auth, malformed
- *        input), throw — no fallback fixes that.
- *   If all models fail probe, throw a friendly aggregated error.
+ * Phase 3.5 introduced probe-then-stream; the shared probe logic
+ * lives in `./probe.ts` and is used by both this file and the
+ * structured-call cousin so both paths recover from the same
+ * failure modes (capacity, missing keys, bad model ids).
  *
  * Latency cost on the happy path: one extra probe call (~200-500ms on
  * Gemini Flash). Worst case (3 unhealthy models): ~3-6s of probes
@@ -59,11 +51,6 @@ import type { AgentKey } from "./types";
 
 export const ORC_MAX_STEPS = 5;
 
-/** Probe latency soft cap. If a model's probe takes longer than this,
- *  we treat it as failed and advance — better than letting a slow
- *  primary cost the whole turn its full 30s timeout. */
-const PROBE_TIMEOUT_MS = 8_000;
-
 export interface StreamOrcReplyParams {
   agentKey: AgentKey;
   orgId: string;
@@ -90,96 +77,6 @@ export interface StreamOrcReplyParams {
 }
 
 /**
- * 1-token probe — confirms the model is healthy enough to serve the
- * upcoming streaming call. Cost: ~10 tokens of output, well under
- * $0.0001 on every model in the catalog. Returns:
- *   - "healthy" → model accepted the request, returned a token
- *   - "transient" → model errored on a fallback-eligible signature
- *     (capacity, overload, etc.); caller should try next model
- *   - throws → permanent error (auth, malformed); no fallback fixes
- */
-async function probeModel(
-  modelId: string,
-): Promise<"healthy" | "transient"> {
-  try {
-    await Promise.race([
-      generateText({
-        model: getModel(modelId),
-        prompt: ".",
-        // AI SDK v6 uses `maxOutputTokens` — older variants used `maxTokens`.
-        // generateText accepts maxOutputTokens; cap at 4 so this stays
-        // cheap regardless of model pricing tier.
-        maxOutputTokens: 4,
-        temperature: 0.0,
-      }),
-      new Promise<never>((_, reject) =>
-        setTimeout(
-          () => reject(new Error(`probe timeout after ${PROBE_TIMEOUT_MS}ms`)),
-          PROBE_TIMEOUT_MS,
-        ),
-      ),
-    ]);
-    return "healthy";
-  } catch (e) {
-    const err = e instanceof Error ? e : new Error(String(e));
-    if (isTransientError(err)) return "transient";
-    throw err;
-  }
-}
-
-/**
- * Walk the fallback chain to find the first healthy model. Returns
- * the chosen model id and how many fallbacks were used (0 = primary
- * served). Throws a friendly aggregated error if none are healthy.
- */
-async function pickHealthyModel(
-  chain: string[],
-  agentKey: AgentKey,
-): Promise<{ modelId: string; fallbacksUsed: number }> {
-  // CR pass 1 fix: previously rethrew on any "permanent" probe error,
-  // which defeated the whole point of the fallback chain in a key
-  // failure mode — a missing per-provider API key (e.g. primary set
-  // to "openai/gpt-4o" via the bulk-apply UI when OPENAI_API_KEY isn't
-  // configured) is permanent for THAT model but the chain exists
-  // exactly to recover from "this provider can't serve right now."
-  // New behavior: advance on any probe failure, only throw if the
-  // whole chain is exhausted. The aggregated error attaches the last
-  // failure as `cause` for log/observability inspection.
-  let lastError: Error | null = null;
-  for (let i = 0; i < chain.length; i++) {
-    const id = chain[i];
-    try {
-      const status = await probeModel(id);
-      if (status === "healthy") {
-        return { modelId: id, fallbacksUsed: i };
-      }
-      lastError = new Error(`${id} probe returned transient error`);
-      console.warn(
-        `[streamOrcReply] ${id} probe failed transiently — trying next in chain`,
-      );
-    } catch (e) {
-      // Permanent error for THIS model (missing key, auth, malformed
-      // model id, unknown provider). Record it + advance — the chain
-      // is the safety net for exactly this case.
-      lastError = e instanceof Error ? e : new Error(String(e));
-      console.warn(
-        `[streamOrcReply] ${id} probe failed permanently (${lastError.message.slice(0, 80)}) — trying next in chain`,
-      );
-    }
-  }
-  // All models failed probe.
-  const friendly = new Error(
-    `${agentKey}: all ${chain.length} model${
-      chain.length === 1 ? "" : "s"
-    } in the fallback chain failed health probes (likely a temporary capacity event or a misconfigured provider key — please check the Settings → Agent Models page or try again in a few minutes).`,
-  );
-  if (lastError) {
-    (friendly as Error & { cause?: unknown }).cause = lastError;
-  }
-  throw friendly;
-}
-
-/**
  * Fire a streaming LLM call for ORC. Returns the raw streamText
  * result so the caller can:
  *   - convert to an HTTP response via `.toUIMessageStreamResponse()`
@@ -201,6 +98,7 @@ export async function streamOrcReply(params: StreamOrcReplyParams) {
   const { modelId, fallbacksUsed } = await pickHealthyModel(
     chain,
     params.agentKey,
+    "streamOrcReply",
   );
   const probeMs = Date.now() - start;
 
