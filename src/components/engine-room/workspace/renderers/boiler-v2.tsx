@@ -1,12 +1,34 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useTransition, useCallback } from "react";
 import Image from "next/image";
-import type {
-  BoilerV2LoadedState,
-  BoilerV2VersionRow,
+import { useQueryClient } from "@tanstack/react-query";
+import {
+  boilerV2SetColorAction,
+  boilerV2DiscardVersionAction,
+  boilerV2FinalizeAction,
+  boilerV2BranchAction,
+  boilerV2ApproveAndAdvanceAction,
+  boilerV2GenerateAction,
+  type BoilerV2LoadedState,
+  type BoilerV2VersionRow,
 } from "@/lib/actions/boiler-v2";
 import type { RendererProps } from "./registry";
+import { ColorPopover } from "./color-popover";
+
+/**
+ * Common shape passed to every interactive sub-component so they can fire
+ * the server actions + invalidate the TanStack Query that owns the v2 state.
+ * Kept tight — UI sub-components don't need the full RendererProps.
+ */
+interface BoilerV2InteractionContext {
+  /** The manifestation child id — what every mutation server action targets. */
+  signalId: string;
+  /** The parent's shortcode — used by revalidatePath on the workspace route. */
+  shortcode: string;
+  /** Imperative refetch (TanStack Query invalidation) for fast UI sync. */
+  invalidate: () => void;
+}
 
 /**
  * BOILER v2 Renderer — Phase 11D.4.
@@ -61,7 +83,8 @@ const TIER_LABELS: Record<TierKey, { label: string; cost: string }> = {
 // ─── Top-level component ─────────────────────────────────────────────
 
 export function BoilerV2(props: BoilerV2RendererProps) {
-  const { activeManifestation, boilerV2State } = props;
+  const { signal, activeManifestation, boilerV2State } = props;
+  const queryClient = useQueryClient();
 
   // Guard: no manifestation selected (parent workspace)
   if (!activeManifestation) {
@@ -77,10 +100,27 @@ export function BoilerV2(props: BoilerV2RendererProps) {
     );
   }
 
+  // Shared mutation context every interactive sub-component needs. signalId
+  // targets the manifestation child (where design_versions live); shortcode
+  // is the parent's (the URL route) for revalidatePath.
+  const ctx: BoilerV2InteractionContext = {
+    signalId: activeManifestation.id,
+    shortcode: signal.shortcode,
+    invalidate: () =>
+      queryClient.invalidateQueries({
+        queryKey: ["boiler-v2-state", activeManifestation.id],
+      }),
+  };
+
   // Empty state — no design_versions yet
   const hasAnyVersion = (boilerV2State?.visibleVersions.length ?? 0) > 0;
   if (!boilerV2State || !hasAnyVersion) {
-    return <BoilerV2EmptyState shortcode={activeManifestation.shortcode} />;
+    return (
+      <BoilerV2EmptyState
+        shortcode={activeManifestation.shortcode}
+        ctx={ctx}
+      />
+    );
   }
 
   return (
@@ -88,14 +128,43 @@ export function BoilerV2(props: BoilerV2RendererProps) {
       {/* CENTER + RIGHT only — LEFT is the workspace's existing OrcPanel,
           wired in by the workspace shell at a higher level. */}
       <BoilerV2Canvas state={boilerV2State} />
-      <BoilerV2SidePanel state={boilerV2State} />
+      <BoilerV2SidePanel state={boilerV2State} ctx={ctx} />
     </div>
   );
 }
 
 // ─── Empty state ─────────────────────────────────────────────────────
 
-function BoilerV2EmptyState({ shortcode }: { shortcode: string }) {
+function BoilerV2EmptyState({
+  shortcode,
+  ctx,
+}: {
+  shortcode: string;
+  ctx: BoilerV2InteractionContext;
+}) {
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const [tier, setTier] = useState<"low" | "medium" | "high">("low");
+
+  const fire = () => {
+    setError(null);
+    startTransition(async () => {
+      const r = await boilerV2GenerateAction({
+        signalId: ctx.signalId,
+        shortcode: ctx.shortcode,
+        tier,
+      });
+      if (!r.success) {
+        setError(r.message);
+        return;
+      }
+      ctx.invalidate();
+    });
+  };
+
+  const tierCost = tier === "low" ? "$0.006" : tier === "medium" ? "$0.053" : "$0.211";
+  const tierEta = tier === "low" ? "15-25s" : tier === "medium" ? "30-60s" : "60-120s";
+
   return (
     <div className="rounded-md border border-rule-2 bg-wash-1 p-12 text-center">
       <div className="mb-3 font-mono text-[10px] tracking-[0.24em] text-t4 uppercase">
@@ -103,12 +172,70 @@ function BoilerV2EmptyState({ shortcode }: { shortcode: string }) {
       </div>
       <div className="mb-2 font-display text-t1 text-lg">No design yet</div>
       <div className="mb-6 mx-auto max-w-md font-display text-t3 text-sm leading-relaxed">
-        Ask ORC to <code className="font-mono text-[12px] text-t1">generate the first draft</code> in the chat panel.
-        ORC will run gpt-image-1 at low tier ($0.006) and put the result on the canvas.
+        Generate the first draft from FURNACE&apos;s brief — gpt-image-1 produces a
+        transparent-PNG flat artwork. Or ask ORC in the chat panel
+        (<code className="font-mono text-[12px] text-t1">generate the first draft</code>).
       </div>
-      <div className="mx-auto inline-flex items-center gap-2 rounded-sm border border-rule-2 bg-wash-2 px-4 py-2 font-mono text-[10px] tracking-[0.18em] text-t4 uppercase">
-        <span>BOILER · Awaiting first generation</span>
+
+      {/* Tier selector (low / medium / high) */}
+      <div className="mb-4 inline-flex gap-[2px] rounded-sm border border-rule-2 p-[2px]">
+        {(["low", "medium", "high"] as const).map((t) => (
+          <button
+            key={t}
+            type="button"
+            onClick={() => setTier(t)}
+            disabled={pending}
+            className={`rounded-[2px] px-3 py-1.5 font-mono text-[9.5px] tracking-[0.18em] uppercase transition-colors disabled:cursor-not-allowed ${
+              tier === t ? "" : "text-t4 hover:text-t2"
+            }`}
+            style={
+              tier === t
+                ? {
+                    color: "rgba(var(--d), 1)",
+                    background: "rgba(var(--d), 0.14)",
+                  }
+                : undefined
+            }
+          >
+            {t}
+          </button>
+        ))}
       </div>
+
+      <div>
+        <button
+          type="button"
+          onClick={fire}
+          disabled={pending}
+          className="cursor-pointer rounded-sm border-[1.5px] px-5 py-3 font-mono text-[10px] tracking-[0.2em] uppercase transition-all disabled:cursor-not-allowed disabled:opacity-50"
+          style={{
+            borderColor: "rgba(var(--d), 0.75)",
+            background: "rgba(var(--d), 0.14)",
+            color: "rgba(var(--d), 1)",
+          }}
+        >
+          {pending
+            ? "Firing generation…"
+            : `Generate first draft · ${tier} · ${tierCost}`}
+        </button>
+        <div className="mt-2 font-mono text-[9.5px] tracking-[0.14em] text-t5 uppercase">
+          ETA · {tierEta} · result lands on canvas via realtime
+        </div>
+      </div>
+
+      {error && (
+        <div
+          role="alert"
+          className="mx-auto mt-5 max-w-md rounded-sm border px-3 py-2 font-mono text-[10px] leading-relaxed"
+          style={{
+            borderColor: "rgba(140, 74, 40, 0.6)",
+            color: "rgba(200, 137, 61, 1)",
+            background: "rgba(140, 74, 40, 0.08)",
+          }}
+        >
+          {error}
+        </div>
+      )}
     </div>
   );
 }
@@ -442,7 +569,13 @@ function VersionStrip({
 
 // ─── Side panel (right column) ───────────────────────────────────────
 
-function BoilerV2SidePanel({ state }: { state: BoilerV2LoadedState }) {
+function BoilerV2SidePanel({
+  state,
+  ctx,
+}: {
+  state: BoilerV2LoadedState;
+  ctx: BoilerV2InteractionContext;
+}) {
   const palette =
     state.state?.activePaletteRoles ??
     state.activeVersion?.paletteRoles ??
@@ -476,7 +609,10 @@ function BoilerV2SidePanel({ state }: { state: BoilerV2LoadedState }) {
             click hex or chip to edit
           </span>
         </SectionLabel>
-        <PaletteRolesTable palette={palette as Record<string, string>} />
+        <PaletteRolesTable
+          palette={palette as Record<string, string>}
+          ctx={ctx}
+        />
       </div>
 
       {/* Design spec */}
@@ -488,7 +624,7 @@ function BoilerV2SidePanel({ state }: { state: BoilerV2LoadedState }) {
       {/* Action stack */}
       <div className="border-b border-rule-1 px-5 py-4">
         <SectionLabel>Actions</SectionLabel>
-        <ActionStack state={state} />
+        <ActionStack state={state} ctx={ctx} />
       </div>
 
       {/* Verifier verdict (read-only display of current active version's verdict) */}
@@ -515,42 +651,124 @@ const PALETTE_ROLE_LABELS: Record<string, string> = {
   back_ink: "Back ink",
 };
 
-function PaletteRolesTable({ palette }: { palette: Record<string, string> }) {
+function PaletteRolesTable({
+  palette,
+  ctx,
+}: {
+  palette: Record<string, string>;
+  ctx: BoilerV2InteractionContext;
+}) {
   const roles = useMemo(
     () => ["garment_base", "ring_outer", "ring_inner", "front_ink", "back_ink"],
     [],
   );
+  const [openRole, setOpenRole] = useState<string | null>(null);
+  const [pendingRole, setPendingRole] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  // Locally-optimistic palette so the chip updates immediately on commit
+  // (TanStack invalidate triggers a refetch in the background to confirm).
+  const [optimistic, setOptimistic] = useState<Record<string, string>>({});
+  const effective = { ...palette, ...optimistic };
+
+  const commit = useCallback(
+    async (role: string, hex: string) => {
+      setError(null);
+      setPendingRole(role);
+      setOptimistic((p) => ({ ...p, [role]: hex }));
+      try {
+        const r = await boilerV2SetColorAction({
+          signalId: ctx.signalId,
+          shortcode: ctx.shortcode,
+          role,
+          hex,
+        });
+        if (!r.success) {
+          setError(`${role}: ${r.message}`);
+          setOptimistic((p) => {
+            const { [role]: _, ...rest } = p;
+            return rest;
+          });
+        } else {
+          ctx.invalidate();
+        }
+      } catch (e) {
+        setError(`${role}: ${e instanceof Error ? e.message : String(e)}`);
+        setOptimistic((p) => {
+          const { [role]: _, ...rest } = p;
+          return rest;
+        });
+      } finally {
+        setPendingRole(null);
+      }
+    },
+    [ctx],
+  );
+
   return (
     <div>
       {roles.map((role) => {
-        const hex = palette[role] ?? "—";
+        const hex = effective[role] ?? "—";
         const label = PALETTE_ROLE_LABELS[role];
+        const isOpen = openRole === role;
+        const isPending = pendingRole === role;
+        const validHex = /^#[0-9a-fA-F]{6}$/u.test(hex);
         return (
           <div
             key={role}
-            className="flex items-center gap-2.5 border-b border-rule-1 py-1.5 last:border-b-0"
+            className="relative flex items-center gap-2.5 border-b border-rule-1 py-1.5 last:border-b-0"
           >
             <button
-              className="h-3.5 w-3.5 flex-shrink-0 rounded-[2px] border border-rule-2 transition-transform hover:scale-[1.15]"
-              style={{ backgroundColor: hex }}
+              type="button"
+              onClick={() => setOpenRole(isOpen ? null : role)}
+              disabled={isPending || !validHex}
+              className="h-3.5 w-3.5 flex-shrink-0 cursor-pointer rounded-[2px] border border-rule-2 transition-transform hover:scale-[1.15] disabled:cursor-not-allowed disabled:opacity-50"
+              style={{ backgroundColor: validHex ? hex : "transparent" }}
               title={`Edit ${label}`}
-              // TODO 11D.4d: open color popover, call boiler_v2_set_color
-              disabled
+              aria-label={`Edit ${label}`}
+              aria-haspopup="dialog"
+              aria-expanded={isOpen}
             />
             <div className="flex-1 font-mono text-[9.5px] tracking-[0.14em] text-t4 uppercase">
               {label}
             </div>
             <button
-              className="rounded-[2px] border border-transparent px-1.5 py-0.5 font-mono text-[10px] tracking-[0.04em] text-t2 transition-all hover:border-rule-2 hover:bg-wash-1 hover:text-t1"
+              type="button"
+              onClick={() => setOpenRole(isOpen ? null : role)}
+              disabled={isPending || !validHex}
+              className="rounded-[2px] border border-transparent px-1.5 py-0.5 font-mono text-[10px] tracking-[0.04em] text-t2 transition-all hover:border-rule-2 hover:bg-wash-1 hover:text-t1 disabled:cursor-not-allowed disabled:opacity-50"
               title={`Edit ${label}`}
-              // TODO 11D.4d
-              disabled
+              aria-haspopup="dialog"
+              aria-expanded={isOpen}
             >
-              {hex.toUpperCase()}
+              {isPending ? "…" : (hex.toUpperCase ? hex.toUpperCase() : hex)}
             </button>
+            {isOpen && validHex && (
+              <ColorPopover
+                open
+                onClose={() => setOpenRole(null)}
+                currentHex={hex}
+                roleLabel={label}
+                onCommit={(next) => commit(role, next)}
+                pending={isPending}
+              />
+            )}
           </div>
         );
       })}
+      {error && (
+        <div
+          role="alert"
+          className="mt-2 rounded-sm border px-2 py-1.5 font-mono text-[9.5px] leading-tight"
+          style={{
+            borderColor: "rgba(140, 74, 40, 0.6)",
+            color: "rgba(200, 137, 61, 1)",
+            background: "rgba(140, 74, 40, 0.08)",
+          }}
+        >
+          {error}
+        </div>
+      )}
     </div>
   );
 }
@@ -593,16 +811,68 @@ function DesignSpecTable({ version }: { version: BoilerV2VersionRow | null }) {
   );
 }
 
-function ActionStack({ state }: { state: BoilerV2LoadedState }) {
+type ActionKey = "finalize" | "approve" | "branch" | "discard";
+
+function ActionStack({
+  state,
+  ctx,
+}: {
+  state: BoilerV2LoadedState;
+  ctx: BoilerV2InteractionContext;
+}) {
   const hasActive = !!state.activeVersion;
   const hasFinalized = !!state.finalizedVersion;
   const finalized = state.state?.finalized ?? false;
+  const activeVersionId = state.activeVersion?.id ?? null;
+
+  // Per-action loading + last-error. Only one action runs at a time
+  // (clicking a second disables the rest for the duration via `running`).
+  const [running, setRunning] = useState<ActionKey | null>(null);
+  const [error, setError] = useState<{ key: ActionKey; message: string } | null>(
+    null,
+  );
+
+  const run = useCallback(
+    async <T extends ActionKey>(
+      key: T,
+      action: () => Promise<{ success: true } | { success: false; message: string }>,
+    ) => {
+      setRunning(key);
+      setError(null);
+      try {
+        const r = await action();
+        if (!r.success) {
+          setError({ key, message: r.message });
+        } else {
+          ctx.invalidate();
+        }
+      } catch (e) {
+        setError({
+          key,
+          message: e instanceof Error ? e.message : String(e),
+        });
+      } finally {
+        setRunning(null);
+      }
+    },
+    [ctx],
+  );
+
+  const disableAll = running !== null || finalized;
 
   return (
     <div className="flex flex-col gap-2">
       <button
-        disabled={!hasActive || finalized}
-        // TODO 11D.4d: fire boiler.v2.generate with mode=finalize
+        type="button"
+        disabled={!hasActive || disableAll}
+        onClick={() =>
+          run("finalize", () =>
+            boilerV2FinalizeAction({
+              signalId: ctx.signalId,
+              shortcode: ctx.shortcode,
+            }),
+          )
+        }
         className="cursor-pointer rounded-sm border-[1.5px] px-3 py-3 font-mono text-[10px] tracking-[0.2em] uppercase transition-all disabled:cursor-not-allowed disabled:opacity-40"
         style={{
           borderColor: "rgba(var(--d), 0.75)",
@@ -610,33 +880,131 @@ function ActionStack({ state }: { state: BoilerV2LoadedState }) {
           color: "rgba(var(--d), 1)",
         }}
       >
-        Finalize · High pass
+        {running === "finalize" ? "Finalizing…" : "Finalize · High pass"}
       </button>
       <button
-        disabled={!hasFinalized || finalized}
-        // TODO 11D.4d: call boiler_v2_approve_and_advance
+        type="button"
+        disabled={!hasFinalized || disableAll}
+        onClick={() =>
+          run("approve", () =>
+            boilerV2ApproveAndAdvanceAction({
+              signalId: ctx.signalId,
+              shortcode: ctx.shortcode,
+            }),
+          )
+        }
         className="cursor-pointer rounded-sm border border-rule-2 px-3 py-2.5 font-mono text-[9.5px] tracking-[0.18em] text-t3 uppercase transition-all hover:border-rule-3 hover:text-t1 disabled:cursor-not-allowed disabled:opacity-40"
       >
-        {finalized ? "Approved · advanced to ENGINE" : "Approve & advance to ENGINE"}
+        {finalized
+          ? "Approved · advanced to ENGINE"
+          : running === "approve"
+            ? "Approving…"
+            : "Approve & advance to ENGINE"}
       </button>
       <button
-        disabled={!hasActive}
-        // TODO 11D.4d: fire boiler.v2.generate with mode=branch
+        type="button"
+        disabled={!hasActive || !activeVersionId || running !== null}
+        onClick={() => {
+          if (!activeVersionId) return;
+          void run("branch", () =>
+            boilerV2BranchAction({
+              signalId: ctx.signalId,
+              shortcode: ctx.shortcode,
+              fromVersionId: activeVersionId,
+              tier: "medium",
+            }),
+          );
+        }}
         className="cursor-pointer rounded-sm border border-rule-2 px-3 py-2.5 font-mono text-[9.5px] tracking-[0.18em] text-t3 uppercase transition-all hover:border-rule-3 hover:text-t1 disabled:cursor-not-allowed disabled:opacity-40"
       >
-        Branch new version
+        {running === "branch"
+          ? "Branching…"
+          : "Branch from active · Medium · $0.053"}
       </button>
-      <button
-        disabled={!hasActive || finalized}
-        // TODO 11D.4d: call boiler_v2_discard_version (guarded — can't discard active)
-        className="cursor-pointer rounded-sm border border-rule-2 px-3 py-2.5 font-mono text-[9.5px] tracking-[0.18em] text-t3 uppercase transition-all hover:border-rule-3 hover:text-t1 disabled:cursor-not-allowed disabled:opacity-40"
-      >
-        Discard current version
-      </button>
+      <DiscardButton
+        state={state}
+        ctx={ctx}
+        running={running}
+        run={run}
+        disabledExtra={finalized}
+      />
       <div className="mt-1 font-mono text-[9.5px] leading-relaxed tracking-[0.04em] text-t5">
-        Finalize re-runs the active design at High tier ($0.211) for the canonical artwork. Approve advances to ENGINE Step 1.
+        Finalize re-runs the active design at High tier ($0.211) for canonical artwork. Approve advances to ENGINE Step 1. Branch forks a parallel exploration. Discard soft-deletes a non-active, non-finalized version.
       </div>
+      {error && (
+        <div
+          role="alert"
+          className="mt-2 rounded-sm border px-2 py-1.5 font-mono text-[10px] leading-snug"
+          style={{
+            borderColor: "rgba(140, 74, 40, 0.6)",
+            color: "rgba(200, 137, 61, 1)",
+            background: "rgba(140, 74, 40, 0.08)",
+          }}
+        >
+          <span className="uppercase tracking-[0.14em] mr-1">{error.key}:</span>
+          {error.message}
+        </div>
+      )}
     </div>
+  );
+}
+
+/** Discard targets a specific version from the history — picks the
+ *  oldest non-active, non-finalized, non-discarded version as the default
+ *  target. The action guards server-side so this is a UX nicety, not the
+ *  authoritative gate. */
+function DiscardButton({
+  state,
+  ctx,
+  running,
+  run,
+  disabledExtra,
+}: {
+  state: BoilerV2LoadedState;
+  ctx: BoilerV2InteractionContext;
+  running: ActionKey | null;
+  run: <T extends ActionKey>(
+    key: T,
+    action: () => Promise<
+      { success: true } | { success: false; message: string }
+    >,
+  ) => Promise<void>;
+  disabledExtra: boolean;
+}) {
+  // First discardable version = oldest visible that isn't active or finalized.
+  const target = useMemo(() => {
+    const activeId = state.state?.activeVersionId;
+    const finalizedId = state.state?.finalizedVersionId;
+    return [...state.visibleVersions]
+      .reverse()
+      .find((v) => v.id !== activeId && v.id !== finalizedId);
+  }, [state.visibleVersions, state.state]);
+
+  const disabled = !target || running !== null || disabledExtra;
+
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={() => {
+        if (!target) return;
+        void run("discard", () =>
+          boilerV2DiscardVersionAction({
+            signalId: ctx.signalId,
+            shortcode: ctx.shortcode,
+            versionId: target.id,
+          }),
+        );
+      }}
+      title={
+        target
+          ? `Discard oldest non-active version (${target.id.slice(0, 8)}…)`
+          : "No discardable version (only active + finalized exist)"
+      }
+      className="cursor-pointer rounded-sm border border-rule-2 px-3 py-2.5 font-mono text-[9.5px] tracking-[0.18em] text-t3 uppercase transition-all hover:border-rule-3 hover:text-t1 disabled:cursor-not-allowed disabled:opacity-40"
+    >
+      {running === "discard" ? "Discarding…" : "Discard oldest version"}
+    </button>
   );
 }
 
