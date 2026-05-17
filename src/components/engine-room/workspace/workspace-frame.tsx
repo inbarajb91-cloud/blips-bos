@@ -145,6 +145,9 @@ export function WorkspaceFrame({
   parentRef,
   manifestationDetail,
   manifestations,
+  initialTab,
+  initialDecade,
+  boilerV2Enabled,
 }: {
   signal: typeof signals.$inferSelect;
   collection: typeof collections.$inferSelect | null;
@@ -159,6 +162,26 @@ export function WorkspaceFrame({
    *  another network round-trip. Empty on pre-STOKER and on
    *  manifestation children themselves (they redirect to the parent). */
   manifestations: ManifestationSummary[];
+  /**
+   * Phase 11D.4d.1 — server-resolved `?t=` URL param. Null when the URL
+   * had no `?t=` (so the client falls through to pickInitialTab as
+   * before). When set, SSR renders the right tab on first paint — no
+   * client-side STOKER→BOILER flash on refresh.
+   */
+  initialTab?: AgentKey | null;
+  /**
+   * Phase 11D.4d.1 — server-resolved `?m=` URL param. Null when the URL
+   * had no `?m=`; otherwise SSR renders with the right manifestation
+   * already selected.
+   */
+  initialDecade?: DecadeKey | null;
+  /**
+   * Phase 11D.4d.1 — server-resolved boiler_v2_renderer config flag for
+   * this org. Threaded down to BoilerSwitch via RendererProps so the
+   * dispatcher renders v1 or v2 on first paint without a client-side
+   * flag query (eliminates the v1-gallery flash before v2 takes over).
+   */
+  boilerV2Enabled?: boolean;
 }) {
   const states = useMemo(
     () => computeStageStates(signal.status as SignalStatus),
@@ -175,8 +198,8 @@ export function WorkspaceFrame({
   // so the initial server render uses pickInitialTab. The post-mount
   // effect below re-syncs from URL once the client is hydrated; if the
   // URL had a tab and it differs from the SSR pick, we update once.
-  const [activeTab, setActiveTabState] = useState<AgentKey>(() =>
-    readTabFromUrl() ?? pickInitialTab(states),
+  const [activeTab, setActiveTabState] = useState<AgentKey>(
+    () => initialTab ?? readTabFromUrl() ?? pickInitialTab(states),
   );
 
   // Wrapper that mirrors state -> URL whenever the user changes tabs.
@@ -299,7 +322,14 @@ export function WorkspaceFrame({
     [manifestations],
   );
 
-  const [activeDecade, setActiveDecade] = useState<DecadeKey | null>(null);
+  // Initial value uses the server-resolved `?m=` (Phase 11D.4d.1) so SSR
+  // renders the right manifestation on first paint. The post-mount
+  // useEffect below still reconciles against the visible list — if the
+  // initial decade is no longer in `visibleManifestations` (e.g. dismissed
+  // in another tab), it'll fall back to first-visible.
+  const [activeDecade, setActiveDecade] = useState<DecadeKey | null>(
+    initialDecade ?? null,
+  );
 
   // Resolve initial activeDecade once the visible list is known. The
   // null initial state is a single-frame transient — this useEffect
@@ -852,6 +882,7 @@ export function WorkspaceFrame({
                 POST_STOKER_STAGES.has(activeTab) ? activeManifestation : null
               }
               onSwitchToManifestation={switchToManifestation}
+              boilerV2Enabled={boilerV2Enabled ?? false}
             />
           </div>
         </main>

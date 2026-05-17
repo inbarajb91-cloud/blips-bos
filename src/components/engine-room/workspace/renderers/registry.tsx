@@ -89,6 +89,14 @@ export interface RendererProps {
     decade: ManifestationSummary["decade"],
     stage: AgentKey,
   ) => void;
+  /**
+   * Phase 11D.4d.1 — server-resolved boiler_v2_renderer feature flag
+   * for this org. Threaded through every renderer (most ignore it).
+   * Consumed by BoilerSwitch to dispatch between v1 and v2 on first
+   * paint, without a client-side flag query that would briefly
+   * render the legacy v1 gallery before swapping to v2.
+   */
+  boilerV2Enabled?: boolean;
 }
 
 export type Renderer = React.ComponentType<RendererProps>;
