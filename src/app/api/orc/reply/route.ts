@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, signals, agentConversations } from "@/db";
 import type { signals as signalsTable } from "@/db/schema";
@@ -113,6 +113,19 @@ export async function POST(req: Request) {
     return NextResponse.json(
       { error: "No linked profile for this session" },
       { status: 401 },
+    );
+  }
+
+  // REVIEW.md F22 (Medium): reject oversized bodies BEFORE req.json() parses
+  // them. Zod's userMessage.max(2000) only catches it post-parse — a 10 MB
+  // POST gets parsed before being rejected, wasting CPU + memory. Combined
+  // with the 30 req/min limit, a single user could shed serverless memory.
+  // 16 KB covers a 2k userMessage + UUIDs + JSON envelope with generous margin.
+  const contentLength = parseInt(req.headers.get("content-length") ?? "0", 10);
+  if (contentLength > 16_000) {
+    return NextResponse.json(
+      { error: "Request body too large", limit: 16_000 },
+      { status: 413 },
     );
   }
 
@@ -446,8 +459,9 @@ export async function POST(req: Request) {
         // inline it here rather than creating a new server action
         // because this is the only caller — factoring out would
         // add surface area without reuse benefit.
+        // REVIEW.md F8 (High): removed `const { sql } = await import("drizzle-orm")`
+        // dead-weight dynamic import — `sql` is now imported statically at the top.
         const orcMessageJson = JSON.stringify(orcMessage);
-        const { sql } = await import("drizzle-orm");
         await db.execute(sql`
           UPDATE agent_conversations AS ac
           SET messages = ac.messages || jsonb_build_array(${orcMessageJson}::jsonb),

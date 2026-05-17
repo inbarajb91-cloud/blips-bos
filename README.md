@@ -8,14 +8,9 @@ BLIPS Brand Operating System — the internal platform that powers BLIPS's produ
 
 BOS is a web application that runs BLIPS's operations. Its first module, the **Engine Room**, is an AI-powered product design pipeline: cultural signals enter one end, finished products (tech packs, vendor briefs) come out the other.
 
-See the project docs at `/Users/inbaraj/Downloads/Blipsstores/`:
-- `CLAUDE.md` — project entry point
-- `CONTEXT.md` — current state
-- `MEMORY.md` — decision log
-- `ARCHITECTURE.md` — technical architecture
-- `DESIGN.md` — UI/UX direction (Ink design system)
-- `STACK.md` — every tool explained in plain language
-- `REVIEWS.md` — post-phase reviews
+Project docs (CLAUDE.md / CONTEXT.md / MEMORY.md / ARCHITECTURE.md / DESIGN.md / STACK.md / REVIEWS.md) live in the team's internal workspace, mirrored to Google Drive `BOS/DEVELOPMENT/`. The Notion build plan ([BLIPS — BOS Build Project](https://www.notion.so/348df0e1f1b581769c60d81213e4f8e3)) carries the phase-by-phase build narrative.
+
+> REVIEW.md F29 (Low): this section used to list absolute paths on one machine. New contributors clone and the paths don't resolve. Replaced with the Notion link + Drive-mirror note.
 
 ## Tech stack
 
