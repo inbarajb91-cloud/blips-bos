@@ -1,6 +1,6 @@
 "use server";
 
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, like, or, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import {
   db,
@@ -532,11 +532,26 @@ export async function addStokerManifestation(opts: {
   // (e.g. VOTER-RCK). If parent has 99 collisions on this base
   // (won't happen in practice), resolveShortcode falls back to a
   // random suffix — see signals/resolve-shortcode.ts.
+  //
+  // REVIEW.md F13 (High): previously SELECT'd every shortcode in the
+  // org (~12 today, would grow to 2-3 MB roundtrip at 10k signals).
+  // Use the same scoped LIKE pattern as candidates.ts
+  // resolveAvailableShortcode — only collisions on this specific base
+  // matter, and at most ~10 collisions exist per base under normal use.
+  // Targeted query stays O(collisions), not O(org).
   const baseShortcode = `${parent.shortcode}-${opts.decade}`;
   const takenRows = await db
     .select({ shortcode: signalsTable.shortcode })
     .from(signalsTable)
-    .where(eq(signalsTable.orgId, user.orgId));
+    .where(
+      and(
+        eq(signalsTable.orgId, user.orgId),
+        or(
+          eq(signalsTable.shortcode, baseShortcode),
+          like(signalsTable.shortcode, `${baseShortcode}-%`),
+        ),
+      ),
+    );
   const taken = new Set(takenRows.map((r) => r.shortcode));
   const childShortcode = resolveShortcode(baseShortcode, taken);
 
