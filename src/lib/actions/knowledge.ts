@@ -525,13 +525,20 @@ async function syncToSupermemory(params: {
   try {
     const memory = await getMemoryBackend();
 
-    // Forget the prior version so it doesn't linger in recall.
-    if (params.previousSupermemoryId) {
-      await memory.forget(params.previousSupermemoryId);
-    }
-
-    // Write fresh. The 'note' kind is generic; the container='knowledge'
-    // is what tells ORC this is curated reference material.
+    // REVIEW.md F14 (High): the original order was forget-old → remember-new
+    // → update-doc.supermemoryId outside any guard. Under concurrent edits,
+    // both writers could snapshot the same previousSupermemoryId; the first
+    // forgets it + creates B; the second forgets the already-forgotten id +
+    // creates C; the second's UPDATE overwrites the first's, leaving B
+    // orphaned in supermemory.
+    //
+    // New order: remember-new FIRST (get its id), then atomically swap the
+    // doc's supermemoryId WITH a version-equals-X guard. If the guard
+    // succeeds (we're the canonical sync for this version), then forget the
+    // OLD id. If the guard fails (a newer sync ran in between), forget the
+    // NEW id we just created (it's now orphaned) and bail. The DB transaction
+    // is implicit per single statement — the UPDATE's WHERE clause IS the
+    // atomicity guarantee; no multi-statement tx needed.
     const result = await memory.remember({
       orgId: params.orgId,
       container: "knowledge",
@@ -548,16 +555,57 @@ async function syncToSupermemory(params: {
       },
     });
 
-    if (result.id) {
-      await db
-        .update(knowledgeDocuments)
-        .set({ supermemoryId: result.id })
-        .where(
-          and(
-            eq(knowledgeDocuments.id, params.documentId),
-            eq(knowledgeDocuments.orgId, params.orgId),
-          ),
+    if (!result.id) {
+      // Supermemory remember returned no id (transient error swallowed by
+      // the backend wrapper). Nothing to update; the doc keeps its previous
+      // supermemoryId pointing at the prior version which is still in
+      // supermemory. Better than orphaning.
+      console.warn(
+        "[knowledge] supermemory remember returned no id; skipping doc update + forget",
+      );
+      return;
+    }
+
+    // Atomic swap with version idempotency guard. Only land the new
+    // supermemoryId if currentVersion still matches what we synced — i.e.
+    // no other writer has bumped the version between our remember() and now.
+    const claimed = await db
+      .update(knowledgeDocuments)
+      .set({ supermemoryId: result.id })
+      .where(
+        and(
+          eq(knowledgeDocuments.id, params.documentId),
+          eq(knowledgeDocuments.orgId, params.orgId),
+          eq(knowledgeDocuments.currentVersion, params.version),
+        ),
+      )
+      .returning({ id: knowledgeDocuments.id });
+
+    if (claimed.length === 0) {
+      // A newer version was synced in between. Our remembered content is now
+      // orphaned — forget it so it doesn't linger in recall.
+      try {
+        await memory.forget(result.id);
+      } catch (err) {
+        console.error(
+          "[knowledge] failed to forget orphaned supermemory entry after version race:",
+          err,
         );
+      }
+      return;
+    }
+
+    // We won the race for this version. Now safe to forget the previous id —
+    // we know our supermemoryId is the canonical pointer for this doc.
+    if (params.previousSupermemoryId) {
+      try {
+        await memory.forget(params.previousSupermemoryId);
+      } catch (err) {
+        console.error(
+          "[knowledge] failed to forget previous supermemory entry:",
+          err,
+        );
+      }
     }
   } catch (err) {
     // Don't propagate — the Postgres write already landed. Log so
