@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useTransition, useCallback } from "react";
+import { useState, useMemo, useTransition, useCallback, useEffect, useRef } from "react";
 import Image from "next/image";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -15,6 +15,7 @@ import {
 } from "@/lib/actions/boiler-v2";
 import type { RendererProps } from "./registry";
 import { ColorPopover } from "./color-popover";
+import { BoilerV2Realtime } from "./boiler-v2-realtime";
 
 /**
  * Common shape passed to every interactive sub-component so they can fire
@@ -28,6 +29,12 @@ interface BoilerV2InteractionContext {
   shortcode: string;
   /** Imperative refetch (TanStack Query invalidation) for fast UI sync. */
   invalidate: () => void;
+  /**
+   * Mark a generation as in-flight so the realtime poll fallback engages
+   * and the empty state switches from "Generate" to "Waiting for design".
+   * Auto-clears at the BoilerV2 wrapper when a new visible version lands.
+   */
+  markPending: () => void;
 }
 
 /**
@@ -86,6 +93,20 @@ export function BoilerV2(props: BoilerV2RendererProps) {
   const { signal, activeManifestation, boilerV2State } = props;
   const queryClient = useQueryClient();
 
+  // Phase 11D.4d — track "an action just fired Inngest, waiting for the
+  // design to land via realtime". Empty state swaps from "Generate" CTA
+  // to "Waiting for design (15-25s)" while this is true. Auto-clears
+  // when the visible version count grows past what we last saw.
+  const [pendingGeneration, setPendingGeneration] = useState(false);
+  const prevVersionsRef = useRef<number>(0);
+  useEffect(() => {
+    const next = boilerV2State?.visibleVersions.length ?? 0;
+    if (next > prevVersionsRef.current) {
+      setPendingGeneration(false);
+    }
+    prevVersionsRef.current = next;
+  }, [boilerV2State?.visibleVersions.length]);
+
   // Guard: no manifestation selected (parent workspace)
   if (!activeManifestation) {
     return (
@@ -110,26 +131,40 @@ export function BoilerV2(props: BoilerV2RendererProps) {
       queryClient.invalidateQueries({
         queryKey: ["boiler-v2-state", activeManifestation.id],
       }),
+    markPending: () => setPendingGeneration(true),
   };
 
   // Empty state — no design_versions yet
   const hasAnyVersion = (boilerV2State?.visibleVersions.length ?? 0) > 0;
   if (!boilerV2State || !hasAnyVersion) {
     return (
-      <BoilerV2EmptyState
-        shortcode={activeManifestation.shortcode}
-        ctx={ctx}
-      />
+      <>
+        <BoilerV2Realtime
+          signalId={activeManifestation.id}
+          pendingGeneration={pendingGeneration}
+        />
+        <BoilerV2EmptyState
+          shortcode={activeManifestation.shortcode}
+          ctx={ctx}
+          pendingGeneration={pendingGeneration}
+        />
+      </>
     );
   }
 
   return (
-    <div className="grid h-[820px] grid-cols-[1fr_320px] gap-0 overflow-hidden rounded-md border border-rule-2 bg-ink-warm">
-      {/* CENTER + RIGHT only — LEFT is the workspace's existing OrcPanel,
-          wired in by the workspace shell at a higher level. */}
-      <BoilerV2Canvas state={boilerV2State} />
-      <BoilerV2SidePanel state={boilerV2State} ctx={ctx} />
-    </div>
+    <>
+      <BoilerV2Realtime
+        signalId={activeManifestation.id}
+        pendingGeneration={pendingGeneration}
+      />
+      <div className="grid h-[820px] grid-cols-[1fr_320px] gap-0 overflow-hidden rounded-md border border-rule-2 bg-ink-warm">
+        {/* CENTER + RIGHT only — LEFT is the workspace's existing OrcPanel,
+            wired in by the workspace shell at a higher level. */}
+        <BoilerV2Canvas state={boilerV2State} />
+        <BoilerV2SidePanel state={boilerV2State} ctx={ctx} />
+      </div>
+    </>
   );
 }
 
@@ -138,9 +173,11 @@ export function BoilerV2(props: BoilerV2RendererProps) {
 function BoilerV2EmptyState({
   shortcode,
   ctx,
+  pendingGeneration,
 }: {
   shortcode: string;
   ctx: BoilerV2InteractionContext;
+  pendingGeneration: boolean;
 }) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -149,21 +186,66 @@ function BoilerV2EmptyState({
   const fire = () => {
     setError(null);
     startTransition(async () => {
-      const r = await boilerV2GenerateAction({
-        signalId: ctx.signalId,
-        shortcode: ctx.shortcode,
-        tier,
-      });
-      if (!r.success) {
-        setError(r.message);
-        return;
+      try {
+        const r = await boilerV2GenerateAction({
+          signalId: ctx.signalId,
+          shortcode: ctx.shortcode,
+          tier,
+        });
+        if (!r.success) {
+          setError(r.message);
+          return;
+        }
+        // Tell parent we fired — realtime poll fallback engages,
+        // empty state swaps to "Waiting for design".
+        ctx.markPending();
+        ctx.invalidate();
+      } catch (e) {
+        // useTransition swallows thrown rejections; catch + surface so
+        // the founder sees what happened (auth fail, no journey, network).
+        setError(e instanceof Error ? e.message : String(e));
       }
-      ctx.invalidate();
     });
   };
 
   const tierCost = tier === "low" ? "$0.006" : tier === "medium" ? "$0.053" : "$0.211";
   const tierEta = tier === "low" ? "15-25s" : tier === "medium" ? "30-60s" : "60-120s";
+
+  // Phase 11D.4d.1 — "we just fired, watching for design" mode. Replaces
+  // the Generate button while a generation is in flight so the founder
+  // sees clear status instead of a button that looks the same as before
+  // they clicked it. Realtime invalidate clears pendingGeneration when
+  // the new design_versions row lands.
+  if (pendingGeneration) {
+    return (
+      <div className="rounded-md border border-rule-2 bg-wash-1 p-12 text-center">
+        <div className="mb-3 font-mono text-[10px] tracking-[0.24em] text-t4 uppercase">
+          BOILER v2 · {shortcode}
+        </div>
+        <div className="mb-2 font-display text-t1 text-lg">Waiting for first design</div>
+        <div className="mb-6 mx-auto max-w-md font-display text-t3 text-sm leading-relaxed">
+          gpt-image-1 is generating · result lands on canvas via realtime · 6s poll fallback.
+        </div>
+        <div className="mx-auto inline-flex items-center gap-3 rounded-sm border px-4 py-3 font-mono text-[10px] tracking-[0.18em] uppercase"
+          style={{
+            borderColor: "rgba(var(--d), 0.6)",
+            color: "rgba(var(--d), 1)",
+            background: "rgba(var(--d), 0.08)",
+          }}
+        >
+          <span
+            aria-hidden
+            className="inline-block h-2 w-2 rounded-full animate-pulse"
+            style={{ background: "rgba(var(--d), 1)" }}
+          />
+          Watching for design_versions insert
+        </div>
+        <div className="mt-3 font-mono text-[9.5px] tracking-[0.14em] text-t5 uppercase">
+          ETA · {tierEta}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="rounded-md border border-rule-2 bg-wash-1 p-12 text-center">
@@ -836,6 +918,7 @@ function ActionStack({
     async <T extends ActionKey>(
       key: T,
       action: () => Promise<{ success: true } | { success: false; message: string }>,
+      opts: { markPending?: boolean } = {},
     ) => {
       setRunning(key);
       setError(null);
@@ -843,9 +926,14 @@ function ActionStack({
         const r = await action();
         if (!r.success) {
           setError({ key, message: r.message });
-        } else {
-          ctx.invalidate();
+          return;
         }
+        // Long-running Inngest actions (finalize, branch) — tell parent
+        // we're waiting so realtime poll fallback engages until the new
+        // design_versions row lands. Short DB-only actions (approve,
+        // discard) just need an invalidate.
+        if (opts.markPending) ctx.markPending();
+        ctx.invalidate();
       } catch (e) {
         setError({
           key,
@@ -866,11 +954,14 @@ function ActionStack({
         type="button"
         disabled={!hasActive || disableAll}
         onClick={() =>
-          run("finalize", () =>
-            boilerV2FinalizeAction({
-              signalId: ctx.signalId,
-              shortcode: ctx.shortcode,
-            }),
+          run(
+            "finalize",
+            () =>
+              boilerV2FinalizeAction({
+                signalId: ctx.signalId,
+                shortcode: ctx.shortcode,
+              }),
+            { markPending: true },
           )
         }
         className="cursor-pointer rounded-sm border-[1.5px] px-3 py-3 font-mono text-[10px] tracking-[0.2em] uppercase transition-all disabled:cursor-not-allowed disabled:opacity-40"
@@ -906,13 +997,16 @@ function ActionStack({
         disabled={!hasActive || !activeVersionId || running !== null}
         onClick={() => {
           if (!activeVersionId) return;
-          void run("branch", () =>
-            boilerV2BranchAction({
-              signalId: ctx.signalId,
-              shortcode: ctx.shortcode,
-              fromVersionId: activeVersionId,
-              tier: "medium",
-            }),
+          void run(
+            "branch",
+            () =>
+              boilerV2BranchAction({
+                signalId: ctx.signalId,
+                shortcode: ctx.shortcode,
+                fromVersionId: activeVersionId,
+                tier: "medium",
+              }),
+            { markPending: true },
           );
         }}
         className="cursor-pointer rounded-sm border border-rule-2 px-3 py-2.5 font-mono text-[9.5px] tracking-[0.18em] text-t3 uppercase transition-all hover:border-rule-3 hover:text-t1 disabled:cursor-not-allowed disabled:opacity-40"

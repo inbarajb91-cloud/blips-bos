@@ -7,6 +7,7 @@ import {
   agentOutputs as agentOutputsTable,
 } from "@/db";
 import { getCurrentUserWithOrg } from "@/lib/auth/current-user";
+import { isBoilerV2RendererEnabled } from "@/lib/actions/boiler-v2";
 import { WorkspaceFrame } from "@/components/engine-room/workspace/workspace-frame";
 import type { DecadeKey } from "@/components/engine-room/workspace/manifestation-selector";
 import type { ParentStokerData } from "@/components/engine-room/workspace/renderers/stoker-resonance";
@@ -16,6 +17,25 @@ import type {
   ManifestationSummary,
 } from "@/components/engine-room/workspace/renderers/types";
 import type { SignalStatus } from "@/components/engine-room/stage-pips";
+import { AGENT_KEYS, type AgentKey } from "@/components/engine-room/workspace/types";
+
+// Phase 11D.4d.1 — server-side resolution of URL params so SSR renders the
+// right tab + manifestation on first paint (no client-side flash from
+// pickInitialTab landing on STOKER, then useEffect upgrading to BOILER).
+const VALID_TABS = new Set<AgentKey>(AGENT_KEYS);
+const VALID_DECADES = new Set<DecadeKey>(["RCK", "RCL", "RCD"]);
+function resolveInitialTab(t: string | string[] | undefined): AgentKey | null {
+  const raw = Array.isArray(t) ? t[0] : t;
+  if (raw && VALID_TABS.has(raw as AgentKey)) return raw as AgentKey;
+  return null;
+}
+function resolveInitialDecade(
+  m: string | string[] | undefined,
+): DecadeKey | null {
+  const raw = Array.isArray(m) ? m[0] : m;
+  if (raw && VALID_DECADES.has(raw as DecadeKey)) return raw as DecadeKey;
+  return null;
+}
 
 export const metadata = { title: "Signal · Engine Room · BLIPS BOS" };
 
@@ -48,14 +68,19 @@ export const fetchCache = "force-no-store";
  */
 export default async function SignalPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ shortcode: string }>;
+  searchParams: Promise<{ t?: string | string[]; m?: string | string[] }>;
 }) {
   const user = await getCurrentUserWithOrg();
   if (!user) redirect("/login");
 
   const { shortcode } = await params;
   const decoded = decodeURIComponent(shortcode);
+  const sp = await searchParams;
+  const initialTab = resolveInitialTab(sp.t);
+  const initialDecade = resolveInitialDecade(sp.m);
 
   const [signal] = await db
     .select()
@@ -408,6 +433,12 @@ export default async function SignalPage({
     }
   }
 
+  // Phase 11D.4d.1 — server-resolve the BOILER v2 feature flag too, so the
+  // BoilerSwitch dispatcher doesn't have to fall through the legacy gallery
+  // while a client-side flag query is in flight. Same cost as one extra DB
+  // round-trip per workspace page load; eliminates the v1→v2 flash entirely.
+  const boilerV2Enabled = await isBoilerV2RendererEnabled();
+
   return (
     <WorkspaceFrame
       signal={signal}
@@ -416,6 +447,9 @@ export default async function SignalPage({
       parentRef={parentRef}
       manifestationDetail={manifestationDetail}
       manifestations={manifestations}
+      initialTab={initialTab}
+      initialDecade={initialDecade}
+      boilerV2Enabled={boilerV2Enabled}
     />
   );
 }
