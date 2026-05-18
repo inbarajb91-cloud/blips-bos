@@ -31,7 +31,8 @@
  * Triggered by ORC tools (Phase 11D.3c) via `inngest.send({ name: 'boiler.v2.generate', data: ... })`.
  */
 
-import { and, desc, eq, ilike } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
+import { decadePlaybookSlug, WELL_KNOWN_SLUGS } from "@/lib/knowledge/slug";
 import { inngest } from "@/lib/inngest/client";
 import { db } from "@/db";
 import {
@@ -275,10 +276,11 @@ export const boilerV2Generate = inngest.createFunction(
     });
 
     // ─── 2. Recall knowledge context (decade playbook, BLIPS identity, etc.) ─
+    // REVIEW.md F12 (May 18, 2026): slug-based lookup; titles are display-only.
     const knowledgeContext = await step.run(
       "fetch-knowledge",
       async () => {
-        const fetchByTitle = async (title: string): Promise<string> => {
+        const fetchBySlug = async (slug: string): Promise<string> => {
           const [doc] = await db
             .select({ content: knowledgeDocuments.content })
             .from(knowledgeDocuments)
@@ -286,25 +288,18 @@ export const boilerV2Generate = inngest.createFunction(
               and(
                 eq(knowledgeDocuments.orgId, orgId),
                 eq(knowledgeDocuments.status, "active"),
-                ilike(knowledgeDocuments.title, title),
+                eq(knowledgeDocuments.slug, slug),
               ),
             )
             .limit(1);
           return doc?.content ?? "";
         };
 
-        const playbookTitle =
-          context.decade === "RCK"
-            ? "RCK Decade Playbook"
-            : context.decade === "RCL"
-              ? "RCL Decade Playbook"
-              : "RCD Decade Playbook";
-
         return {
-          decadePlaybook: await fetchByTitle(playbookTitle),
-          brandIdentity: await fetchByTitle("BLIPS Brand Identity"),
-          materialsVocabulary: await fetchByTitle("Materials Playbook"),
-          fashionSkills: await fetchByTitle("Fashion Design + Digital Tools Playbook"),
+          decadePlaybook: await fetchBySlug(decadePlaybookSlug(context.decade)),
+          brandIdentity: await fetchBySlug(WELL_KNOWN_SLUGS.BLIPS_BRAND_IDENTITY),
+          materialsVocabulary: await fetchBySlug(WELL_KNOWN_SLUGS.BLIPS_MATERIALS_PLAYBOOK),
+          fashionSkills: await fetchBySlug(WELL_KNOWN_SLUGS.FASHION_SKILLS),
         };
       },
     );

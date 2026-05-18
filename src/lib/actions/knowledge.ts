@@ -9,6 +9,7 @@ import {
 } from "@/db";
 import { requireFounder } from "@/lib/auth/require-founder";
 import { getMemoryBackend } from "@/lib/orc/memory";
+import { slugifyTitle } from "@/lib/knowledge/slug";
 
 /**
  * Server actions for the curated knowledge layer (Phase 8L).
@@ -226,21 +227,45 @@ export async function createKnowledgeDocument(
   }
   const tags = (input.tags ?? []).map((t) => t.trim()).filter(Boolean);
 
+  // REVIEW.md F12 (May 18, 2026): auto-derive slug from title. Pipeline
+  // stages query by slug instead of ilike(title) — slug stays stable
+  // across title renames + can't wildcard-match (no `_` / `%` ambiguity).
+  // When a slug collision exists in the same org (e.g. two docs titled
+  // "RCK Decade Playbook" attempted), the partial unique index throws;
+  // we catch + surface as a friendly error rather than a raw 23505.
+  const slug = slugifyTitle(title) || null;
+
   // Atomic: create the document row + the version-1 row in one txn.
   // If either insert fails, neither lands.
   const created = await db.transaction(async (tx) => {
-    const [docRow] = await tx
-      .insert(knowledgeDocuments)
-      .values({
-        orgId: user.orgId,
-        createdBy: user.authId,
-        title,
-        content,
-        tags,
-        status: "active",
-        currentVersion: 1,
-      })
-      .returning({ id: knowledgeDocuments.id });
+    let docRow: { id: string };
+    try {
+      const [row] = await tx
+        .insert(knowledgeDocuments)
+        .values({
+          orgId: user.orgId,
+          createdBy: user.authId,
+          title,
+          slug,
+          content,
+          tags,
+          status: "active",
+          currentVersion: 1,
+        })
+        .returning({ id: knowledgeDocuments.id });
+      docRow = row;
+    } catch (e) {
+      if (
+        e instanceof Error &&
+        "code" in e &&
+        (e as { code: string }).code === "23505"
+      ) {
+        throw new Error(
+          `A knowledge document with the slug "${slug}" already exists in this org. Pick a different title (slug is derived from title) or archive the existing one first.`,
+        );
+      }
+      throw e;
+    }
 
     await tx.insert(knowledgeDocumentVersions).values({
       documentId: docRow.id,

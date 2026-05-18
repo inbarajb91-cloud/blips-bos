@@ -10,6 +10,7 @@ import {
   decisionHistory,
 } from "@/db";
 import { getCurrentUserWithOrg } from "@/lib/auth/current-user";
+import { WELL_KNOWN_SLUGS, decadePlaybookSlug } from "@/lib/knowledge/slug";
 import {
   REQUIRED_SECTIONS,
   SECTION_BOUNDS,
@@ -528,9 +529,12 @@ export async function regenerateFullBrief(opts: {
     .limit(1);
   if (!parent) throw new Error("Parent signal missing.");
 
-  // Load knowledge context (decade playbook + BRAND.md + MATERIALS.md)
+  // Load knowledge context (decade playbook + BRAND.md + MATERIALS.md).
+  // REVIEW.md F12 (May 18, 2026): query by stable slug instead of
+  // ilike(title). Renaming a knowledge doc in the UI no longer silently
+  // breaks the pipeline; titles are display-only.
   const decade = child.manifestationDecade as "RCK" | "RCL" | "RCD";
-  const fetchByTitle = async (title: string): Promise<string> => {
+  const fetchBySlug = async (slug: string): Promise<string> => {
     const [doc] = await db
       .select({ content: knowledgeDocuments.content })
       .from(knowledgeDocuments)
@@ -538,22 +542,17 @@ export async function regenerateFullBrief(opts: {
         and(
           eq(knowledgeDocuments.orgId, user.orgId),
           eq(knowledgeDocuments.status, "active"),
-          ilike(knowledgeDocuments.title, title),
+          eq(knowledgeDocuments.slug, slug),
         ),
       )
       .limit(1);
     return doc?.content ?? "";
   };
-  const playbookTitles: Record<string, string> = {
-    RCK: "RCK Decade Playbook",
-    RCL: "RCL Decade Playbook",
-    RCD: "RCD Decade Playbook",
-  };
   const [decadePlaybook, brandIdentity, materialsVocabulary] =
     await Promise.all([
-      fetchByTitle(playbookTitles[decade]),
-      fetchByTitle("BLIPS Brand Identity"),
-      fetchByTitle("BLIPS Materials Playbook"),
+      fetchBySlug(decadePlaybookSlug(decade)),
+      fetchBySlug(WELL_KNOWN_SLUGS.BLIPS_BRAND_IDENTITY),
+      fetchBySlug(WELL_KNOWN_SLUGS.BLIPS_MATERIALS_PLAYBOOK),
     ]);
 
   // Past briefs for Tier 3 visual consistency

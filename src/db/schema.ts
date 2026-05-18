@@ -774,6 +774,16 @@ export const knowledgeDocuments = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "restrict" }),
     title: text("title").notNull(),
+    /** Stable address-by-slug for runtime pipeline lookups.
+     *  REVIEW.md F12 (May 18, 2026): decouple FURNACE/BOILER's playbook
+     *  fetches from human-typed titles. Slug is auto-derived from title
+     *  on creation via lib/knowledge/slug.ts#slugifyTitle. Nullable for
+     *  legacy / non-pipeline docs; the partial UNIQUE index excludes
+     *  NULLs so old rows don't conflict.
+     *  Migration: drizzle/0012_knowledge_documents_slug (applied via
+     *  Supabase MCP May 18). Well-known slugs the pipeline consumes
+     *  live in lib/knowledge/slug.ts#WELL_KNOWN_SLUGS. */
+    slug: text("slug"),
     content: text("content").notNull(),
     tags: text("tags").array().notNull().default(sql`'{}'::text[]`),
     status: knowledgeDocumentStatus("status").notNull().default("active"),
@@ -792,6 +802,12 @@ export const knowledgeDocuments = pgTable(
   (t) => [
     index("knowledge_documents_org_idx").on(t.orgId),
     index("knowledge_documents_org_status_idx").on(t.orgId, t.status),
+    // F12 partial UNIQUE — applied directly via MCP migration May 18
+    // (drizzle/0012_knowledge_documents_slug). Listed here for IDE
+    // visibility; Drizzle introspection picks it up on next generate.
+    uniqueIndex("knowledge_documents_org_slug_unique")
+      .on(t.orgId, t.slug)
+      .where(sql`${t.slug} IS NOT NULL`),
   ],
 );
 
