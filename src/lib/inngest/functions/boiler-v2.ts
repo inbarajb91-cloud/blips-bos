@@ -53,9 +53,24 @@ import type {
 const MAX_AUTO_RETRY_DEPTH = 2;
 
 /**
- * Default palette roles when FURNACE hasn't supplied one explicitly. The
- * RCK Season 01 Raw Industrial palette is the safest default — every cohort
- * resolves to one of the three decade palettes if FURNACE doesn't override.
+ * Canonical decade → season name mapping. Used as the `season` context
+ * string in the generate-design input.
+ *
+ * BUGFIX May 18, 2026: this used to be a hardcoded `"S01 Raw Industrial"`
+ * literal in the generate-design input below — meaning every RCL and RCD
+ * manifestation was sent to gpt-image-1 with RCK's season tag, drifting
+ * the output away from the actual decade brief. Now mapped per decade.
+ */
+const SEASON_BY_DECADE: Record<"RCK" | "RCL" | "RCD", string> = {
+  RCK: "S01 Raw Industrial",
+  RCL: "S02 Cold Cosmic",
+  RCD: "S03 Warm Reckoning",
+};
+
+/**
+ * Default palette roles when FURNACE hasn't supplied one explicitly. Each
+ * decade resolves to its own season palette (RCK → S01 Raw Industrial,
+ * RCL → S02 Cold Cosmic, RCD → S03 Warm Reckoning).
  * Real production usage: FURNACE brief schema upgrade carries hex codes.
  */
 const DEFAULT_PALETTE_BY_DECADE: Record<"RCK" | "RCL" | "RCD", PaletteRoles> = {
@@ -247,11 +262,31 @@ export const boilerV2Generate = inngest.createFunction(
         (state?.activePaletteRoles as PaletteRoles | undefined) ??
         DEFAULT_PALETTE_BY_DECADE[decade];
 
-      // Composition meta carries forward from parent (mostly stable across iterations)
+      // Composition meta carries forward from parent (mostly stable across
+      // iterations). For fresh generations (no parent), derive the front
+      // text from STOKER's framingHook — that's the canonical decade-specific
+      // editorial line for this manifestation. Falls back to signal working
+      // title (which is itself a truncated framingHook). Back text is left
+      // undefined: the prompt's formatCompositionMeta omits the back line
+      // when missing, and the verifier's expectedTexts skips falsy entries.
+      //
+      // BUGFIX May 18, 2026: this default used to be hardcoded
+      // `{ front: "AHEAD ON PAPER.", back: "BEHIND ON SOMETHING." }` (a
+      // dev-scaffold from PR #46 that survived into production). Every
+      // fresh generation on every signal sent PAPER-RCK's text to
+      // gpt-image-1, then the verifier failed because the wrong text
+      // appeared in the output, then auto-retry kept "fixing" the wrong
+      // text — producing nonsense like the upside-down wireframe ladder
+      // Inba caught on LADDER-RCL. The real production fix is the FURNACE
+      // schema upgrade carrying exactText per PIPELINE-v2.md; this stops
+      // the leak in the meantime.
+      const defaultFrontText =
+        (stokerContent.framingHook as string | undefined) ??
+        signal.workingTitle;
       const compositionMeta: CompositionMeta = parent?.compositionMeta ?? {
         exact_text: {
-          front: "AHEAD ON PAPER.",
-          back: "BEHIND ON SOMETHING.",
+          front: defaultFrontText,
+          // back: intentionally undefined — see comment above
         },
         print_spec: {
           method: "screen",
@@ -313,7 +348,7 @@ export const boilerV2Generate = inngest.createFunction(
         signalId: context.signal.id,
         shortcode: context.signal.shortcode,
         manifestationDecade: context.decade,
-        season: "S01 Raw Industrial", // TODO: read from signal_decades when populated
+        season: SEASON_BY_DECADE[context.decade],
         framingHook: context.framingHook,
       },
       furnaceBrief: {
