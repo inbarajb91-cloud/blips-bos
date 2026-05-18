@@ -120,6 +120,25 @@ CREATE POLICY "signal_locks_all" ON public.signal_locks
     signal_id IN (SELECT id FROM public.signals WHERE org_id = public.current_org_id())
   );
 
+-- ─── journeys (scoped via parent signal) ──────────────────────────
+-- F1 fix from REVIEW.md (May 17, 2026): journeys table had no RLS enabled,
+-- exposing every org's journey rows to any browser holding a valid Supabase
+-- anon key. Cross-tenant leak active the moment a second org existed.
+-- Scoped via parent signal — same pattern as signal_decades /
+-- agent_conversations / agent_outputs / signal_locks.
+-- Applied to prod via Supabase MCP migration `enable_rls_on_journeys`
+-- (May 17 evening) — this block is the durable copy for fresh DBs.
+ALTER TABLE public.journeys ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "journeys_all" ON public.journeys;
+CREATE POLICY "journeys_all" ON public.journeys
+  FOR ALL TO authenticated
+  USING (
+    signal_id IN (SELECT id FROM public.signals WHERE org_id = public.current_org_id())
+  )
+  WITH CHECK (
+    signal_id IN (SELECT id FROM public.signals WHERE org_id = public.current_org_id())
+  );
+
 -- ─── config_bos ──────────────────────────────────────────────────
 DROP POLICY IF EXISTS "config_bos_all" ON public.config_bos;
 CREATE POLICY "config_bos_all" ON public.config_bos
