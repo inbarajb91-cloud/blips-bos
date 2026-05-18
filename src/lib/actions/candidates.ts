@@ -1,6 +1,6 @@
 "use server";
 
-import { and, eq, like, or, sql } from "drizzle-orm";
+import { and, eq, inArray, like, or, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db, bunkerCandidates, collections, signals } from "@/db";
 import { getCurrentUserWithOrg } from "@/lib/auth/current-user";
@@ -175,9 +175,17 @@ export async function approveCandidate(candidateId: string) {
             and(
               eq(bunkerCandidates.id, candidateId),
               eq(bunkerCandidates.orgId, user.orgId),
-              // Accept both PENDING_REVIEW (first claim was rolled
-              // back with the failed insert) and APPROVED (first
-              // claim committed before the insert failure).
+              // REVIEW.md F2 (Critical): the retry path must accept both
+              // PENDING_REVIEW (first claim was rolled back with the failed
+              // insert) AND APPROVED (first claim committed before the
+              // insert failure) — but NEVER DISMISSED. Without this filter,
+              // a concurrent dismissCandidate landing between the failed
+              // shortcode INSERT and the retry would silently flip a
+              // DISMISSED row back to APPROVED and create a signal.
+              inArray(bunkerCandidates.status, [
+                "PENDING_REVIEW",
+                "APPROVED",
+              ]),
             ),
           )
           .returning({ id: bunkerCandidates.id });
@@ -323,15 +331,37 @@ export async function dismissCandidate(candidateId: string) {
     )
     .limit(1);
 
-  await db
+  // REVIEW.md F3 (Critical): gate dismiss on status = PENDING_REVIEW. Without
+  // this, a concurrent dismissCandidate against an APPROVED candidate (one
+  // that already has a signal in IN_BUNKER) silently flips the row to
+  // DISMISSED while the signal lives on — broken audit trail (the row says
+  // "founder rejected" while the signal says "founder approved").
+  // Symmetric with approveCandidate's status gate.
+  //
+  // REVIEW.md F15 (High): use .returning() to short-circuit the counter
+  // refresh + revalidatePath when no row actually changed. Avoids wasted
+  // DB round-trip + spurious Bridge revalidation when the candidate doesn't
+  // exist, doesn't belong to the user's org, or has already been transitioned.
+  const updated = await db
     .update(bunkerCandidates)
     .set({ status: "DISMISSED" })
     .where(
       and(
         eq(bunkerCandidates.id, candidateId),
         eq(bunkerCandidates.orgId, user.orgId),
+        eq(bunkerCandidates.status, "PENDING_REVIEW"),
       ),
+    )
+    .returning({ id: bunkerCandidates.id });
+
+  if (updated.length === 0) {
+    // No row matched — candidate missing, wrong org, or no longer pending
+    // review. Mirror approveCandidate's failure surface; caller's UI surfaces
+    // a friendly "no longer pending review" message.
+    throw new Error(
+      "Candidate is no longer pending review (may have been dismissed or approved already)",
     );
+  }
 
   if (candidate?.collectionId) {
     await db
