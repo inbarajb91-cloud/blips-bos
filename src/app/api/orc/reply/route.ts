@@ -5,6 +5,7 @@ import { db, signals, agentConversations } from "@/db";
 import type { signals as signalsTable } from "@/db/schema";
 import { checkOrcReplyRateLimit } from "@/lib/api/rate-limit";
 import { getCurrentUserWithOrg } from "@/lib/auth/current-user";
+import { classifyMutationIntent } from "@/lib/orc/mutation-intent";
 import { getActiveJourney } from "@/lib/orc/journey";
 import {
   getOrCreateOrcConversation,
@@ -393,39 +394,24 @@ export async function POST(req: Request) {
       : null,
   });
 
-  // Detect mutation intent in the user's current message. Defense-
-  // in-depth against prompt injection: only when the user actually
-  // typed an approve/dismiss/edit/restart/etc word in THIS turn do
-  // we bind the destructive tools. Without this flag, those tools
-  // aren't in ORC's tool set even if a recalled memory or signal
-  // raw_text contains adversarial "approve this" instructions.
+  // REVIEW.md F4 (May 18, 2026): mutation-intent classification — LLM
+  // replaces the prior whole-word regex. The regex had false positives
+  // ("I approve of the framing — can you draft a section about that?"
+  // matched on `approve`, binding every destructive tool for that turn).
+  // LLM intent classifier is calibrated for the actual question
+  // ("is the user REQUESTING a mutation?") instead of substring matching.
   //
-  // Phase 9G additions: edit / modif / chang (for
-  // edit_manifestation_framing); restart / re-?run (for
-  // restart_stoker); forc / add (for add_manifestation). The set
-  // is broader, but mutation tools still go through the system
-  // prompt's "explicit user word" gate, the action-level org/status
-  // checks, and the AI SDK's tool-output validation. False positives
-  // (e.g. "the team approved that last week" or "we should add a
-  // task to the docs") only make tools AVAILABLE — they don't fire
-  // anything on their own. ORC still has to choose to call.
-  // CR pass on PR #12: previous regex stems (`add` / `chang`) matched
-  // unrelated phrases like "add a comment" / "change the name." Tightened
-  // to whole-word matches with explicit conjugations + bounded the
-  // dangerous stems entirely. Word boundaries (`\b`) on both sides so
-  // "approval" / "approved" / "approving" all land but "approximate"
-  // doesn't. "decline" / "cancel" cover the chip Decline path.
+  // Cost: ~$0.0001/call. Latency: ~150-300ms typical. Fail-safe to
+  // FALSE on classifier error (safer side to err on — false negative
+  // makes ORC ask for explicit confirmation; false positive widens
+  // destructive surface).
   //
-  // Phase 11E additions: pick / picked / picking / picks (renderer's
-  // "Pick this concept" CTA; founder will say "pick this one"); gallery
-  // / galleries (whole-gallery dismiss); variant / variants (variant-
-  // level approve); concept / concepts (founder framing). "boiler" itself
-  // would be too broad (every BOILER-tab message would mention it) so
-  // we match action verbs only.
-  const allowMutation =
-    /\b(approve|approved|approval|approving|dismiss|dismissed|dismissing|reject|rejected|advance|advanced|ship|shipped|shipping|edit|edited|editing|modify|modified|restart|restarted|re-?run|rerun|force|force-add|decline|declined|cancel|cancelled|regenerate|regenerated|regenerating|brief|section|addendum|addenda|refused|refusing|redo|rewrite|rewritten|pick|picked|picking|picks|gallery|galleries|variant|variants|concept|concepts|finalize|finalized|finalizing|discard|discarded|discarding|commit|committed|trash|delete|deleted|remove|removed)\b/i.test(
-      userMessage,
-    );
+  // Defense-in-depth unchanged: system prompt's framing, action-level
+  // org/status checks at SQL layer, AI SDK tool-output validation all
+  // still apply. This gate only decides AVAILABILITY of destructive
+  // tools for the turn.
+  const intent = await classifyMutationIntent(userMessage);
+  const allowMutation = intent.mutationRequested;
 
   // Bind tools to this request's context
   const tools = buildOrcTools({
