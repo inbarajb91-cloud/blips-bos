@@ -22,12 +22,17 @@ export type { PaletteRoles, CompositionMeta, Tier, PaletteRoleName };
 
 /**
  * FURNACE brief shape consumed by BOILER. Matches the 10-section visual-design
- * brief produced by the FURNACE skill (see agents/FURNACE.md). The new fields
- * from the Phase 11D FURNACE schema upgrade (exactText, paletteRolesByName,
- * compositionRules, typographySpec, printSeparationStrategy, fullGarmentTreatment)
- * are read from BOILER's separate inputs (paletteRoles + compositionMeta) rather
- * than from this brief — keeps the FURNACE schema upgrade independent of BOILER's
- * production ship.
+ * brief produced by the FURNACE skill (see agents/FURNACE.md).
+ *
+ * Phase 11D schema upgrade (May 18, 2026): the 6 machine-readable spec fields
+ * below were added so BOILER can construct a deterministic gpt-image-1 prompt
+ * from explicit specs rather than dumping prose. The prose sections (10 above)
+ * are EDITORIAL INTENT for human review on the FURNACE tab; the spec fields
+ * (6 below) are EXACT SPECIFICATIONS for the design engine.
+ *
+ * All 6 spec fields are OPTIONAL for backward compatibility with FURNACE
+ * briefs generated before the upgrade. BOILER's prompt builder prefers
+ * explicit fields when present, falls back to prose otherwise.
  */
 export interface FurnaceBriefForBoiler {
   designDirection: string;
@@ -43,6 +48,67 @@ export interface FurnaceBriefForBoiler {
   brandFitScore: number;
   brandFitRationale: string;
   addenda: Array<{ label: string; content: string }>;
+
+  // ─── Phase 11D FURNACE schema upgrade — 6 machine-readable spec fields
+  // All optional; BOILER falls back to prose when missing.
+
+  /** Literal text per garment surface. Null fields = no text on that surface. */
+  exactText?: {
+    front: string | null;
+    back: string | null;
+    sleeve_left: string | null;
+    sleeve_right: string | null;
+    hem: string | null;
+    inside_print: string | null;
+  } | null;
+
+  /** Every color in the design with role + hex (more flexible than 5-role PaletteRoles). */
+  colorPalette?: Array<{
+    role: string;
+    name: string;
+    hex: string;
+  }> | null;
+
+  /** Conceptual + spatial logic — the composition's "punchline". 300-1200 chars. */
+  compositionRules?: string | null;
+
+  /** Per-text-element render spec. ONE entry per text element; max 6. */
+  typographySpec?: Array<{
+    surface: string;
+    content: string;
+    font: "Syne" | "Cormorant Garamond" | "DM Mono";
+    weight: number;
+    tracking: string;
+    orientation: "horizontal" | "vertical" | "90_CCW" | "90_CW";
+    size_hint: "hero" | "secondary" | "annotation" | "caption";
+  }> | null;
+
+  /** Print construction strategy decided at FURNACE time. */
+  printSeparationStrategy?: {
+    technique:
+      | "screen"
+      | "DTG"
+      | "discharge"
+      | "embroidery"
+      | "rubber print"
+      | "puff print"
+      | "flock";
+    separations: number;
+    perSeparation: string[];
+    baseColorInteraction:
+      | "opaque on base"
+      | "discharge through base"
+      | "blend with base"
+      | "tonal over base";
+  } | null;
+
+  /** When the design extends beyond the centered print zone (PAPER-RCK pattern). */
+  fullGarmentTreatment?: {
+    enabled: boolean;
+    bleed_zones: Array<
+      "hem" | "shoulders" | "sleeves" | "back_yoke" | "collar" | "side_seams"
+    >;
+  } | null;
 }
 
 /**
