@@ -66,13 +66,22 @@ export async function acquireSignalLock(signalId: string): Promise<LockStatus> {
   // (b) existing lock has expired. If someone else holds a fresh lock,
   // the UPDATE is skipped and RETURNING yields zero rows — we detect
   // that and fall through to read the authoritative state.
+  // REVIEW.md F5 (Critical): sql.raw on an interpolated value is a
+  // SQL-injection footgun for whoever changes the code next. The const
+  // value LOCK_DURATION_MINUTES is safe today, but anyone refactoring to
+  // "make lock duration configurable per org" almost certainly threads
+  // user input through the same sql.raw and ships an injection.
+  //
+  // make_interval takes typed numeric arguments; the value flows through
+  // Postgres's parameter protocol and can never be interpreted as SQL.
+  // Closes the door before someone walks through it.
   const rows = await db.execute(sql`
     INSERT INTO signal_locks (signal_id, locked_by, locked_at, expires_at)
     VALUES (
       ${signalId}::uuid,
       ${user.authId}::uuid,
       NOW(),
-      NOW() + INTERVAL '${sql.raw(String(LOCK_DURATION_MINUTES))} minutes'
+      NOW() + make_interval(mins => ${LOCK_DURATION_MINUTES})
     )
     ON CONFLICT (signal_id) DO UPDATE
       SET locked_by = EXCLUDED.locked_by,
