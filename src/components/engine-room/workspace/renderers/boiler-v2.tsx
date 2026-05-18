@@ -224,7 +224,7 @@ function BoilerV2EmptyState({
         </div>
         <div className="mb-2 font-display text-t1 text-lg">Waiting for first design</div>
         <div className="mb-6 mx-auto max-w-md font-display text-t3 text-sm leading-relaxed">
-          gpt-image-1 is generating · result lands on canvas via realtime · 6s poll fallback.
+          chatgpt-image-latest is generating · result lands on canvas via realtime · 6s poll fallback.
         </div>
         <div className="mx-auto inline-flex items-center gap-3 rounded-sm border px-4 py-3 font-mono text-[10px] tracking-[0.18em] uppercase"
           style={{
@@ -254,7 +254,7 @@ function BoilerV2EmptyState({
       </div>
       <div className="mb-2 font-display text-t1 text-lg">No design yet</div>
       <div className="mb-6 mx-auto max-w-md font-display text-t3 text-sm leading-relaxed">
-        Generate the first draft from FURNACE&apos;s brief — gpt-image-1 produces a
+        Generate the first draft from FURNACE&apos;s brief — chatgpt-image-latest produces a
         transparent-PNG flat artwork. Or ask ORC in the chat panel
         (<code className="font-mono text-[12px] text-t1">generate the first draft</code>).
       </div>
@@ -874,7 +874,7 @@ function DesignSpecTable({ version }: { version: BoilerV2VersionRow | null }) {
         : "—",
     ],
     ["Tier", version.tier],
-    ["Model", "gpt-image-1"],
+    ["Model", "chatgpt-image-latest"],
   ];
   return (
     <div className="font-mono text-[10px] tracking-[0.06em]">
