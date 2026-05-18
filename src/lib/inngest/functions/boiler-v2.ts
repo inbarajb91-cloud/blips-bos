@@ -366,6 +366,20 @@ export const boilerV2Generate = inngest.createFunction(
         brandFitRationale: (brief.brandFitRationale as string) ?? "",
         addenda:
           (brief.addenda as Array<{ label: string; content: string }>) ?? [],
+        // Phase 11D FURNACE schema upgrade (May 18, 2026): the 6 machine-readable
+        // spec fields. Read defensively — older briefs (pre-upgrade) won't have
+        // these fields, in which case BOILER's build-prompt falls back to prose.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        exactText: (brief.exactText as any) ?? null,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        colorPalette: (brief.colorPalette as any) ?? null,
+        compositionRules: (brief.compositionRules as string | null) ?? null,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        typographySpec: (brief.typographySpec as any) ?? null,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        printSeparationStrategy: (brief.printSeparationStrategy as any) ?? null,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        fullGarmentTreatment: (brief.fullGarmentTreatment as any) ?? null,
       },
       paletteRoles: context.paletteRoles,
       compositionMeta: context.compositionMeta,

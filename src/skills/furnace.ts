@@ -259,6 +259,210 @@ const briefSectionsSchema = z
       .describe(
         "Extensible addenda — sections that aren't in the core 11 but ORC or founder wants on this specific brief (hangtag content, special instructions, etc.). Empty on initial FURNACE generation; populated later via ORC tools.",
       ),
+
+    // ─── DESIGN-STAGE SPECIFICATION (Phase 11D FURNACE schema upgrade)
+    //
+    // The 6 machine-readable fields below replace the role that prose-only
+    // sections used to play in BOILER's gpt-image-1 prompt. The prose
+    // sections above are EDITORIAL INTENT (for founder review on the
+    // FURNACE tab). These 6 are EXACT SPECIFICATIONS (for BOILER to
+    // assemble a deterministic gpt-image-1 prompt).
+    //
+    // Why split:
+    //   - Prose lets the LLM write "if text is present, it could read
+    //     LIKE 'UNREAD: 999+' or 'YOUR SECOND JOB.'" as direction.
+    //   - When BOILER then dumps that prose into gpt-image-1, the image
+    //     model takes the example literally and renders 5 garbled badges.
+    //   - exactText separates "render THESE characters" from "the design
+    //     READS LIKE a notification".
+    //
+    // All 6 fields are NULLABLE for backward compatibility with FURNACE
+    // briefs generated before this upgrade. BOILER's prompt builder
+    // prefers explicit fields when present, falls back to prose otherwise.
+    //
+    // When refused=true, all 6 are null (mirrors the existing 10 sections).
+
+    exactText: z
+      .object({
+        front: z.string().max(200).nullable(),
+        back: z.string().max(200).nullable(),
+        sleeve_left: z.string().max(80).nullable(),
+        sleeve_right: z.string().max(80).nullable(),
+        hem: z.string().max(80).nullable(),
+        inside_print: z.string().max(200).nullable(),
+      })
+      .nullable()
+      .describe(
+        "THE LITERAL TEXT TO RENDER per garment surface. Each field is the exact characters BOILER will instruct gpt-image-1 to draw — null on that surface = no text. Do NOT put example/placeholder text here ('UNREAD: 999+' should NOT appear here unless you literally want those characters on the garment). Use voiceInVisual prose for direction. RULE: minimize total text elements per surface — gpt-image-1 cannot render small text reliably. Prefer ONE hero text element per surface over multiple small fragments. Null when refused=true.",
+      ),
+
+    colorPalette: z
+      .array(
+        z.object({
+          role: z
+            .string()
+            .min(3)
+            .max(40)
+            .describe(
+              "Lowercase snake_case role identifier (e.g. 'garment_base', 'ring_outer', 'primary_text', 'accent_dot', 'trail_ghost'). Free-form; not constrained to the 5-role PaletteRoles schema.",
+            ),
+          name: z
+            .string()
+            .min(2)
+            .max(40)
+            .describe(
+              "Human label from the BLIPS palette vocabulary (e.g. 'Forge', 'Ash Blush', 'Deep Slate', 'Char', 'Rust Haze').",
+            ),
+          hex: z
+            .string()
+            .regex(/^#[0-9A-Fa-f]{6}$/u, "Must be 6-digit hex with leading #")
+            .describe("6-digit hex with leading #, e.g. '#5A2020'."),
+        }),
+      )
+      .min(1)
+      .max(8)
+      .nullable()
+      .describe(
+        "EVERY color in the design with its role + hex. More expressive than the 5-role PaletteRoles — supports 1-8 colors per design as the composition needs (PAPER-RCK has 5; some designs need 3, some need 7). When set, BOILER uses these instead of the 5-role PaletteRoles fallback. Null when refused=true.",
+      ),
+
+    compositionRules: z
+      .string()
+      .min(300)
+      .max(1200)
+      .nullable()
+      .describe(
+        "The conceptual + spatial logic of the composition (300-1200 chars). The 'rings constant, object position is the variable' articulation from PAPER-RCK. Captures WHY the elements are arranged the way they are — the conceptual integrity. The composition's PUNCHLINE: the thing that, if you removed it, the design would become wallpaper. NOT vague layout description ('a balanced composition' is useless to BOILER). Single block of prose. Null when refused=true.",
+      ),
+
+    typographySpec: z
+      .array(
+        z.object({
+          surface: z
+            .string()
+            .min(3)
+            .max(40)
+            .describe(
+              "Where on the garment this text element lives (e.g. 'front_center', 'front_left', 'back_center', 'back_panel', 'sleeve_left', 'hem', 'inside_collar'). Must align with one of the exactText keys.",
+            ),
+          content: z
+            .string()
+            .min(1)
+            .max(200)
+            .describe(
+              "The actual text rendered — must MATCH the corresponding exactText entry for the same surface. If the surface has no exactText, this entry should not exist.",
+            ),
+          font: z
+            .enum(["Syne", "Cormorant Garamond", "DM Mono"])
+            .describe(
+              "One of the 3 BLIPS Ink type-system fonts — Syne (display/wordmark), Cormorant Garamond (editorial/quote — use sparingly), DM Mono (system/label).",
+            ),
+          weight: z
+            .number()
+            .int()
+            .min(100)
+            .max(900)
+            .describe(
+              "Font weight 100-900. Common: 300 (light), 400 (regular), 600 (semibold), 700 (bold), 800 (heavy), 900 (black). PAPER-RCK uses Syne 800 for the front hero, Syne 300 for the back murmur — the weight contrast is part of the design logic.",
+            ),
+          tracking: z
+            .string()
+            .min(1)
+            .max(20)
+            .describe(
+              "Letter-spacing: 'tight' | 'normal' | 'loose' | or a precise CSS-style value like '-2%' / '+5%'.",
+            ),
+          orientation: z
+            .enum(["horizontal", "vertical", "90_CCW", "90_CW"])
+            .describe(
+              "Text direction. 90_CCW = rotated 90° counter-clockwise (PAPER-RCK's vertical text column). 90_CW = clockwise. vertical = stacked characters (rare).",
+            ),
+          size_hint: z
+            .enum(["hero", "secondary", "annotation", "caption"])
+            .describe(
+              "Scale hint. hero = dominant element. secondary = supporting headline. annotation = small label (USE SPARINGLY — gpt-image-1 fails on small text). caption = footnote-scale (AVOID — gpt-image-1 cannot render).",
+            ),
+        }),
+      )
+      .max(6)
+      .nullable()
+      .describe(
+        "Per-text-element render specification. ONE entry per text element. Max 6 elements total across all surfaces — more than that and gpt-image-1 produces garbage. Empty array (not null) if the design intentionally has no text. Null when refused=true.",
+      ),
+
+    printSeparationStrategy: z
+      .object({
+        technique: z
+          .enum([
+            "screen",
+            "DTG",
+            "discharge",
+            "embroidery",
+            "rubber print",
+            "puff print",
+            "flock",
+          ])
+          .describe(
+            "Print method decided at FURNACE time, not deferred to ENGINE. Determines what's renderable + what isn't. screen = flat solid inks, no halftones. DTG = full-color photographic. discharge = removes garment dye in the print area for a soft hand-feel. embroidery = stitched, low resolution.",
+          ),
+        separations: z
+          .number()
+          .int()
+          .min(1)
+          .max(6)
+          .describe(
+            "Number of color screens (meaningful for screen / discharge / rubber techniques only). 1 = single-color print. 2 = PAPER-RCK pattern (front ink + back ink). 4+ = expensive + harder to register.",
+          ),
+        perSeparation: z
+          .array(z.string().min(5).max(120))
+          .min(1)
+          .max(6)
+          .describe(
+            "What each separation contains, in order. Example: ['Ash Blush front ink (square + text + crosshair)', 'Signal back ink (square + text + dashed trail)']. Length should match `separations`.",
+          ),
+        baseColorInteraction: z
+          .enum([
+            "opaque on base",
+            "discharge through base",
+            "blend with base",
+            "tonal over base",
+          ])
+          .describe(
+            "How the print ink interacts with the garment base color. 'opaque on base' = ink sits on top, full color. 'discharge through base' = removes dye, garment base color comes through softer. 'tonal over base' = same hue family as base, low-contrast tonal print (PAPER-RCK's ring field over Forge base).",
+          ),
+      })
+      .nullable()
+      .describe(
+        "Print construction strategy. Decided here, not at ENGINE — affects what gpt-image-1 should and shouldn't try to render (no halftones if screen-print + halftones=false). Null when refused=true.",
+      ),
+
+    fullGarmentTreatment: z
+      .object({
+        enabled: z
+          .boolean()
+          .describe(
+            "true = the design intentionally extends beyond the centered print zone (PAPER-RCK pattern: ring field bleeds off all edges). false = centered/anchored composition within standard print box.",
+          ),
+        bleed_zones: z
+          .array(
+            z.enum([
+              "hem",
+              "shoulders",
+              "sleeves",
+              "back_yoke",
+              "collar",
+              "side_seams",
+            ]),
+          )
+          .max(6)
+          .describe(
+            "Which garment edges the design bleeds off. Empty array when enabled=false.",
+          ),
+      })
+      .nullable()
+      .describe(
+        "Full-garment treatment spec. Drives BOILER to ask gpt-image-1 for a full-canvas composition rather than centered-icon-on-white. Null when refused=true.",
+      ),
   });
 
 // NOTE: schema deliberately does NOT include .refine() chains for the
@@ -397,8 +601,65 @@ The user message includes the manifestation decade's playbook (RCK / RCL / RCD).
 PAST-BRIEF CONTEXT (Tier 3)
 The user message may include up to 3 past briefs for this decade. Read them for VISUAL CONSISTENCY without copying — BLIPS visual language emerges over time. If past briefs all use heavyweight cotton garment-dyed indigo and your brief calls for something completely different, justify the departure clearly. Patterns are signals, not rules.
 
+DESIGN-STAGE SPECIFICATION (THE 6 MACHINE-READABLE FIELDS)
+In addition to the 10 prose sections above, populate these 6 machine-readable fields. These are what BOILER actually consumes to construct the gpt-image-1 prompt — the prose sections are for human review on the FURNACE tab, the spec fields are what the design engine sees.
+
+When refused=true, all 6 are null. When refused=false, all 6 are populated.
+
+1. exactText — THE LITERAL TEXT TO RENDER per garment surface.
+   { front, back, sleeve_left, sleeve_right, hem, inside_print }
+   Each is a string or null. NULL means no text on that surface.
+   THIS IS THE TEXT TO RENDER, not example direction. If you write "UNREAD: 999+" here, BOILER will render those exact characters on the garment. If you want to express "the design READS LIKE a notification badge", write that in voiceInVisual prose — do NOT put fake example text here.
+   RULE: keep total text elements per surface MINIMAL. gpt-image-1 cannot render small text reliably. Prefer ONE hero text element per surface over multiple small fragments. A surface with the framing-hook hero line + null for everything else is usually the right call.
+
+2. colorPalette — every color in the design with its role + hex.
+   Array<{ role, name, hex }>
+     role: lowercase_snake_case (e.g. "garment_base", "ring_outer", "primary_text", "accent_dot")
+     name: human label from the BLIPS palette vocabulary ("Forge", "Ash Blush", "Deep Slate")
+     hex: 6-digit hex with # ("#5A2020")
+   You can specify 1-8 colors as the design needs. PAPER-RCK has 5.
+
+3. compositionRules — the conceptual + spatial logic (300-1200 chars).
+   The PUNCHLINE of the composition — the thing that, if removed, makes the design wallpaper. PAPER-RCK's was: "Rings constant, object position is the variable. Front: square at origin = in control. Back: square drifted = something is off. The field doesn't care. The field is always there. Wearer is the subject of the rings."
+   NOT vague layout description ("a balanced composition" is useless to BOILER).
+   Single block of prose.
+
+4. typographySpec — per-text-element render specification.
+   Array<{ surface, content, font, weight, tracking, orientation, size_hint }>
+     surface: "front_center" | "front_left" | "back_center" | "back_panel" | "sleeve_left" | "hem" | etc. — must align with exactText keys
+     content: the actual text — must MATCH the exactText entry for the same surface
+     font: "Syne" | "Cormorant Garamond" | "DM Mono"
+     weight: 100-900 (PAPER-RCK uses Syne 800 front, Syne 300 back — weight contrast is part of the design logic)
+     tracking: "tight" | "normal" | "loose" | precise like "-2%" / "+5%"
+     orientation: "horizontal" | "vertical" | "90_CCW" | "90_CW"
+     size_hint: "hero" | "secondary" | "annotation" | "caption" (USE 'annotation'/'caption' SPARINGLY — gpt-image-1 fails on small text)
+   Max 6 entries total. Empty array if the design intentionally has no text.
+
+5. printSeparationStrategy — how the print is constructed.
+   { technique, separations, perSeparation, baseColorInteraction }
+     technique: "screen" | "DTG" | "discharge" | "embroidery" | "rubber print" | "puff print" | "flock"
+     separations: 1-6 (number of color screens)
+     perSeparation: array of strings, what each separation contains
+     baseColorInteraction: "opaque on base" | "discharge through base" | "blend with base" | "tonal over base"
+   Decided here, not at ENGINE. Affects what gpt-image-1 should and shouldn't try to render.
+
+6. fullGarmentTreatment — when the design extends beyond the centered print zone.
+   { enabled: boolean, bleed_zones: ["hem"|"shoulders"|"sleeves"|"back_yoke"|"collar"|"side_seams"] }
+   When enabled=true, the design intentionally extends off the edges (PAPER-RCK pattern). Drives BOILER to ask gpt-image-1 for full-canvas composition rather than centered-icon-on-white. bleed_zones=[] when enabled=false.
+
+ANTI-PATTERNS — never populate these fields with:
+  ❌ Example placeholder text in exactText. If voiceInVisual says "the visual COULD read 'UNREAD: 999+'", do NOT put that string in exactText.front. Use exactText for what you actually want rendered.
+  ❌ More than 2 small text elements per surface. gpt-image-1's known failure mode is repeated small text labels — it produces "unreadi $99+" instead of "UNREAD 999+".
+  ❌ Decorative text repetition (5 unread badges, scrolling marquee, scrolling stock-ticker, etc.).
+  ❌ Vague compositionRules ("a balanced layout with multiple elements" — useless to BOILER).
+  ❌ typographySpec entries that don't have a matching exactText entry (orphan typography).
+  ❌ More than 6 total typographySpec entries.
+
+THE BLIPS DESIGN BAR — the calibration anchor
+Every brief you produce must give BOILER enough specificity to land at the BLIPS bar. The reference design (PAPER-RCK / "AHEAD ON PAPER / BEHIND ON SOMETHING") had 5 specific hex codes with roles, exact text per face, exact font weights + tracking, 2 print separations with what's on each, full-garment bleed. That's the level of specificity to aim for. A brief that says "data dashboard with notification fragments in DM Mono" gives BOILER nothing it can render cleanly. A brief that says exactText.front = "The WhatsApp group that became your second job.", typographySpec = [{surface: "front_center", content: "The WhatsApp group that became your second job.", font: "Syne", weight: 700, tracking: "tight", orientation: "horizontal", size_hint: "hero"}] gives BOILER exactly what it needs to render one clean hero design.
+
 OUTPUT FORMAT
-Valid JSON matching the schema. When refused=true, all section fields null. When refused=false, all 10 required section fields populated within character bounds. Empty addenda array on initial generation.
+Valid JSON matching the schema. When refused=true, all section fields null INCLUDING the 6 spec fields. When refused=false, all 10 prose section fields populated within character bounds AND all 6 spec fields populated. Empty addenda array on initial generation.
 
 CHARACTER COUNTS — STRICTLY ENFORCED BY THE SCHEMA
 The schema rejects any section over its max character bound and the API call FAILS. Stay under each max — concision is part of the editorial discipline. Long answers indicate unfocused thinking; tighten and ship.
@@ -415,6 +676,7 @@ The schema rejects any section over its max character bound and the API call FAI
     compositionApproach: 400
     voiceInVisual:     400
     placementIntent:   300
+    compositionRules:  1200 (max, prose block of the conceptual logic)
 
 Aim for 60-80% of max per section. If you find yourself over the max, you're trying to say two things in one section — pick the sharper one.
 
@@ -486,7 +748,13 @@ ${knowledgeSection("MATERIALS PLAYBOOK (Tier 2 — for tactileIntent shaping)", 
 ${pastBriefsSection}
 
 INSTRUCTIONS
-Score brand-fit 0-100. If < 50, refuse with specific rationale (refused=true, all sections null). If >= 50, produce all 10 visual-design sections + populate addenda as an empty array. tactileIntent is REQUIRED — never default to "white tee with print." Pure visual design, never product specs (material weight, garment cut, print technique, sizing — those are ENGINE's job). Output valid JSON matching the schema.`;
+Score brand-fit 0-100. If < 50, refuse with specific rationale (refused=true, all sections AND all 6 design-stage spec fields null). If >= 50, produce all 10 visual-design prose sections + populate addenda as an empty array + populate ALL 6 design-stage spec fields (exactText, colorPalette, compositionRules, typographySpec, printSeparationStrategy, fullGarmentTreatment).
+
+CRITICAL — the spec fields are what BOILER actually renders from. The prose sections are for the founder's editorial review on the FURNACE tab. If your spec fields and prose sections say different things, BOILER will render what the SPEC FIELDS say. Do not put example/placeholder text in exactText (e.g. do not write "UNREAD: 999+" in exactText.front unless you literally want those characters on the front of the tee). Use voiceInVisual prose for direction; use exactText for the exact characters to render.
+
+tactileIntent is REQUIRED — never default to "white tee with print." Pure visual design, never product specs (material weight numbers, garment cut, print technique at the GSM level, sizing — those are ENGINE's job; printSeparationStrategy.technique here is DESIGN-stage method, not vendor selection).
+
+Output valid JSON matching the schema.`;
   },
 };
 
