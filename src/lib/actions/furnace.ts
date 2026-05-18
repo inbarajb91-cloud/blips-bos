@@ -1,6 +1,7 @@
 "use server";
 
 import { and, eq, sql } from "drizzle-orm";
+import { appendCappedRevisions } from "@/lib/db/append-capped-revisions";
 import { revalidatePath } from "next/cache";
 import {
   db,
@@ -425,7 +426,7 @@ export async function editBriefSection(opts: {
     .set({
       content: updatedContent,
       sectionApprovals: updatedApprovals,
-      revisions: sql`${agentOutputs.revisions} || ${JSON.stringify([revisionEntry])}::jsonb`,
+      revisions: appendCappedRevisions(agentOutputs.revisions, revisionEntry),
     })
     .where(eq(agentOutputs.id, brief.id));
 
@@ -658,7 +659,7 @@ ${standardPrompt}`;
       content: newContent,
       status: "PENDING",
       sectionApprovals: {},
-      revisions: sql`${agentOutputs.revisions} || ${JSON.stringify([revisionEntry])}::jsonb`,
+      revisions: appendCappedRevisions(agentOutputs.revisions, revisionEntry),
     })
     .where(eq(agentOutputs.id, brief.id));
 
@@ -787,7 +788,7 @@ Produce a replacement for the '${opts.section}' section ONLY. Character bounds: 
     .set({
       content: updatedContent,
       sectionApprovals: updatedApprovals,
-      revisions: sql`${agentOutputs.revisions} || ${JSON.stringify([revisionEntry])}::jsonb`,
+      revisions: appendCappedRevisions(agentOutputs.revisions, revisionEntry),
     })
     .where(eq(agentOutputs.id, brief.id));
 
@@ -855,7 +856,7 @@ export async function addBriefAddendum(opts: {
     .update(agentOutputs)
     .set({
       content: updatedContent,
-      revisions: sql`${agentOutputs.revisions} || ${JSON.stringify([revisionEntry])}::jsonb`,
+      revisions: appendCappedRevisions(agentOutputs.revisions, revisionEntry),
     })
     .where(eq(agentOutputs.id, brief.id));
 
