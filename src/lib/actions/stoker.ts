@@ -11,6 +11,7 @@ import {
 import { getCurrentUserWithOrg } from "@/lib/auth/current-user";
 import { createInitialJourney } from "@/lib/orc/journey";
 import { resolveShortcode } from "@/lib/signals/resolve-shortcode";
+import { appendCappedRevisions } from "@/lib/db/append-capped-revisions";
 
 /**
  * STOKER server actions — Phase 9D.
@@ -288,7 +289,7 @@ export async function editStokerManifestation(opts: {
     .update(agentOutputs)
     .set({
       content: newContent,
-      revisions: sql`${agentOutputs.revisions} || ${JSON.stringify([revisionEntry])}::jsonb`,
+      revisions: appendCappedRevisions(agentOutputs.revisions, revisionEntry),
     })
     .where(eq(agentOutputs.id, output.id));
 
