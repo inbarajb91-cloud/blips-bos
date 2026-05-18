@@ -30,15 +30,16 @@ See `STACK.md` for per-tool explanations.
 
 ```bash
 # Clone
-git clone https://github.com/inbarajb91-cloud/blips-bos.git
+git clone https://github.com/Blips-Development/blips-bos.git
 cd blips-bos
 
 # Copy env template and fill in real values
 cp .env.example .env.local
 
-# (After Phase 1 scaffolding — not yet)
-npm install
-npm run dev
+# Install (pnpm only — package.json's preinstall hook refuses npm/yarn).
+# If you don't have pnpm yet: corepack enable && corepack prepare pnpm@9 --activate
+pnpm install
+pnpm run dev
 ```
 
 ## Build phases
