@@ -402,9 +402,16 @@ function computeNextRunAt(cadence: Cadence): Date {
       next.setHours(6, 0, 0, 0);
       break;
     case "custom":
-      // Custom cron is parsed by the cron-checker, not here. Set a
-      // near-future placeholder so the checker picks it up on next tick.
-      next.setMinutes(now.getMinutes() + 5);
+      // REVIEW.md F9 (May 18, 2026): custom cadence is reserved for a future
+      // cron-parser implementation. Today the Collect-now UI only exposes
+      // daily/weekly/monthly (no UI path produces 'custom') — but the DB enum
+      // still allows it for the Direct-submissions singleton (cadenceCron=
+      // 'never', never auto-fires) and any historical seed rows. Setting
+      // next_run_at far in the future so the scheduled cron checker doesn't
+      // pick this row up (effectively pausing it). Backlog: implement real
+      // cron-parser when a custom-cadence use case actually surfaces; until
+      // then "custom" cadence collections are inert.
+      next.setFullYear(now.getFullYear() + 100);
       break;
   }
   return next;
