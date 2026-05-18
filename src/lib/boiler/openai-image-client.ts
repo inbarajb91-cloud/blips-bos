@@ -1,17 +1,27 @@
 /**
- * Phase 11D — OpenAI Images API client for gpt-image-1.
+ * Phase 11D — OpenAI Images API client.
  *
  * Fetch-based wrapper around the canonical OpenAI image generation endpoints:
  *   - POST /v1/images/generations    fresh generation from prompt
  *   - POST /v1/images/edits          refinement: previous image + prompt
  *
- * Validated live against the real API May 16 — model "gpt-image-1" supports
- * transparent backgrounds on both endpoints. The earlier plan (gpt-image-2 +
- * Responses API + previous_response_id chaining) failed: gpt-image-2 isn't a
- * real model and the Responses-API image_generation tool doesn't support
- * transparent backgrounds. Chaining now happens by sending the parent image
- * back to /edits — same UX (multi-turn refinement on a stable canvas), different
- * implementation underneath.
+ * MODEL SWAP HISTORY:
+ *   - May 16, 2026: shipped on "gpt-image-1" (the earlier plan of "gpt-image-2"
+ *     failed — it's not a real API model ID; that name was the ChatGPT consumer
+ *     product's UI labeling for what the API exposes as chatgpt-image-latest).
+ *   - May 19, 2026: swapped to "chatgpt-image-latest" after Inba's question
+ *     surfaced the model in a fresh /v1/models probe (it wasn't in the May 17
+ *     probe). Required OpenAI organization verification (one-time Persona ID
+ *     upload). Validated live with a PAPER-RCK-style prompt: produces 6+
+ *     element multi-element compositions with conceptual logic — the same
+ *     output class as the PAPER-RCK reference (which was almost certainly
+ *     generated via this model through ChatGPT consumer product, not via API).
+ *
+ * Both models support transparent backgrounds on both /generations and /edits
+ * endpoints. Tier pricing is approximated from gpt-image-1's published rates
+ * (low $0.006 / med $0.053 / high $0.211) — chatgpt-image-latest's actual
+ * pricing TBD from OpenAI dashboard; adjust TIER_PRICING in types.ts if the
+ * usage dashboard shows materially different per-call cost.
  *
  * Reads `process.env.OPENAI_API_KEY` for auth. NEVER reads .env.local directly,
  * NEVER logs the key. Throws Error with provider message on non-2xx.
@@ -22,13 +32,13 @@ import { TIER_PRICING } from "./types";
 
 const OPENAI_GENERATIONS_URL = "https://api.openai.com/v1/images/generations";
 const OPENAI_EDITS_URL = "https://api.openai.com/v1/images/edits";
-const IMAGE_MODEL = "gpt-image-1";
+const IMAGE_MODEL = "chatgpt-image-latest";
 const DEFAULT_TIMEOUT_MS = 120_000; // high-tier can take 60s+
 
 export interface GenerateImageOptions {
   /** Prompt text. */
   prompt: string;
-  /** Quality tier — maps to gpt-image-1's "quality" parameter via TIER_PRICING. */
+  /** Quality tier — maps to the OpenAI image "quality" parameter via TIER_PRICING. */
   tier: Tier;
   /**
    * When set, hits the /edits endpoint with the previous image as input.
@@ -37,7 +47,7 @@ export interface GenerateImageOptions {
    * different mechanism underneath.
    */
   previousImageBase64?: string;
-  /** Model override for evals. Default: "gpt-image-1". */
+  /** Model override for evals. Default: "chatgpt-image-latest" (see file header for swap history). */
   model?: string;
   /** Image dimensions. Default: 1024×1024 square. */
   width?: number;
