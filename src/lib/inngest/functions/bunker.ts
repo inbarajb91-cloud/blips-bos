@@ -497,8 +497,13 @@ function cadenceToNextRun(cadence: string): Date {
       next.setHours(6, 0, 0, 0);
       break;
     case "custom":
-      // Custom cron parsing deferred; schedule 1h out so hourly check picks it up.
-      next.setHours(now.getHours() + 1);
+      // REVIEW.md F9 (May 18, 2026): pause custom-cadence collections by
+      // setting next_run_at far in the future (matches collections.ts
+      // computeNextRunAt). Until cron-parser is wired in, "custom" cadence
+      // is inert — the Direct-submissions singleton uses cadenceCron='never'
+      // and any historical/manually-seeded custom rows stay paused rather
+      // than auto-firing hourly (which would cost-explode at scale).
+      next.setFullYear(now.getFullYear() + 100);
       break;
     default:
       next.setDate(now.getDate() + 7);
