@@ -15,6 +15,12 @@ node_modules/
 .pnp.js
 .pnpm-debug.log*
 
+# REVIEW.md F16+F28 (May 18, 2026): pnpm-only project (lockfileVersion 9.x).
+# package-lock.json is the npm artifact; if a contributor accidentally runs
+# `npm install` the preinstall hook (only-allow pnpm) refuses + we never
+# want package-lock.json to slip back into the repo.
+package-lock.json
+
 # Build output
 .next/
 out/
