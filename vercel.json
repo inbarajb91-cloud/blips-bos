@@ -1,8 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "regions": ["bom1"],
-
-  "_comment_functions": "REVIEW.md F31 (May 18, 2026): plan tier is Hobby (effective maxDuration cap ~60s as of late-2024 Vercel tier changes). We pin maxDuration=60 on /api/inngest so HIGH-tier BOILER v2 generations (60-120s for gpt-image-1) get the full budget rather than the Hobby default — and so anyone reading vercel.json sees the explicit ceiling. If HIGH-tier generations start timing out at scale, options are: (1) upgrade to Pro and bump maxDuration to 300, (2) split generateDesign() into multiple Inngest steps (gpt-image-1 call, Cloudinary upload, verifier) so no single step approaches the cap. Today (single-tier production), LOW (~25s) and MEDIUM (~45s) sit comfortably under the cap; HIGH at the edge.",
   "functions": {
     "src/app/api/inngest/route.ts": {
       "maxDuration": 60
